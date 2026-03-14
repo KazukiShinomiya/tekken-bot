@@ -11,9 +11,6 @@ import os
 import re
 import requests
 from bs4 import BeautifulSoup
-from dotenv import load_dotenv
-
-load_dotenv()
 
 EWGF_API    = "https://api.ewgf.gg/external"
 WANK_BULK   = "https://wank.wavu.wiki/api/replays"
@@ -24,7 +21,7 @@ TEKKEN_ID  = os.getenv("TEKKEN_ID")
 POLARIS_ID = os.getenv("POLARIS_ID")
 
 CHARA_NAMES = {
-    0: "Paul", 1: "Paul", 2: "Law", 3: "King", 4: "Yoshimitsu", 5: "Hwoarang",
+    1: "Paul", 2: "Law", 3: "King", 4: "Yoshimitsu", 5: "Hwoarang",
     6: "Xiaoyu", 7: "Jin", 8: "Bryan", 9: "Kazuya", 10: "Steve",
     11: "Jack-8", 12: "Asuka", 13: "Devil Jin", 14: "Feng", 15: "Lili",
     16: "Dragunov", 17: "Leo", 18: "Lars", 19: "Alisa", 20: "Claudio",
@@ -341,13 +338,18 @@ def fetch_battles_since(since_ts: float) -> list[dict]:
     try:
         html_battles = _fetch_from_wank_html(since_ts)
         print(f"[fetcher] wank HTML: {len(html_battles)} 件取得")
-        if html_battles:
-            enriched = _enrich_from_bulk(html_battles)
-            return enriched
-        return html_battles
     except Exception as e:
-        print(f"[fetcher] wank HTML+enrichment 失敗 ({e})")
+        print(f"[fetcher] wank HTML 失敗 ({e})")
+        html_battles = None
+
+    if html_battles is not None:
+        if html_battles:
+            try:
+                return _enrich_from_bulk(html_battles)
+            except Exception as e:
+                print(f"[fetcher] enrichment 失敗（HTMLデータのみで続行）: {e}")
+        return html_battles
 
     # 3. wank HTML のみ（最終手段）
-    print("[fetcher] wank HTML フォールバック（enrichmentなし）")
+    print("[fetcher] wank HTML フォールバック（再試行）")
     return _fetch_from_wank_html(since_ts)

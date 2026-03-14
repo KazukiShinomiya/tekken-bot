@@ -24,7 +24,6 @@ def _build_prompt(battles: list[dict], date_str: str) -> str:
     round_wr   = f"{total_my / total_r * 100:.0f}%" if total_r else "-"
 
     # 対戦キャラ集計
-    from collections import Counter
     chara_results: dict[str, list[bool]] = {}
     for b in battles:
         c = b.get("opp_chara") or "???"

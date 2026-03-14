@@ -9,6 +9,9 @@ Tekken Bot メインスクリプト。
 import sys
 from datetime import datetime, timezone, timedelta
 
+from dotenv import load_dotenv
+load_dotenv()
+
 import bot.db as db
 import bot.fetcher as fetcher
 import bot.discord_post as discord_post

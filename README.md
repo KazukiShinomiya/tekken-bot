@@ -174,18 +174,20 @@ docker compose up -d --build
 
 ```
 tekken_bot/
-├── main.py          # エントリポイント
-├── scheduler.py     # 定時実行スケジューラ（Docker用）
-├── fetcher.py       # データ取得（ewgf.gg / wank HTML + バルクAPI）
-├── db.py            # SQLite永続化
-├── discord_post.py  # Discord投稿・メッセージ整形
-├── analyzer.py      # ローカルLLM分析（Ollama）
+├── main.py            # エントリポイント
+├── scheduler.py       # 定時実行スケジューラ（Docker用）
+├── exporter.py        # Prometheus メトリクス公開
+├── bot/
+│   ├── fetcher.py     # データ取得（ewgf.gg / wank HTML + バルクAPI）
+│   ├── db.py          # SQLite永続化
+│   ├── discord_post.py  # Discord投稿・メッセージ整形
+│   └── analyzer.py    # ローカルLLM分析（Ollama）
 ├── Dockerfile
 ├── docker-compose.yml
 ├── requirements.txt
-├── .env             # 秘匿情報（gitignore推奨）
+├── .env               # 秘匿情報（gitignore推奨）
 └── data/
-    └── battles.db   # SQLiteデータベース（Dockerボリューム）
+    └── battles.db     # SQLiteデータベース（Dockerボリューム）
 ```
 
 ---

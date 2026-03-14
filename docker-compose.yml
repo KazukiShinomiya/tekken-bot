@@ -10,3 +10,16 @@ services:
       - PYTHONUNBUFFERED=1
     env_file:
       - .env
+
+  tekken-exporter:
+    build: .
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./data:/app/data
+    environment:
+      - DB_PATH=/app/data/battles.db
+      - PYTHONUNBUFFERED=1
+    env_file:
+      - .env
+    command: python exporter.py

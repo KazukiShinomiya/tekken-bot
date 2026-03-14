@@ -6,6 +6,6 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY bot/ ./bot/
-COPY main.py scheduler.py ./
+COPY main.py scheduler.py exporter.py ./
 
 CMD ["python", "scheduler.py"]

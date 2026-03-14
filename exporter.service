@@ -1,0 +1,22 @@
+[Unit]
+Description=Tekken Bot Prometheus Exporter
+After=network.target
+
+[Service]
+# ▼ tekken_bot を動かしているユーザーに合わせる
+User=CHANGE_ME
+
+# ▼ tekken_bot のルートディレクトリ（exporter.py の場所）
+WorkingDirectory=/path/to/tekken_bot
+
+# ▼ python3 のフルパス（`which python3` で確認）と exporter.py のフルパス
+ExecStart=/usr/bin/python3 /path/to/tekken_bot/exporter.py --port 9877
+
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tekken-exporter
+
+[Install]
+WantedBy=multi-user.target

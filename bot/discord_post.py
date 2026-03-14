@@ -6,9 +6,6 @@ import os
 import requests
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
-from dotenv import load_dotenv
-
-load_dotenv()
 
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 TEKKEN_ID   = os.getenv("TEKKEN_ID", "ExodusOverseer")
