@@ -1,0 +1,5 @@
+# デフォルトはLF（Linuxサーバーにデプロイするため）
+* text=auto eol=lf
+
+# シェルスクリプトは必ずLF
+*.sh text eol=lf

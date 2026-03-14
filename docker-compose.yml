@@ -1,0 +1,12 @@
+services:
+  tekken-bot:
+    build: .
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./data:/app/data
+    environment:
+      - DB_PATH=/app/data/battles.db
+      - PYTHONUNBUFFERED=1
+    env_file:
+      - .env

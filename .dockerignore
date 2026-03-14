@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+*.db
+last_run.json
+.env
+data/
