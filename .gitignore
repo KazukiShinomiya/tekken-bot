@@ -24,3 +24,7 @@ Thumbs.db
 # Claude Code セッションファイル
 .claude/
 SESSION_STATE.md
+
+# labo連携用作業ファイル（内部IP等を含む可能性があるため除外）
+labo/*
+!labo/.gitkeep
