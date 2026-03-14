@@ -9,10 +9,10 @@ Tekken Bot メインスクリプト。
 import sys
 from datetime import datetime, timezone, timedelta
 
-import db
-import fetcher
-import discord_post
-import analyzer
+import bot.db as db
+import bot.fetcher as fetcher
+import bot.discord_post as discord_post
+import bot.analyzer as analyzer
 
 JST = timezone(timedelta(hours=9))
 
