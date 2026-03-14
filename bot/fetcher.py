@@ -35,11 +35,9 @@ CHARA_NAMES = {
 }
 
 # battle_type の数値 → 文字列マッピング
+# wank.wavu.wiki はランク戦（2）のみ収録。他の値は現時点で未観測。
 BATTLE_TYPES = {
-    1: "ranked",
-    2: "ranked",   # 観測上2もランク戦
-    5: "quick",
-    7: "player",
+    2: "ranked",
 }
 
 
