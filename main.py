@@ -116,8 +116,9 @@ def main() -> None:
         logger.error("プレイヤーが設定されていません。PLAYERS または POLARIS_ID を .env に設定してください。")
         sys.exit(1)
 
-    today_str = now.strftime("%Y-%m-%d")
-    date_str  = now.strftime("%Y/%m/%d")
+    yesterday = now - timedelta(days=1)
+    today_str = yesterday.strftime("%Y-%m-%d")
+    date_str  = yesterday.strftime("%Y/%m/%d")
 
     for player_name, polaris_id in players:
         _run_for_player(player_name, polaris_id, today_str, date_str)

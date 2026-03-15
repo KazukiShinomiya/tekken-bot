@@ -1,6 +1,6 @@
 """
 Docker コンテナ用スケジューラ。
-毎日 23:00 JST に main.py のロジックを実行する。
+毎日 08:00 JST に前日分のバトルを集計して投稿する。
 毎週日曜 21:00 JST に週次サマリーを投稿する。
 """
 
@@ -41,13 +41,13 @@ def weekly_job():
         logger.error(f"[scheduler] weekly() で予期しないエラー: {e}")
 
 
-# JST 23:00 = UTC 14:00
-schedule.every().day.at("14:00").do(job)
+# JST 08:00 = UTC 23:00 (前日)
+schedule.every().day.at("23:00").do(job)
 
 # JST 21:00 (日曜) = UTC 12:00 (日曜)
 schedule.every().sunday.at("12:00").do(weekly_job)
 
-logger.info("スケジューラ起動。毎日 23:00 JST に実行、毎週日曜 21:00 JST に週次サマリーを実行します。")
+logger.info("スケジューラ起動。毎日 08:00 JST に前日分を投稿、毎週日曜 21:00 JST に週次サマリーを実行します。")
 logger.info(f"現在時刻: {datetime.now(JST).isoformat()}")
 
 while True:
