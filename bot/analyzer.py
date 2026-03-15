@@ -104,7 +104,7 @@ def analyze(battles: list[dict], date_str: str, player_name: str = "ExodusOverse
                 "stream": False,
                 "options": {"temperature": 0.7, "num_predict": 200},
             },
-            timeout=600,  # 7bモデル対応（CPU推論で最大10分）
+            timeout=300,  # 7bモデル対応（CPU推論で実測約2分、余裕を持って5分）
         )
         resp.raise_for_status()
         comment = resp.json().get("response", "").strip()
