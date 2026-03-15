@@ -1,7 +1,7 @@
 # Tekken Bot
 
-鉄拳8の対戦履歴を自動収集し、毎日 Discord に投稿する Bot。
-ローカル LLM によるコーチコメント生成機能付き。
+鉄拳8の対戦履歴を自動収集し、毎朝8時に前日の戦績を Discord に投稿する Bot。
+ローカル LLM によるコーチコメント生成・レーティンググラフ・スラッシュコマンド対応。
 
 ---
 
@@ -20,6 +20,11 @@
 🔥 連勝: 2
 😤 天敵: Reina (0勝1敗, 0%)
 💥 テッケンパワー: 185,000
+━━━━━━━━━━━━━━━
+📊 対戦成績
+  Dragunov     1戦  100% ✅
+  Jin          1戦  100% ✅
+  Reina        1戦    0% ❌
 
 🤖 今日はランク戦で安定した成績を収めた。
    Reina戦は接近戦での対応が課題。次回は
@@ -38,7 +43,7 @@
 │  │  (開発・テスト環境)                           │   │
 │  └──────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────┘
-                         │ デプロイ (scp)
+                         │ デプロイ (git pull)
                          ▼
 ┌─────────────────────────────────────────────────────┐
 │           Ubuntu NAS (Raspberry Pi / ARM64)          │
@@ -57,6 +62,11 @@
 │  │       │                (qwen2.5:3b)        │    │
 │  │       │                                    │    │
 │  │       └─ discord_post.py → Discord Webhook │    │
+│  └─────────────────────────────────────────────┘    │
+│                                                      │
+│  ┌─────────────────────────────────────────────┐    │
+│  │  Docker Container (tekken-exporter)         │    │
+│  │  exporter.py → Prometheus (port 9877)       │    │
 │  └─────────────────────────────────────────────┘    │
 │                                                      │
 │  ┌──────────────┐                                   │
@@ -94,12 +104,12 @@ HTML で自分の試合一覧を取得（高速）
 
 ### 2. フォールバック設計
 
-データソースを3段階で試みる。
+データソースを3段階で試みる。wank をリアルタイム優先とし、ewgf.gg は完全失敗時のフォールバックとして使用する。
 
 ```
-ewgf.gg API（最もリッチ・現在インデックス待ち）
+wank HTML + バルクAPI enrichment（リアルタイム・優先）
   ↓ 失敗
-wank HTML + バルクAPI enrichment（フルフィールド）
+ewgf.gg API（24時間遅延あり・フォールバック）
   ↓ 失敗
 wank HTML のみ（最低限の情報で継続）
 ```
@@ -138,6 +148,7 @@ battles: battle_type, game_version, stage_id,
 - Python 3.13+
 - Docker / Docker Compose
 - Discord Webhook URL
+- Discord Bot Token（スラッシュコマンドを使う場合）
 - wank.wavu.wiki の Polaris ID（プロフィールURLから確認）
 - （任意）ewgf.gg API Key
 - （任意）Ollama + qwen2.5:3b
@@ -148,9 +159,15 @@ battles: battle_type, game_version, stage_id,
 TEKKEN_ID=YourTekkenID
 POLARIS_ID=YourPolarisID
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+DISCORD_BOT_TOKEN=your_bot_token_here
+
+# 複数プレイヤー設定（POLARIS_ID より優先される）
+# PLAYERS=Player1:polaris_id1,Player2:polaris_id2
+
 EWGF_API_KEY=your_key_here
 OLLAMA_URL=http://localhost:11434
 OLLAMA_MODEL=qwen2.5:3b
+LOG_PATH=/app/data/tekken_bot.log
 ```
 
 ### ローカルで実行
@@ -166,7 +183,22 @@ python main.py
 docker compose up -d --build
 ```
 
-毎日 23:00 JST に自動実行される。
+毎朝8時 JST に前日分の戦績を自動投稿する。
+週次サマリーは毎週日曜 21:00 JST に投稿される。
+
+---
+
+## スラッシュコマンド
+
+Discord Bot Token を設定することで、以下のスラッシュコマンドが使用できる。
+
+| コマンド | 動作 |
+|----------|------|
+| `/tekken today` | 前日の戦績を即時取得・投稿 |
+| `/tekken weekly` | 週次サマリーを即時投稿 |
+| `/tekken status` | Bot の稼働状況を確認 |
+
+Bot をサーバーに招待する際は、Discord Developer Portal の OAuth2 URL Generator で `bot` と `applications.commands` スコープを選択すること。
 
 ---
 
@@ -174,20 +206,39 @@ docker compose up -d --build
 
 ```
 tekken_bot/
-├── main.py            # エントリポイント
-├── scheduler.py       # 定時実行スケジューラ（Docker用）
-├── exporter.py        # Prometheus メトリクス公開
+├── main.py              # エントリポイント・複数プレイヤー対応
+├── scheduler.py         # 定時実行スケジューラ（Docker用）+ Bot スレッド起動
+├── exporter.py          # Prometheus メトリクス公開（port 9877）
 ├── bot/
-│   ├── fetcher.py     # データ取得（ewgf.gg / wank HTML + バルクAPI）
-│   ├── db.py          # SQLite永続化
-│   ├── discord_post.py  # Discord投稿・メッセージ整形
-│   └── analyzer.py    # ローカルLLM分析（Ollama）
+│   ├── fetcher.py       # データ取得（wank HTML + バルクAPI / ewgf.gg フォールバック）
+│   ├── db.py            # SQLite永続化（player_nameカラム対応）
+│   ├── discord_post.py  # Discord投稿・メッセージ整形・グラフ添付
+│   ├── graph.py         # matplotlibレーティンググラフ生成
+│   ├── analyzer.py      # ローカルLLM分析（Ollama）
+│   └── slash_commands.py  # Discord スラッシュコマンド定義
+├── tests/               # pytest テストスイート（48テスト）
+├── SPEC.md              # 仕様書
 ├── Dockerfile
 ├── docker-compose.yml
 ├── requirements.txt
-├── .env               # 秘匿情報（gitignore推奨）
+├── .env                 # 秘匿情報（gitignore対象）
 └── data/
-    └── battles.db     # SQLiteデータベース（Dockerボリューム）
+    └── battles.db       # SQLiteデータベース（Dockerボリューム）
+```
+
+---
+
+## デプロイ
+
+```bash
+# ローカルで修正 → コミット → プッシュ
+git add <ファイル>
+git commit -m "説明"
+git push
+
+# サーバーに反映
+wsl -e bash -c "ssh -i ~/.ssh/tekken_deploy ubuntu@10.0.0.254 \
+  'cd ~/tekken_bot && git pull && docker compose up -d --build'"
 ```
 
 ---
@@ -195,4 +246,4 @@ tekken_bot/
 ## データソース
 
 - **[wank.wavu.wiki](https://wank.wavu.wiki)** — 鉄拳8のリプレイデータを公開しているコミュニティサイト。認証不要。
-- **[ewgf.gg](https://ewgf.gg)** — 鉄拳8専門の統計サービス。Bearer token 認証。プレイヤーが手動でインデックス登録する必要あり。
+- **[ewgf.gg](https://ewgf.gg)** — 鉄拳8専門の統計サービス。Bearer token 認証。プレイヤーが手動でインデックス登録する必要あり。24時間の遅延がある。
