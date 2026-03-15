@@ -89,6 +89,12 @@ def _run_for_player(player_name: str, polaris_id: str, today_str: str, date_str:
     inserted = db.insert_battles(new_battles, player_name=player_name)
     logger.info(f"[{player_name}] {inserted} 件を DB に保存")
 
+    # ewgf.gg からクイックマッチを補完（24時間遅延のため日次投稿には使わず週次サマリー用）
+    quick_battles = fetcher.fetch_quick_battles_from_ewgf(since_ts, polaris_id=polaris_id)
+    if quick_battles:
+        inserted_quick = db.insert_battles(quick_battles, player_name=player_name)
+        logger.info(f"[{player_name}] クイックマッチ {inserted_quick} 件を DB に保存 (ewgf.gg)")
+
     today_battles = db.get_battles_on_date(today_str, player_name=player_name)
     logger.info(f"[{player_name}] 本日分: {len(today_battles)} 件")
 

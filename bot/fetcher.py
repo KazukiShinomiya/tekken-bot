@@ -323,6 +323,22 @@ def _enrich_from_bulk(battles: list[dict], polaris_id: str) -> list[dict]:
 # 公開インターフェース
 # ---------------------------------------------------------------------------
 
+def fetch_quick_battles_from_ewgf(since_ts: float, polaris_id: str | None = None) -> list[dict]:
+    """
+    ewgf.gg からクイックマッチのみを取得する（週次サマリー補完用）。
+    24時間遅延があるため日次投稿には使わず、DBへの保存のみを目的とする。
+    """
+    pid = polaris_id or POLARIS_ID
+    try:
+        battles = _fetch_from_ewgf(pid)
+        result = [b for b in battles if b["battle_at"] > since_ts and b.get("battle_type") == "quick"]
+        logger.info(f"[fetcher] ewgf.gg クイックマッチ: {len(result)} 件取得")
+        return result
+    except Exception as e:
+        logger.warning(f"[fetcher] ewgf.gg クイックマッチ取得失敗: {e}")
+        return []
+
+
 def fetch_battles_since(since_ts: float, polaris_id: str | None = None) -> list[dict]:
     """
     since_ts より新しいバトルを返す。
