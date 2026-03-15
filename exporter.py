@@ -6,6 +6,7 @@ battles.db を読み込み、メトリクスを HTTP 経由で公開する。
     python exporter.py [--port 9877]
 """
 
+import logging
 import os
 import sys
 import time
@@ -16,7 +17,11 @@ from datetime import datetime, timezone, timedelta
 from prometheus_client import start_http_server, REGISTRY
 from prometheus_client.core import GaugeMetricFamily
 
+from main import setup_logging
 import bot.db as db
+
+setup_logging()
+logger = logging.getLogger(__name__)
 
 JST = timezone(timedelta(hours=9))
 DB_PATH = db.DB_PATH
@@ -43,7 +48,7 @@ class TekkenCollector:
             yield from self._collect(conn)
             conn.close()
         except Exception as e:
-            print(f"[exporter] 収集エラー: {e}", file=sys.stderr)
+            logger.error(f"[exporter] 収集エラー: {e}")
 
     def _collect(self, conn):
         # ── 1. 現在レーティング ──────────────────────────────────────────
@@ -161,8 +166,8 @@ def main():
     db.init_db()
     REGISTRY.register(TekkenCollector())
     start_http_server(args.port)
-    print(f"[exporter] http://0.0.0.0:{args.port}/metrics で待機中")
-    print(f"[exporter] DB: {DB_PATH}")
+    logger.info(f"[exporter] http://0.0.0.0:{args.port}/metrics で待機中")
+    logger.info(f"[exporter] DB: {DB_PATH}")
 
     while True:
         time.sleep(60)

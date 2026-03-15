@@ -2,15 +2,18 @@
 バトルデータ取得モジュール。
 
 戦略:
-  1. ewgf.gg API（インデックス済みの場合）
-  2. wank HTML で自分のバトル一覧取得 → バルクAPIでリッチデータを付加
-  3. wank HTML のみ（バルクAPI失敗時のフォールバック）
+  1. wank HTML で自分のバトル一覧取得 → バルクAPIでリッチデータを付加（メイン）
+  2. ewgf.gg API（wank が完全に失敗した場合のフォールバック）
+  3. wank HTML のみ（バルクAPI失敗時の最終フォールバック）
 """
 
+import logging
 import os
 import re
 import requests
 from bs4 import BeautifulSoup
+
+logger = logging.getLogger(__name__)
 
 EWGF_API    = "https://api.ewgf.gg/external"
 WANK_BULK   = "https://wank.wavu.wiki/api/replays"
@@ -55,19 +58,19 @@ EWGF_BATTLE_TYPES = {
 }
 
 
-def _fetch_from_ewgf() -> list[dict]:
-    url = f"{EWGF_API}/battles/{POLARIS_ID}"
+def _fetch_from_ewgf(polaris_id: str) -> list[dict]:
+    url = f"{EWGF_API}/battles/{polaris_id}"
     resp = requests.get(url, headers={"Authorization": f"Bearer {API_KEY}"}, timeout=15)
     resp.raise_for_status()
     data = resp.json()
     raw_list = data.get("data", data.get("battles", []))
-    return [_normalize_ewgf(b) for b in raw_list]
+    return [_normalize_ewgf(raw, polaris_id) for raw in raw_list]
 
 
-def _normalize_ewgf(raw: dict) -> dict:
+def _normalize_ewgf(raw: dict, polaris_id: str) -> dict:
     from datetime import datetime
 
-    me  = "p1" if raw.get("p1_tekken_id") == POLARIS_ID else "p2"
+    me  = "p1" if raw.get("p1_tekken_id") == polaris_id else "p2"
     opp = "p2" if me == "p1" else "p1"
 
     winner = raw.get("winner")
@@ -120,8 +123,8 @@ def _normalize_ewgf(raw: dict) -> dict:
 # wank HTML スクレイパー
 # ---------------------------------------------------------------------------
 
-def _fetch_from_wank_html(since_ts: float, limit: int = 50) -> list[dict]:
-    resp = requests.get(f"{WANK_PLAYER}/{POLARIS_ID}", timeout=15)
+def _fetch_from_wank_html(since_ts: float, polaris_id: str, limit: int = 50) -> list[dict]:
+    resp = requests.get(f"{WANK_PLAYER}/{polaris_id}", timeout=15)
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "html.parser")
 
@@ -240,9 +243,9 @@ def _fetch_bulk_batch(before: int) -> list[dict]:
     return resp.json()
 
 
-def _merge_bulk(battle: dict, bulk: dict) -> dict:
+def _merge_bulk(battle: dict, bulk: dict, polaris_id: str) -> dict:
     """バルクAPIレコードをHTMLバトルにマージして返す。"""
-    me  = "p1" if bulk.get("p1_polaris_id") == POLARIS_ID else "p2"
+    me  = "p1" if bulk.get("p1_polaris_id") == polaris_id else "p2"
     opp = "p2" if me == "p1" else "p1"
 
     bt_raw = bulk.get("battle_type")
@@ -266,7 +269,7 @@ def _merge_bulk(battle: dict, bulk: dict) -> dict:
     return battle
 
 
-def _enrich_from_bulk(battles: list[dict]) -> list[dict]:
+def _enrich_from_bulk(battles: list[dict], polaris_id: str) -> list[dict]:
     """
     HTMLバトルリストをバルクAPIでenrichする。
 
@@ -290,7 +293,7 @@ def _enrich_from_bulk(battles: list[dict]) -> list[dict]:
             batch = _fetch_bulk_batch(before)
             requests_made += 1
         except Exception as e:
-            print(f"[fetcher] enrichment失敗 ts={ts}: {e}")
+            logger.warning(f"[fetcher] enrichment失敗 ts={ts}: {e}")
             i += 1
             continue
 
@@ -302,7 +305,7 @@ def _enrich_from_bulk(battles: list[dict]) -> list[dict]:
 
         # バッチ内の自分のバトルを収集
         for r in batch:
-            if r.get("p1_polaris_id") == POLARIS_ID or r.get("p2_polaris_id") == POLARIS_ID:
+            if r.get("p1_polaris_id") == polaris_id or r.get("p2_polaris_id") == polaris_id:
                 bulk_by_ts[r["battle_at"]] = r
 
         # このバッチ（oldest_in_batch〜ts）の範囲に含まれる全バトルをスキップ
@@ -310,9 +313,9 @@ def _enrich_from_bulk(battles: list[dict]) -> list[dict]:
             i += 1
 
     matched = sum(1 for b in battles if b["battle_at"] in bulk_by_ts)
-    print(f"[fetcher] enrichment完了: {requests_made}リクエスト, {matched}/{len(battles)} 件マッチ")
+    logger.info(f"[fetcher] enrichment完了: {requests_made}リクエスト, {matched}/{len(battles)} 件マッチ")
 
-    return [_merge_bulk(b, bulk_by_ts[b["battle_at"]]) if b["battle_at"] in bulk_by_ts else b
+    return [_merge_bulk(b, bulk_by_ts[b["battle_at"]], polaris_id) if b["battle_at"] in bulk_by_ts else b
             for b in battles]
 
 
@@ -320,36 +323,40 @@ def _enrich_from_bulk(battles: list[dict]) -> list[dict]:
 # 公開インターフェース
 # ---------------------------------------------------------------------------
 
-def fetch_battles_since(since_ts: float) -> list[dict]:
+def fetch_battles_since(since_ts: float, polaris_id: str | None = None) -> list[dict]:
     """
     since_ts より新しいバトルを返す。
-    ewgf.gg → wank HTML + バルクenrichment → wank HTML のみ の順で試みる。
+    wank HTML + バルクenrichment → ewgf.gg（wank 失敗時）→ wank HTML のみ の順で試みる。
     """
-    # 1. ewgf.gg
-    try:
-        battles = _fetch_from_ewgf()
-        result = [b for b in battles if b["battle_at"] > since_ts]
-        print(f"[fetcher] ewgf.gg 成功: {len(result)} 件")
-        return result
-    except Exception as e:
-        print(f"[fetcher] ewgf.gg 失敗 ({e})")
+    pid = polaris_id or POLARIS_ID
 
-    # 2. wank HTML + バルクAPI enrichment
+    # 1. wank HTML + バルクAPI enrichment（メイン・リアルタイム）
+    wank_ok = False
+    html_battles: list[dict] = []
     try:
-        html_battles = _fetch_from_wank_html(since_ts)
-        print(f"[fetcher] wank HTML: {len(html_battles)} 件取得")
+        html_battles = _fetch_from_wank_html(since_ts, pid)
+        wank_ok = True
+        logger.info(f"[fetcher] wank HTML: {len(html_battles)} 件取得")
     except Exception as e:
-        print(f"[fetcher] wank HTML 失敗 ({e})")
-        html_battles = None
+        logger.warning(f"[fetcher] wank HTML 失敗 ({e})")
 
-    if html_battles is not None:
+    if wank_ok:
         if html_battles:
             try:
-                return _enrich_from_bulk(html_battles)
+                return _enrich_from_bulk(html_battles, pid)
             except Exception as e:
-                print(f"[fetcher] enrichment 失敗（HTMLデータのみで続行）: {e}")
+                logger.warning(f"[fetcher] enrichment 失敗（HTMLデータのみで続行）: {e}")
         return html_battles
 
+    # 2. ewgf.gg（wank が完全失敗した場合のフォールバック）
+    try:
+        battles = _fetch_from_ewgf(pid)
+        result = [b for b in battles if b["battle_at"] > since_ts]
+        logger.info(f"[fetcher] ewgf.gg フォールバック: {len(result)} 件")
+        return result
+    except Exception as e:
+        logger.warning(f"[fetcher] ewgf.gg 失敗 ({e})")
+
     # 3. wank HTML のみ（最終手段）
-    print("[fetcher] wank HTML フォールバック（再試行）")
-    return _fetch_from_wank_html(since_ts)
+    logger.warning("[fetcher] wank HTML 再試行（最終フォールバック）")
+    return _fetch_from_wank_html(since_ts, pid)

@@ -2,10 +2,14 @@
 Discord Webhook にバトルサマリーを投稿するモジュール。
 """
 
+import json
+import logging
 import os
 import requests
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
+
+logger = logging.getLogger(__name__)
 
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 TEKKEN_ID   = os.getenv("TEKKEN_ID", "ExodusOverseer")
@@ -75,14 +79,48 @@ def _rating_summary(battles: list[dict]) -> str:
     return f"{final_rating} ({sign}{net_change})"
 
 
+def _matchup_matrix(battles: list[dict]) -> str | None:
+    """
+    2戦以上の対戦キャラを勝率降順でリスト表示する。
+    勝率 > 50% → ✅、= 50% → ➖、< 50% → ❌
+    試合数が足りない場合は None を返す。
+    """
+    stats: dict[str, list[bool]] = defaultdict(list)
+    for b in battles:
+        chara = b.get("opp_chara") or "???"
+        stats[chara].append(bool(b["won"]))
+
+    rows = [(chara, results) for chara, results in stats.items() if len(results) >= 2]
+    if not rows:
+        return None
+
+    rows.sort(key=lambda x: sum(x[1]) / len(x[1]), reverse=True)
+
+    lines = ["📊 対戦成績"]
+    for chara, results in rows:
+        n  = len(results)
+        wr = sum(results) / n
+        pct = f"{wr * 100:.0f}%"
+        if wr > 0.5:
+            icon = "✅"
+        elif wr < 0.5:
+            icon = "❌"
+        else:
+            icon = "➖"
+        lines.append(f"  {chara:<12} {n}戦 {pct:>4} {icon}")
+
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # メッセージ構築
 # ---------------------------------------------------------------------------
 
-def build_message(battles: list[dict], date_str: str) -> str | None:
+def build_message(battles: list[dict], date_str: str, player_name: str | None = None) -> str | None:
     if not battles:
         return None
 
+    display_name = player_name or TEKKEN_ID
     sorted_b = sorted(battles, key=lambda x: x["battle_at"])
 
     # battle_type 別に分類
@@ -90,7 +128,7 @@ def build_message(battles: list[dict], date_str: str) -> str | None:
     quick  = [b for b in battles if b.get("battle_type") == "quick"]
     other  = [b for b in battles if b.get("battle_type") not in ("ranked", "quick")]
 
-    lines = [f"🎮 **{TEKKEN_ID}** 本日の戦果 ({date_str})"]
+    lines = [f"🎮 **{display_name}** 本日の戦果 ({date_str})"]
     lines.append("━━━━━━━━━━━━━━━")
 
     # --- 試合一覧 ---
@@ -143,7 +181,7 @@ def build_message(battles: list[dict], date_str: str) -> str | None:
     if max_win  >= 2: streak_parts.append(f"連勝: {max_win}")
     if max_lose >= 2: streak_parts.append(f"連敗: {max_lose}")
     if streak_parts:
-        lines.append(f"🔥 " + " | ".join(streak_parts))
+        lines.append("🔥 " + " | ".join(streak_parts))
 
     nemesis = _nemesis(battles)
     if nemesis:
@@ -154,6 +192,69 @@ def build_message(battles: list[dict], date_str: str) -> str | None:
     if latest.get("my_power"):
         lines.append(f"💥 テッケンパワー: {latest['my_power']:,}")
 
+    # --- 対戦マトリクス ---
+    matrix = _matchup_matrix(battles)
+    if matrix:
+        lines.append("━━━━━━━━━━━━━━━")
+        lines.append(matrix)
+
+    return "\n".join(lines)
+
+
+def build_weekly_message(
+    battles: list[dict],
+    week_start_str: str,
+    player_name: str | None = None,
+) -> str | None:
+    """週次サマリーメッセージを構築する。"""
+    if not battles:
+        return None
+
+    display_name = player_name or TEKKEN_ID
+    ranked = [b for b in battles if b.get("battle_type") == "ranked"]
+
+    # レーティング変動
+    rated = [b for b in ranked if b.get("rating_change") is not None]
+    net_rating = sum(b["rating_change"] for b in rated) if rated else None
+
+    # 最多使用キャラ
+    my_chara_count: dict[str, int] = defaultdict(int)
+    for b in battles:
+        c = b.get("my_chara") or "???"
+        my_chara_count[c] += 1
+    top_chara = max(my_chara_count, key=my_chara_count.__getitem__) if my_chara_count else "???"
+
+    # 最多対戦相手
+    opp_count: dict[str, int] = defaultdict(int)
+    for b in battles:
+        c = b.get("opp_chara") or "???"
+        opp_count[c] += 1
+    top_opp = max(opp_count, key=opp_count.__getitem__) if opp_count else "???"
+
+    total_w = sum(1 for b in battles if b["won"])
+    total_l = len(battles) - total_w
+
+    lines = [f"📅 **{display_name}** 週次サマリー（{week_start_str} 週）"]
+    lines.append("━━━━━━━━━━━━━━━")
+    lines.append(f"🏆 総合: {total_w}勝{total_l}敗 ({_win_rate(battles)})")
+
+    if ranked:
+        rw = sum(1 for b in ranked if b["won"])
+        rl = len(ranked) - rw
+        lines.append(f"📊 ランク: {rw}勝{rl}敗 ({_win_rate(ranked)})")
+
+    if net_rating is not None:
+        sign = "+" if net_rating >= 0 else ""
+        lines.append(f"📈 レーティング変動: {sign}{net_rating}")
+
+    lines.append(f"🥊 最多使用キャラ: {top_chara} ({my_chara_count.get(top_chara, 0)}戦)")
+    lines.append(f"🎯 最多対戦相手: {top_opp} ({opp_count.get(top_opp, 0)}戦)")
+
+    matrix = _matchup_matrix(battles)
+    if matrix:
+        lines.append("━━━━━━━━━━━━━━━")
+        lines.append(matrix)
+
     return "\n".join(lines)
 
 
@@ -161,7 +262,12 @@ def build_message(battles: list[dict], date_str: str) -> str | None:
 # 投稿
 # ---------------------------------------------------------------------------
 
-def post(battles: list[dict], date_str: str | None = None, llm_comment: str | None = None) -> bool:
+def post(
+    battles: list[dict],
+    date_str: str | None = None,
+    llm_comment: str | None = None,
+    player_name: str | None = None,
+) -> bool:
     """Discord Webhook にサマリーを投稿。投稿した場合 True を返す。"""
     if not WEBHOOK_URL:
         raise ValueError("DISCORD_WEBHOOK_URL が .env に設定されていません")
@@ -169,9 +275,49 @@ def post(battles: list[dict], date_str: str | None = None, llm_comment: str | No
     if date_str is None:
         date_str = datetime.now(JST).strftime("%Y/%m/%d")
 
-    message = build_message(battles, date_str)
+    message = build_message(battles, date_str, player_name)
     if message is None:
-        print("本日の試合なし。投稿をスキップ。")
+        logger.info("本日の試合なし。投稿をスキップ。")
+        return False
+
+    if llm_comment:
+        message += f"\n\n🤖 {llm_comment}"
+
+    # グラフ生成を試みる
+    chart = None
+    try:
+        from bot.graph import generate_rating_chart
+        chart = generate_rating_chart(battles, player_name or TEKKEN_ID)
+    except Exception as e:
+        logger.warning(f"[discord_post] グラフ生成失敗（スキップ）: {e}")
+
+    if chart:
+        resp = requests.post(
+            WEBHOOK_URL,
+            data={"payload_json": json.dumps({"content": message})},
+            files={"files[0]": ("rating.png", chart, "image/png")},
+            timeout=15,
+        )
+    else:
+        resp = requests.post(WEBHOOK_URL, json={"content": message}, timeout=10)
+
+    resp.raise_for_status()
+    return True
+
+
+def post_weekly(
+    battles: list[dict],
+    week_start_str: str,
+    llm_comment: str | None = None,
+    player_name: str | None = None,
+) -> bool:
+    """週次サマリーを Discord Webhook に投稿。"""
+    if not WEBHOOK_URL:
+        raise ValueError("DISCORD_WEBHOOK_URL が .env に設定されていません")
+
+    message = build_weekly_message(battles, week_start_str, player_name)
+    if message is None:
+        logger.info(f"[{player_name}] 今週の試合なし。週次投稿をスキップ。")
         return False
 
     if llm_comment:

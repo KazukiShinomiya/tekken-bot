@@ -8,4 +8,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY bot/ ./bot/
 COPY main.py scheduler.py exporter.py ./
 
+HEALTHCHECK --interval=1h --timeout=10s --retries=2 \
+  CMD python -c "import sqlite3,os; sqlite3.connect(os.environ.get('DB_PATH','data/battles.db')).close()" || exit 1
+
 CMD ["python", "scheduler.py"]

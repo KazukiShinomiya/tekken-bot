@@ -7,9 +7,15 @@ services:
       - ./data:/app/data
     environment:
       - DB_PATH=/app/data/battles.db
+      - LOG_PATH=/app/data/tekken_bot.log
       - PYTHONUNBUFFERED=1
     env_file:
       - .env
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sqlite3,os; sqlite3.connect(os.environ.get('DB_PATH','data/battles.db')).close()"]
+      interval: 1h
+      timeout: 10s
+      retries: 2
 
   tekken-exporter:
     build: .
@@ -19,7 +25,13 @@ services:
       - ./data:/app/data
     environment:
       - DB_PATH=/app/data/battles.db
+      - LOG_PATH=/app/data/tekken_bot.log
       - PYTHONUNBUFFERED=1
     env_file:
       - .env
     command: python exporter.py
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9877/metrics', timeout=5)"]
+      interval: 1h
+      timeout: 10s
+      retries: 2

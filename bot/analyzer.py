@@ -2,17 +2,19 @@
 Ollama（ローカルLLM）を使ってバトルデータを分析するモジュール。
 """
 
+import logging
 import os
-import json
 import requests
 from datetime import datetime, timezone, timedelta
+
+logger = logging.getLogger(__name__)
 
 OLLAMA_URL   = os.getenv("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b")
 JST          = timezone(timedelta(hours=9))
 
 
-def _build_prompt(battles: list[dict], date_str: str) -> str:
+def _build_prompt(battles: list[dict], date_str: str, player_name: str = "ExodusOverseer") -> str:
     wins   = sum(1 for b in battles if b["won"])
     losses = len(battles) - wins
     ranked = [b for b in battles if b.get("battle_type") == "ranked"]
@@ -44,7 +46,7 @@ def _build_prompt(battles: list[dict], date_str: str) -> str:
 {chr(10).join(matchups)}"""
 
     return f"""あなたは鉄拳8の対戦コーチです。
-以下は本日のプレイヤー「ExodusOverseer」の戦績です。
+以下は本日のプレイヤー「{player_name}」の戦績です。
 
 {summary}
 
@@ -55,7 +57,7 @@ def _build_prompt(battles: list[dict], date_str: str) -> str:
 余計な説明や挨拶は不要です。コメントのみ出力してください。"""
 
 
-def analyze(battles: list[dict], date_str: str) -> str | None:
+def analyze(battles: list[dict], date_str: str, player_name: str = "ExodusOverseer") -> str | None:
     """
     バトルデータをLLMで分析してコメントを返す。
     失敗時は None を返す（投稿自体は続行）。
@@ -63,7 +65,7 @@ def analyze(battles: list[dict], date_str: str) -> str | None:
     if not battles:
         return None
 
-    prompt = _build_prompt(battles, date_str)
+    prompt = _build_prompt(battles, date_str, player_name)
 
     try:
         resp = requests.post(
@@ -78,8 +80,8 @@ def analyze(battles: list[dict], date_str: str) -> str | None:
         )
         resp.raise_for_status()
         comment = resp.json().get("response", "").strip()
-        print(f"[analyzer] LLM分析完了: {len(comment)}文字")
+        logger.info(f"[analyzer] LLM分析完了: {len(comment)}文字")
         return comment if comment else None
     except Exception as e:
-        print(f"[analyzer] LLM分析失敗（スキップ）: {e}")
+        logger.warning(f"[analyzer] LLM分析失敗（スキップ）: {e}")
         return None
