@@ -13,6 +13,9 @@ import main as bot
 
 setup_logging()
 
+from bot.slash_commands import start_bot_thread
+start_bot_thread()
+
 import logging
 logger = logging.getLogger(__name__)
 
