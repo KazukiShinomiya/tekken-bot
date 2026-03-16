@@ -20,6 +20,7 @@ def generate_rating_chart(battles: list[dict], player_name: str = "Player") -> i
     try:
         import matplotlib
         matplotlib.use("Agg")
+        matplotlib.rcParams["font.family"] = "Noto Sans CJK JP"
         import matplotlib.pyplot as plt
         import matplotlib.dates as mdates
     except ImportError:
