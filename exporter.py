@@ -7,7 +7,6 @@ battles.db を読み込み、メトリクスを HTTP 経由で公開する。
 """
 
 import logging
-import os
 import sys
 import time
 import sqlite3
@@ -19,6 +18,7 @@ from prometheus_client.core import GaugeMetricFamily
 
 from main import setup_logging
 import bot.db as db
+from bot.config import EXPORTER_PORT
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -160,7 +160,7 @@ class TekkenCollector:
 
 def main():
     parser = argparse.ArgumentParser(description="Tekken Bot Prometheus Exporter")
-    parser.add_argument("--port", type=int, default=int(os.getenv("EXPORTER_PORT", "9877")))
+    parser.add_argument("--port", type=int, default=EXPORTER_PORT)
     args = parser.parse_args()
 
     db.init_db()

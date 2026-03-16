@@ -8,15 +8,14 @@ Discord スラッシュコマンド Bot。
 """
 
 import logging
-import os
 import threading
 
 import discord
 from discord import app_commands
 
-logger = logging.getLogger(__name__)
+from bot.config import DISCORD_BOT_TOKEN as BOT_TOKEN
 
-BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+logger = logging.getLogger(__name__)
 
 intents = discord.Intents.default()
 client = discord.Client(intents=intents)

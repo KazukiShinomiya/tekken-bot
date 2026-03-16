@@ -10,6 +10,7 @@ from bot.discord_post import (
     _rating_summary,
     _matchup_matrix,
     build_message,
+    build_weekly_message,
 )
 
 
@@ -224,3 +225,98 @@ def test_build_message_includes_player_name():
 
 def test_build_message_none_on_empty():
     assert build_message([], "2024/01/01") is None
+
+
+def test_build_message_shows_streak():
+    """3連勝の場合、連勝行が表示される。"""
+    battles = [_battle(True, battle_at=i * 100) for i in range(3)]
+    msg = build_message(battles, "2024/01/01")
+    assert "連勝" in msg
+
+
+def test_build_message_no_streak_when_short():
+    """1連勝は表示されない。"""
+    battles = [_battle(True, battle_at=1000), _battle(False, battle_at=2000)]
+    msg = build_message(battles, "2024/01/01")
+    assert "🔥" not in msg
+
+
+def test_build_message_shows_nemesis():
+    """2連敗キャラがいる場合、天敵行が表示される。"""
+    battles = [
+        _battle(False, "Dragunov", battle_at=1000),
+        _battle(False, "Dragunov", battle_at=2000),
+    ]
+    msg = build_message(battles, "2024/01/01")
+    assert "天敵" in msg
+    assert "Dragunov" in msg
+
+
+def test_build_message_shows_tekken_power():
+    """テッケンパワーがある場合、表示される。"""
+    b = _battle(True, battle_at=1000)
+    b["my_power"] = 123456
+    msg = build_message([b], "2024/01/01")
+    assert "テッケンパワー" in msg
+    assert "123,456" in msg
+
+
+# ---------------------------------------------------------------------------
+# build_weekly_message
+# ---------------------------------------------------------------------------
+
+def test_build_weekly_message_none_on_empty():
+    assert build_weekly_message([], "2024/01/15") is None
+
+
+def test_build_weekly_message_includes_player_name():
+    battles = [_battle(True)]
+    msg = build_weekly_message(battles, "2024/01/15", player_name="TestPlayer")
+    assert "TestPlayer" in msg
+
+
+def test_build_weekly_message_includes_win_loss():
+    battles = [_battle(True), _battle(True), _battle(False)]
+    msg = build_weekly_message(battles, "2024/01/15")
+    assert "2勝1敗" in msg
+
+
+def test_build_weekly_message_includes_top_chara():
+    """最多使用キャラが表示される。"""
+    battles = [
+        _battle(True,  my_chara="Reina"),
+        _battle(False, my_chara="Reina"),
+        _battle(True,  my_chara="Jin"),
+    ]
+    msg = build_weekly_message(battles, "2024/01/15")
+    assert "Reina" in msg  # 2戦で最多
+
+
+def test_build_weekly_message_with_rating():
+    """ランク戦のレーティング変動が表示される。"""
+    battles = [
+        _battle(True,  rating_change=50,  battle_type="ranked"),
+        _battle(False, rating_change=-30, battle_type="ranked"),
+    ]
+    msg = build_weekly_message(battles, "2024/01/15")
+    assert "レーティング変動" in msg
+    assert "+20" in msg
+
+
+def test_build_weekly_message_includes_matchup_matrix():
+    """2戦以上の対戦キャラがある場合、マトリクスが含まれる。"""
+    battles = [
+        _battle(True,  "Dragunov"), _battle(True,  "Dragunov"),
+        _battle(False, "Jin"),      _battle(False, "Jin"),
+    ]
+    msg = build_weekly_message(battles, "2024/01/15")
+    assert "Dragunov" in msg
+    assert "Jin" in msg
+
+
+def test_build_weekly_message_no_matchup_matrix_when_insufficient():
+    """1戦しかないキャラはマトリクスに出ない。"""
+    battles = [_battle(True, "Jin"), _battle(False, "Dragunov")]
+    msg = build_weekly_message(battles, "2024/01/15")
+    # マトリクスセクションが存在しない（各キャラ1戦のみ）
+    assert "📊 対戦成績" not in msg

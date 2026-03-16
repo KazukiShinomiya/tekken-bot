@@ -2,15 +2,14 @@
 SQLite によるバトル履歴の永続化モジュール。
 """
 
-import os
 import sqlite3
 import logging
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+from bot.config import DB_PATH
 
-DB_PATH = Path(os.getenv("DB_PATH", str(Path(__file__).parent / "battles.db")))
+logger = logging.getLogger(__name__)
 
 
 def get_conn() -> sqlite3.Connection:

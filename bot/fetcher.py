@@ -8,20 +8,17 @@
 """
 
 import logging
-import os
 import re
 import requests
 from bs4 import BeautifulSoup
+
+from bot.config import EWGF_API_KEY as API_KEY, POLARIS_ID
 
 logger = logging.getLogger(__name__)
 
 EWGF_API    = "https://api.ewgf.gg/external"
 WANK_BULK   = "https://wank.wavu.wiki/api/replays"
 WANK_PLAYER = "https://wank.wavu.wiki/player"
-
-API_KEY    = os.getenv("EWGF_API_KEY")
-TEKKEN_ID  = os.getenv("TEKKEN_ID")
-POLARIS_ID = os.getenv("POLARIS_ID")
 
 CHARA_NAMES = {
     1: "Paul", 2: "Law", 3: "King", 4: "Yoshimitsu", 5: "Hwoarang",
@@ -269,28 +266,19 @@ def _merge_bulk(battle: dict, bulk: dict, polaris_id: str) -> dict:
     return battle
 
 
-def _enrich_from_bulk(battles: list[dict], polaris_id: str) -> list[dict]:
+def _build_bulk_index(sorted_battles: list[dict], polaris_id: str) -> tuple[dict[int, dict], int]:
     """
-    HTMLバトルリストをバルクAPIでenrichする。
-
-    バトルを700秒ウィンドウでグループ化し、1グループ=1リクエストで済ませる。
-    1ゲームセッション分なら通常1〜3リクエスト。
+    新しい順にソートされたバトルリストを最小 API リクエスト数でカバーし、
+    タイムスタンプ → バルクレコードの辞書と総リクエスト数を返す。
     """
-    if not battles:
-        return battles
-
-    # 新しい順にソートして処理
-    sorted_battles = sorted(battles, key=lambda x: x["battle_at"], reverse=True)
     bulk_by_ts: dict[int, dict] = {}
     requests_made = 0
-
     i = 0
+
     while i < len(sorted_battles):
         ts = sorted_battles[i]["battle_at"]
-        before = ts + 10
-
         try:
-            batch = _fetch_bulk_batch(before)
+            batch = _fetch_bulk_batch(ts + 10)
             requests_made += 1
         except Exception as e:
             logger.warning(f"[fetcher] enrichment失敗 ts={ts}: {e}")
@@ -301,16 +289,30 @@ def _enrich_from_bulk(battles: list[dict], polaris_id: str) -> list[dict]:
             i += 1
             continue
 
-        oldest_in_batch = min(b["battle_at"] for b in batch)
-
-        # バッチ内の自分のバトルを収集
+        oldest = min(b["battle_at"] for b in batch)
         for r in batch:
             if r.get("p1_polaris_id") == polaris_id or r.get("p2_polaris_id") == polaris_id:
                 bulk_by_ts[r["battle_at"]] = r
 
-        # このバッチ（oldest_in_batch〜ts）の範囲に含まれる全バトルをスキップ
-        while i < len(sorted_battles) and sorted_battles[i]["battle_at"] >= oldest_in_batch:
+        # このバッチ範囲に含まれる全バトルをスキップ
+        while i < len(sorted_battles) and sorted_battles[i]["battle_at"] >= oldest:
             i += 1
+
+    return bulk_by_ts, requests_made
+
+
+def _enrich_from_bulk(battles: list[dict], polaris_id: str) -> list[dict]:
+    """
+    HTMLバトルリストをバルクAPIでenrichする。
+
+    バトルを700秒ウィンドウでグループ化し、1グループ=1リクエストで済ませる。
+    1ゲームセッション分なら通常1〜3リクエスト。
+    """
+    if not battles:
+        return battles
+
+    sorted_battles = sorted(battles, key=lambda x: x["battle_at"], reverse=True)
+    bulk_by_ts, requests_made = _build_bulk_index(sorted_battles, polaris_id)
 
     matched = sum(1 for b in battles if b["battle_at"] in bulk_by_ts)
     logger.info(f"[fetcher] enrichment完了: {requests_made}リクエスト, {matched}/{len(battles)} 件マッチ")

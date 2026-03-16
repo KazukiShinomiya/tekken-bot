@@ -162,6 +162,18 @@ def test_get_battles_since(db):
     assert "b3" in ids
 
 
+def test_get_battles_since_player_filter(db):
+    """player_name を指定すると、そのプレイヤーのバトルのみ返る。"""
+    db.insert_battles([_make_battle("a1", battle_at=2000)], player_name="Alice")
+    db.insert_battles([_make_battle("b1", battle_at=3000)], player_name="Bob")
+
+    alice = db.get_battles_since(1000, player_name="Alice")
+    bob   = db.get_battles_since(1000, player_name="Bob")
+
+    assert len(alice) == 1 and alice[0]["battle_id"] == "a1"
+    assert len(bob)   == 1 and bob[0]["battle_id"]   == "b1"
+
+
 def test_migration_adds_player_name(tmp_path, monkeypatch):
     """
     player_name カラムがないテーブルに対して init_db() が

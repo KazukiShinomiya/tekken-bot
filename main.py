@@ -7,7 +7,6 @@ Tekken Bot メインスクリプト。
 """
 
 import logging
-import os
 import sys
 from datetime import datetime, timezone, timedelta
 from logging.handlers import RotatingFileHandler
@@ -16,6 +15,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv()
 
+from bot.config import PLAYERS as PLAYERS_ENV, POLARIS_ID as POLARIS_ID_ENV, TEKKEN_ID as TEKKEN_ID_ENV, LOG_PATH
 import bot.db as db
 import bot.fetcher as fetcher
 import bot.discord_post as discord_post
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 def setup_logging() -> None:
     """RotatingFileHandler + StreamHandler でロギングを設定する。"""
-    log_path = Path(os.getenv("LOG_PATH", "data/tekken_bot.log"))
+    log_path = Path(LOG_PATH)
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
     handlers: list[logging.Handler] = [
@@ -53,10 +53,9 @@ def get_players() -> list[tuple[str, str]]:
     設定から (player_name, polaris_id) のリストを返す。
     PLAYERS=Name1:id1,Name2:id2 または TEKKEN_ID + POLARIS_ID の後方互換に対応。
     """
-    players_env = os.getenv("PLAYERS", "").strip()
-    if players_env:
+    if PLAYERS_ENV:
         result = []
-        for entry in players_env.split(","):
+        for entry in PLAYERS_ENV.split(","):
             entry = entry.strip()
             if ":" not in entry:
                 continue
@@ -65,10 +64,8 @@ def get_players() -> list[tuple[str, str]]:
         return result
 
     # 後方互換: 単一プレイヤー設定
-    polaris_id = os.getenv("POLARIS_ID")
-    tekken_id  = os.getenv("TEKKEN_ID", "default")
-    if polaris_id:
-        return [(tekken_id, polaris_id)]
+    if POLARIS_ID_ENV:
+        return [(TEKKEN_ID_ENV or "default", POLARIS_ID_ENV)]
     return []
 
 

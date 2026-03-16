@@ -4,16 +4,16 @@ Discord Webhook にバトルサマリーを投稿するモジュール。
 
 import json
 import logging
-import os
 import requests
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 
+from bot.config import DISCORD_WEBHOOK_URL as WEBHOOK_URL, TEKKEN_ID
+from bot.stats import calculate_streak, aggregate_by_character
+
 logger = logging.getLogger(__name__)
 
-WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
-TEKKEN_ID   = os.getenv("TEKKEN_ID", "ExodusOverseer")
-JST         = timezone(timedelta(hours=9))
+JST = timezone(timedelta(hours=9))
 
 
 # ---------------------------------------------------------------------------
@@ -29,25 +29,12 @@ def _win_rate(battles: list[dict]) -> str:
 
 def _streak(sorted_battles: list[dict]) -> tuple[int, int]:
     """時系列順バトルリストから (最長連勝, 最長連敗) を返す。"""
-    max_win = max_lose = cur_win = cur_lose = 0
-    for b in sorted_battles:
-        if b["won"]:
-            cur_win += 1
-            cur_lose = 0
-        else:
-            cur_lose += 1
-            cur_win = 0
-        max_win  = max(max_win,  cur_win)
-        max_lose = max(max_lose, cur_lose)
-    return max_win, max_lose
+    return calculate_streak(sorted_battles)
 
 
 def _nemesis(battles: list[dict]) -> str | None:
     """2戦以上対戦したキャラの中で、最も勝率が低いキャラを返す。"""
-    stats: dict[str, list[bool]] = defaultdict(list)
-    for b in battles:
-        chara = b.get("opp_chara") or "???"
-        stats[chara].append(bool(b["won"]))
+    stats = aggregate_by_character(battles)
 
     candidates = [(chara, results) for chara, results in stats.items() if len(results) >= 2]
     if not candidates:
@@ -85,10 +72,7 @@ def _matchup_matrix(battles: list[dict]) -> str | None:
     勝率 > 50% → ✅、= 50% → ➖、< 50% → ❌
     試合数が足りない場合は None を返す。
     """
-    stats: dict[str, list[bool]] = defaultdict(list)
-    for b in battles:
-        chara = b.get("opp_chara") or "???"
-        stats[chara].append(bool(b["won"]))
+    stats = aggregate_by_character(battles)
 
     rows = [(chara, results) for chara, results in stats.items() if len(results) >= 2]
     if not rows:
