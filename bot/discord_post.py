@@ -8,7 +8,7 @@ import requests
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 
-from bot.config import DISCORD_WEBHOOK_URL as WEBHOOK_URL, TEKKEN_ID
+from bot.config import DISCORD_WEBHOOK_URL as WEBHOOK_URL, TEKKEN_ID, TIMEOUT_WEBHOOK, TIMEOUT_WEBHOOK_IMAGE
 from bot.stats import calculate_streak, aggregate_by_character
 
 logger = logging.getLogger(__name__)
@@ -261,7 +261,7 @@ def post(
 
     message = build_message(battles, date_str, player_name)
     if message is None:
-        logger.info("本日の試合なし。投稿をスキップ。")
+        logger.info("[discord_post] 本日の試合なし。投稿をスキップ。")
         return False
 
     if llm_comment:
@@ -280,10 +280,10 @@ def post(
             WEBHOOK_URL,
             data={"payload_json": json.dumps({"content": message})},
             files={"files[0]": ("rating.png", chart, "image/png")},
-            timeout=15,
+            timeout=TIMEOUT_WEBHOOK_IMAGE,
         )
     else:
-        resp = requests.post(WEBHOOK_URL, json={"content": message}, timeout=10)
+        resp = requests.post(WEBHOOK_URL, json={"content": message}, timeout=TIMEOUT_WEBHOOK)
 
     resp.raise_for_status()
     return True
@@ -301,12 +301,12 @@ def post_weekly(
 
     message = build_weekly_message(battles, week_start_str, player_name)
     if message is None:
-        logger.info(f"[{player_name}] 今週の試合なし。週次投稿をスキップ。")
+        logger.info(f"[discord_post][{player_name}] 今週の試合なし。週次投稿をスキップ。")
         return False
 
     if llm_comment:
         message += f"\n\n🤖 {llm_comment}"
 
-    resp = requests.post(WEBHOOK_URL, json={"content": message}, timeout=10)
+    resp = requests.post(WEBHOOK_URL, json={"content": message}, timeout=TIMEOUT_WEBHOOK)
     resp.raise_for_status()
     return True

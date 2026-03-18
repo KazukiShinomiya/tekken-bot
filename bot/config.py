@@ -28,3 +28,9 @@ LOG_PATH = os.getenv("LOG_PATH", "data/tekken_bot.log")
 
 # ── Exporter ──────────────────────────────────────────────────────────────────
 EXPORTER_PORT = int(os.getenv("EXPORTER_PORT", "9877"))
+
+# ── タイムアウト（秒） ────────────────────────────────────────────────────────
+TIMEOUT_API           = 15   # wank / ewgf.gg API
+TIMEOUT_LLM           = 300  # Ollama（7bモデル、CPU推論で実測約2分）
+TIMEOUT_WEBHOOK       = 10   # Discord Webhook（テキストのみ）
+TIMEOUT_WEBHOOK_IMAGE = 15   # Discord Webhook（画像添付）

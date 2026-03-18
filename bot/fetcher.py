@@ -12,7 +12,7 @@ import re
 import requests
 from bs4 import BeautifulSoup
 
-from bot.config import EWGF_API_KEY as API_KEY, POLARIS_ID
+from bot.config import EWGF_API_KEY as API_KEY, POLARIS_ID, TIMEOUT_API
 
 logger = logging.getLogger(__name__)
 
@@ -21,14 +21,15 @@ WANK_BULK   = "https://wank.wavu.wiki/api/replays"
 WANK_PLAYER = "https://wank.wavu.wiki/player"
 
 CHARA_NAMES = {
-    1: "Paul", 2: "Law", 3: "King", 4: "Yoshimitsu", 5: "Hwoarang",
-    6: "Xiaoyu", 7: "Jin", 8: "Bryan", 9: "Kazuya", 10: "Steve",
-    11: "Jack-8", 12: "Asuka", 13: "Devil Jin", 14: "Feng", 15: "Lili",
-    16: "Dragunov", 17: "Leo", 18: "Lars", 19: "Alisa", 20: "Claudio",
-    21: "Shaheen", 22: "Nina", 23: "Lee", 24: "Kuma", 25: "Panda",
-    26: "Zafina", 27: "Leroy", 28: "Jun", 29: "Reina", 30: "Azucena",
-    31: "Victor", 32: "Raven", 33: "Eddy", 34: "Lidia", 35: "Heihachi",
-    36: "Clive", 44: "Armor King", 45: "Miary Zo",
+    # wank bulk API は 0-indexed でキャラIDを返す（DLC は 44/45 で共通）
+    0: "Paul", 1: "Law", 2: "King", 3: "Yoshimitsu", 4: "Hwoarang",
+    5: "Xiaoyu", 6: "Jin", 7: "Bryan", 8: "Kazuya", 9: "Steve",
+    10: "Jack-8", 11: "Asuka", 12: "Devil Jin", 13: "Feng", 14: "Lili",
+    15: "Dragunov", 16: "Leo", 17: "Lars", 18: "Alisa", 19: "Claudio",
+    20: "Shaheen", 21: "Nina", 22: "Lee", 23: "Kuma", 24: "Panda",
+    25: "Zafina", 26: "Leroy", 27: "Jun", 28: "Reina", 29: "Azucena",
+    30: "Victor", 31: "Raven", 32: "Eddy", 33: "Lidia", 34: "Heihachi",
+    35: "Clive", 44: "Armor King", 45: "Miary Zo",
 }
 
 # battle_type の数値 → 文字列マッピング
@@ -57,7 +58,7 @@ EWGF_BATTLE_TYPES = {
 
 def _fetch_from_ewgf(polaris_id: str) -> list[dict]:
     url = f"{EWGF_API}/battles/{polaris_id}"
-    resp = requests.get(url, headers={"Authorization": f"Bearer {API_KEY}"}, timeout=15)
+    resp = requests.get(url, headers={"Authorization": f"Bearer {API_KEY}"}, timeout=TIMEOUT_API)
     resp.raise_for_status()
     data = resp.json()
     raw_list = data.get("data", data.get("battles", []))
@@ -121,7 +122,7 @@ def _normalize_ewgf(raw: dict, polaris_id: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def _fetch_from_wank_html(since_ts: float, polaris_id: str, limit: int = 50) -> list[dict]:
-    resp = requests.get(f"{WANK_PLAYER}/{polaris_id}", timeout=15)
+    resp = requests.get(f"{WANK_PLAYER}/{polaris_id}", timeout=TIMEOUT_API)
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "html.parser")
 
@@ -234,7 +235,7 @@ def _fetch_bulk_batch(before: int) -> list[dict]:
         WANK_BULK,
         params={"before": before},
         headers={"Accept-Encoding": "gzip"},
-        timeout=15,
+        timeout=TIMEOUT_API,
     )
     resp.raise_for_status()
     return resp.json()
@@ -259,9 +260,9 @@ def _merge_bulk(battle: dict, bulk: dict, polaris_id: str) -> dict:
     battle["opp_rank"]          = bulk.get(f"{opp}_rank")
     battle["opp_power"]         = bulk.get(f"{opp}_power")
     battle["opp_region"]        = bulk.get(f"{opp}_region_id")
-    if battle["my_chara_id"]:
+    if battle["my_chara_id"] is not None:
         battle["my_chara"] = get_chara_name(battle["my_chara_id"])
-    if battle["opp_chara_id"]:
+    if battle["opp_chara_id"] is not None:
         battle["opp_chara"] = get_chara_name(battle["opp_chara_id"])
     return battle
 

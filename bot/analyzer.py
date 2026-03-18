@@ -5,58 +5,74 @@ Ollama（ローカルLLM）を使ってバトルデータを分析するモジ�
 import logging
 import requests
 
-from bot.config import OLLAMA_URL, OLLAMA_MODEL
+from bot.config import OLLAMA_URL, OLLAMA_MODEL, TIMEOUT_LLM
 from bot.stats import calculate_streak, aggregate_by_character
 
 logger = logging.getLogger(__name__)
 
 
-def _build_prompt(battles: list[dict], date_str: str, player_name: str = "") -> str:
+def _calculate_stats(battles: list[dict]) -> dict:
+    """バトルリストから集計値を計算して返す。"""
     wins   = sum(1 for b in battles if b["won"])
     losses = len(battles) - wins
     ranked = [b for b in battles if b.get("battle_type") == "ranked"]
     quick  = [b for b in battles if b.get("battle_type") == "quick"]
 
-    total_my   = sum(b.get("my_rounds",  0) or 0 for b in battles)
-    total_opp  = sum(b.get("opp_rounds", 0) or 0 for b in battles)
-    total_r    = total_my + total_opp
-    round_wr   = f"{total_my / total_r * 100:.0f}%" if total_r else "-"
+    total_my  = sum(b.get("my_rounds",  0) or 0 for b in battles)
+    total_opp = sum(b.get("opp_rounds", 0) or 0 for b in battles)
+    total_r   = total_my + total_opp
+    round_wr  = f"{total_my / total_r * 100:.0f}%" if total_r else "-"
 
-    # レーティング変動
-    rated = [b for b in ranked if b.get("rating_change") is not None]
+    rated      = [b for b in ranked if b.get("rating_change") is not None]
     net_rating = sum(b["rating_change"] for b in rated) if rated else None
 
-    # 連勝・連敗
-    sorted_b = sorted(battles, key=lambda x: x["battle_at"])
-    max_win, max_lose = calculate_streak(sorted_b)
+    sorted_b              = sorted(battles, key=lambda x: x["battle_at"])
+    max_win, max_lose     = calculate_streak(sorted_b)
 
-    # 対戦キャラ集計
     chara_results = aggregate_by_character(battles)
-    matchups = []
-    for chara, results in sorted(chara_results.items()):
-        w = sum(results)
-        l = len(results) - w
-        matchups.append(f"  {chara}: {w}勝{l}敗")
+    matchups = [
+        f"  {chara}: {sum(results)}勝{len(results) - sum(results)}敗"
+        for chara, results in sorted(chara_results.items())
+    ]
 
-    # サマリー構築
+    return {
+        "wins": wins, "losses": losses,
+        "ranked": ranked, "quick": quick,
+        "round_wr": round_wr,
+        "net_rating": net_rating,
+        "max_win": max_win, "max_lose": max_lose,
+        "matchups": matchups,
+    }
+
+
+def _build_summary_text(stats: dict, date_str: str) -> str:
+    """集計値からLLMへ渡すサマリーテキストを構築する。"""
+    wins, losses = stats["wins"], stats["losses"]
+    ranked, quick = stats["ranked"], stats["quick"]
+    total = wins + losses
+
     lines = [
         f"日付: {date_str}",
-        f"総合: {wins}勝{losses}敗 (勝率{round(wins * 100 / len(battles)) if battles else 0}%)",
+        f"総合: {wins}勝{losses}敗 (勝率{round(wins * 100 / total) if total else 0}%)",
         f"ランク戦: {sum(1 for b in ranked if b['won'])}勝{sum(1 for b in ranked if not b['won'])}敗",
         f"クイック: {sum(1 for b in quick if b['won'])}勝{sum(1 for b in quick if not b['won'])}敗",
-        f"ラウンド勝率: {round_wr}",
+        f"ラウンド勝率: {stats['round_wr']}",
     ]
-    if net_rating is not None:
-        sign = "+" if net_rating >= 0 else ""
-        lines.append(f"レーティング変動: {sign}{net_rating}")
-    if max_win >= 2:
-        lines.append(f"最長連勝: {max_win}")
-    if max_lose >= 2:
-        lines.append(f"最長連敗: {max_lose}")
+    if stats["net_rating"] is not None:
+        sign = "+" if stats["net_rating"] >= 0 else ""
+        lines.append(f"レーティング変動: {sign}{stats['net_rating']}")
+    if stats["max_win"] >= 2:
+        lines.append(f"最長連勝: {stats['max_win']}")
+    if stats["max_lose"] >= 2:
+        lines.append(f"最長連敗: {stats['max_lose']}")
     lines.append("対戦キャラ別成績:")
-    lines.extend(matchups)
+    lines.extend(stats["matchups"])
+    return "\n".join(lines)
 
-    summary = "\n".join(lines)
+
+def _build_prompt(battles: list[dict], date_str: str, player_name: str = "") -> str:
+    stats   = _calculate_stats(battles)
+    summary = _build_summary_text(stats, date_str)
 
     return f"""あなたは鉄拳8の対戦コーチです。
 以下は本日のプレイヤー「{player_name}」の戦績です。
@@ -91,7 +107,7 @@ def analyze(battles: list[dict], date_str: str, player_name: str = "") -> str | 
                 "stream": False,
                 "options": {"temperature": 0.7, "num_predict": 200},
             },
-            timeout=300,  # 7bモデル対応（CPU推論で実測約2分、余裕を持って5分）
+            timeout=TIMEOUT_LLM,
         )
         resp.raise_for_status()
         comment = resp.json().get("response", "").strip()
