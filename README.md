@@ -59,7 +59,7 @@
 │  │       ├─ db.py ──────→ SQLite (battles.db) │    │
 │  │       │                                    │    │
 │  │       ├─ analyzer.py ─→ Ollama (localhost) │    │
-│  │       │                (qwen2.5:3b)        │    │
+│  │       │                (qwen2.5:7b)        │    │
 │  │       │                                    │    │
 │  │       └─ discord_post.py → Discord Webhook │    │
 │  └─────────────────────────────────────────────┘    │
@@ -70,7 +70,7 @@
 │  └─────────────────────────────────────────────┘    │
 │                                                      │
 │  ┌──────────────┐                                   │
-│  │ Ollama       │  qwen2.5:3b (CPU推論)             │
+│  │ Ollama       │  qwen2.5:7b (CPU推論)             │
 │  │ :11434       │                                   │
 │  └──────────────┘                                   │
 └─────────────────────────────────────────────────────┘
@@ -133,8 +133,8 @@ battles: battle_type, game_version, stage_id,
 
 自宅サーバー（Raspberry Pi 系、8GB RAM）で Ollama を動かし、**外部APIに一切頼らず** 日本語コメントを生成する。
 
-- モデル: `qwen2.5:3b`（Apache 2.0、商用利用可）
-- 推論速度: 約30〜60秒（CPU のみ）
+- モデル: `qwen2.5:7b`（Apache 2.0、商用利用可）
+- 推論速度: 約100〜120秒（CPU のみ）
 - Docker コンテナからは `network_mode: host` で localhost に直接接続
 
 毎日1回しか動かないボットなので、CPUの遅さは問題にならない。
@@ -151,7 +151,7 @@ battles: battle_type, game_version, stage_id,
 - Discord Bot Token（スラッシュコマンドを使う場合）
 - wank.wavu.wiki の Polaris ID（プロフィールURLから確認）
 - （任意）ewgf.gg API Key
-- （任意）Ollama + qwen2.5:3b
+- （任意）Ollama + qwen2.5:7b
 
 ### .env 設定
 
@@ -166,7 +166,7 @@ DISCORD_BOT_TOKEN=your_bot_token_here
 
 EWGF_API_KEY=your_key_here
 OLLAMA_URL=http://localhost:11434
-OLLAMA_MODEL=qwen2.5:3b
+OLLAMA_MODEL=qwen2.5:7b
 LOG_PATH=/app/data/tekken_bot.log
 ```
 
@@ -210,13 +210,15 @@ tekken_bot/
 ├── scheduler.py         # 定時実行スケジューラ（Docker用）+ Bot スレッド起動
 ├── exporter.py          # Prometheus メトリクス公開（port 9877）
 ├── bot/
+│   ├── config.py        # 環境変数・タイムアウト設定の一元管理
 │   ├── fetcher.py       # データ取得（wank HTML + バルクAPI / ewgf.gg フォールバック）
 │   ├── db.py            # SQLite永続化（player_nameカラム対応）
+│   ├── stats.py         # 共通統計計算（連勝・キャラ別集計）
 │   ├── discord_post.py  # Discord投稿・メッセージ整形・グラフ添付
 │   ├── graph.py         # matplotlibレーティンググラフ生成
 │   ├── analyzer.py      # ローカルLLM分析（Ollama）
 │   └── slash_commands.py  # Discord スラッシュコマンド定義
-├── tests/               # pytest テストスイート（48テスト）
+├── tests/               # pytest テストスイート（74テスト）
 ├── SPEC.md              # 仕様書
 ├── Dockerfile
 ├── docker-compose.yml
