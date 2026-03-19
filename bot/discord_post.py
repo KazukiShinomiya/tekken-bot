@@ -196,6 +196,7 @@ def build_weekly_message(
 
     display_name = player_name or TEKKEN_ID
     ranked = [b for b in battles if b.get("battle_type") == "ranked"]
+    quick  = [b for b in battles if b.get("battle_type") == "quick"]
 
     # レーティング変動
     rated = [b for b in ranked if b.get("rating_change") is not None]
@@ -226,6 +227,11 @@ def build_weekly_message(
         rw = sum(1 for b in ranked if b["won"])
         rl = len(ranked) - rw
         lines.append(f"📊 ランク: {rw}勝{rl}敗 ({_win_rate(ranked)})")
+
+    if quick:
+        qw = sum(1 for b in quick if b["won"])
+        ql = len(quick) - qw
+        lines.append(f"⚡ クイック: {qw}勝{ql}敗 ({_win_rate(quick)})")
 
     if net_rating is not None:
         sign = "+" if net_rating >= 0 else ""
