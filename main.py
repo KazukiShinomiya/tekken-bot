@@ -99,7 +99,11 @@ def _run_for_player(player_name: str, polaris_id: str, today_str: str, date_str:
         logger.info(f"[{player_name}] 本日の試合なし。投稿をスキップ。")
         return
 
-    llm_comment = analyzer.analyze(today_battles, date_str, player_name=player_name)
+    prev_date_str = (datetime.strptime(today_str, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+    prev_battles  = db.get_battles_on_date(prev_date_str, player_name=player_name)
+    logger.info(f"[{player_name}] 前日分: {len(prev_battles)} 件")
+
+    llm_comment = analyzer.analyze(today_battles, date_str, player_name=player_name, prev_battles=prev_battles)
 
     try:
         discord_post.post(today_battles, date_str, llm_comment, player_name=player_name)

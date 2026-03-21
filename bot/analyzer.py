@@ -70,33 +70,51 @@ def _build_summary_text(stats: dict, date_str: str) -> str:
     return "\n".join(lines)
 
 
-def _build_prompt(battles: list[dict], date_str: str, player_name: str = "") -> str:
+def _build_prompt(battles: list[dict], date_str: str, player_name: str = "",
+                  prev_battles: list[dict] | None = None, prev_date_str: str = "") -> str:
     stats   = _calculate_stats(battles)
     summary = _build_summary_text(stats, date_str)
 
-    return f"""あなたは鉄拳8の対戦コーチです。
-以下は本日のプレイヤー「{player_name}」の戦績です。
+    prev_section = ""
+    if prev_battles:
+        prev_stats   = _calculate_stats(prev_battles)
+        prev_summary = _build_summary_text(prev_stats, prev_date_str)
+        prev_section = f"\n【前日の成績】\n{prev_summary}\n"
 
+    return f"""あなたは鉄拳8の対戦コーチです。
+以下はプレイヤー「{player_name}」の戦績です。
+{prev_section}
+【本日の成績】
 {summary}
 
 この戦績を分析して、日本語で150文字以内のコーチコメントをしてください。
 ・全体の調子を一言で評価する
-・最も改善すべき点を一つ、具体的に指摘する
+・前日と比較して変化があれば触れる（前日データがない場合は本日分だけで評価する）
+・上記のデータから読み取れる次の課題または強化すべき点を一つ述べる（好成績の場合は強みを伸ばす視点でも可）
 ・前向きに締めくくる
 
-【厳守】上記の「対戦キャラ別成績」に記載されていないキャラクター名は絶対に出さない。
+【厳守】「対戦キャラ別成績」に記載されていないキャラクター名は絶対に出さない。
+【厳守】データに記載されていない事実や推測は述べない。
 余計な説明・挨拶・記号は不要です。コメント本文のみ出力してください。"""
 
 
-def analyze(battles: list[dict], date_str: str, player_name: str = "") -> str | None:
+def analyze(battles: list[dict], date_str: str, player_name: str = "",
+            prev_battles: list[dict] | None = None) -> str | None:
     """
     バトルデータをLLMで分析してコメントを返す。
+    prev_battles が渡された場合は前日比のコンテキストをプロンプトに含める。
     失敗時は None を返す（投稿自体は続行）。
     """
     if not battles:
         return None
 
-    prompt = _build_prompt(battles, date_str, player_name)
+    from datetime import datetime, timedelta
+    try:
+        prev_date_str = (datetime.strptime(date_str, "%Y/%m/%d") - timedelta(days=1)).strftime("%Y/%m/%d")
+    except ValueError:
+        prev_date_str = ""
+
+    prompt = _build_prompt(battles, date_str, player_name, prev_battles=prev_battles, prev_date_str=prev_date_str)
 
     try:
         resp = requests.post(

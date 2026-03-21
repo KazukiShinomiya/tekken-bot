@@ -68,13 +68,13 @@ def _rating_summary(battles: list[dict]) -> str:
 
 def _matchup_matrix(battles: list[dict]) -> str | None:
     """
-    2戦以上の対戦キャラを勝率降順でリスト表示する。
+    対戦キャラを勝率降順でリスト表示する。
     勝率 > 50% → ✅、= 50% → ➖、< 50% → ❌
-    試合数が足りない場合は None を返す。
+    試合データがない場合は None を返す。
     """
     stats = aggregate_by_character(battles)
 
-    rows = [(chara, results) for chara, results in stats.items() if len(results) >= 2]
+    rows = [(chara, results) for chara, results in stats.items() if len(results) >= 1]
     if not rows:
         return None
 
