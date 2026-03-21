@@ -253,11 +253,11 @@ def test_build_message_shows_nemesis():
 
 
 def test_build_message_shows_tekken_power():
-    """テッケンパワーがある場合、表示される。"""
+    """鉄拳力がある場合、表示される。"""
     b = _battle(True, battle_at=1000)
     b["my_power"] = 123456
     msg = build_message([b], "2024/01/01")
-    assert "テッケンパワー" in msg
+    assert "鉄拳力" in msg
     assert "123,456" in msg
 
 

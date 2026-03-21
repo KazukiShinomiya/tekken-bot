@@ -171,10 +171,10 @@ def build_message(battles: list[dict], date_str: str, player_name: str | None = 
     if nemesis:
         lines.append(f"😤 天敵: {nemesis}")
 
-    # テッケンパワー（ある場合）
+    # 鉄拳力（ある場合）
     latest = max(battles, key=lambda x: x["battle_at"])
     if latest.get("my_power"):
-        lines.append(f"💥 テッケンパワー: {latest['my_power']:,}")
+        lines.append(f"💥 鉄拳力: {latest['my_power']:,}")
 
     # --- 対戦マトリクス ---
     matrix = _matchup_matrix(battles)
