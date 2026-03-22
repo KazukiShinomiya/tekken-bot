@@ -4,6 +4,7 @@
 """
 
 import os
+from datetime import timezone, timedelta
 from pathlib import Path
 
 # ── Discord ──────────────────────────────────────────────────────────────────
@@ -28,6 +29,9 @@ LOG_PATH = os.getenv("LOG_PATH", "data/tekken_bot.log")
 
 # ── Exporter ──────────────────────────────────────────────────────────────────
 EXPORTER_PORT = int(os.getenv("EXPORTER_PORT", "9877"))
+
+# ── タイムゾーン ──────────────────────────────────────────────────────────────
+JST = timezone(timedelta(hours=9))
 
 # ── タイムアウト（秒） ────────────────────────────────────────────────────────
 TIMEOUT_API           = 15   # wank / ewgf.gg API

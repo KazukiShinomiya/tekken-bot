@@ -13,7 +13,7 @@ import threading
 import discord
 from discord import app_commands
 
-from bot.config import DISCORD_BOT_TOKEN as BOT_TOKEN
+from bot.config import DISCORD_BOT_TOKEN as BOT_TOKEN, JST
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +52,7 @@ async def cmd_weekly(interaction: discord.Interaction) -> None:
 
 @tekken_group.command(name="status", description="Bot の稼働状況を確認する")
 async def cmd_status(interaction: discord.Interaction) -> None:
-    from datetime import datetime, timezone, timedelta
-    JST = timezone(timedelta(hours=9))
+    from datetime import datetime
     now = datetime.now(JST).strftime("%Y/%m/%d %H:%M:%S")
     await interaction.response.send_message(f"✅ Bot 稼働中 | {now} JST")
 

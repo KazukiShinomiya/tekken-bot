@@ -5,10 +5,12 @@ matplotlib がインストールされていない場合は None を返す（グ
 
 import io
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
+
+from bot.config import JST
+from bot.stats import filter_rated_battles
 
 logger = logging.getLogger(__name__)
-JST = timezone(timedelta(hours=9))
 
 
 def generate_rating_chart(battles: list[dict], player_name: str = "Player") -> io.BytesIO | None:
@@ -27,10 +29,7 @@ def generate_rating_chart(battles: list[dict], player_name: str = "Player") -> i
         logger.warning("[graph] matplotlib が未インストールのためグラフをスキップ")
         return None
 
-    rated = [
-        b for b in battles
-        if b.get("rating_before") is not None and b.get("rating_change") is not None
-    ]
+    rated = [b for b in filter_rated_battles(battles) if b.get("rating_before") is not None]
     if not rated:
         return None
 

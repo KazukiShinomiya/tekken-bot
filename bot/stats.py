@@ -4,6 +4,21 @@ analyzer.py と discord_post.py で共有する純粋関数。
 """
 
 
+def count_wins(battles: list[dict]) -> int:
+    """バトルリストから勝利数を返す。"""
+    return sum(1 for b in battles if b["won"])
+
+
+def count_losses(battles: list[dict]) -> int:
+    """バトルリストから敗北数を返す。"""
+    return len(battles) - count_wins(battles)
+
+
+def filter_rated_battles(battles: list[dict]) -> list[dict]:
+    """rating_change が存在するバトルのみを返す。"""
+    return [b for b in battles if b.get("rating_change") is not None]
+
+
 def calculate_streak(battles: list[dict]) -> tuple[int, int]:
     """時系列順バトルリストから (最長連勝, 最長連敗) を返す。"""
     max_win = max_lose = cur_win = cur_lose = 0

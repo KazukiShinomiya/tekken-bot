@@ -3,11 +3,10 @@ bot/db.py のテスト（インメモリ SQLite を使用）。
 """
 
 import pytest
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 from pathlib import Path
 
-
-JST = timezone(timedelta(hours=9))
+from bot.config import JST
 
 
 def _make_battle(

@@ -6,15 +6,15 @@ import logging
 import requests
 
 from bot.config import OLLAMA_URL, OLLAMA_MODEL, TIMEOUT_LLM
-from bot.stats import calculate_streak, aggregate_by_character
+from bot.stats import calculate_streak, aggregate_by_character, count_wins, count_losses, filter_rated_battles
 
 logger = logging.getLogger(__name__)
 
 
 def _calculate_stats(battles: list[dict]) -> dict:
     """バトルリストから集計値を計算して返す。"""
-    wins   = sum(1 for b in battles if b["won"])
-    losses = len(battles) - wins
+    wins   = count_wins(battles)
+    losses = count_losses(battles)
     ranked = [b for b in battles if b.get("battle_type") == "ranked"]
     quick  = [b for b in battles if b.get("battle_type") == "quick"]
 
@@ -23,7 +23,7 @@ def _calculate_stats(battles: list[dict]) -> dict:
     total_r   = total_my + total_opp
     round_wr  = f"{total_my / total_r * 100:.0f}%" if total_r else "-"
 
-    rated      = [b for b in ranked if b.get("rating_change") is not None]
+    rated      = filter_rated_battles(ranked)
     net_rating = sum(b["rating_change"] for b in rated) if rated else None
 
     sorted_b              = sorted(battles, key=lambda x: x["battle_at"])
@@ -54,8 +54,8 @@ def _build_summary_text(stats: dict, date_str: str) -> str:
     lines = [
         f"日付: {date_str}",
         f"総合: {wins}勝{losses}敗 (勝率{round(wins * 100 / total) if total else 0}%)",
-        f"ランク戦: {sum(1 for b in ranked if b['won'])}勝{sum(1 for b in ranked if not b['won'])}敗",
-        f"クイック: {sum(1 for b in quick if b['won'])}勝{sum(1 for b in quick if not b['won'])}敗",
+        f"ランク戦: {count_wins(ranked)}勝{count_losses(ranked)}敗",
+        f"クイック: {count_wins(quick)}勝{count_losses(quick)}敗",
         f"ラウンド勝率: {stats['round_wr']}",
     ]
     if stats["net_rating"] is not None:

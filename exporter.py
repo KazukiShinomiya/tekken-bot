@@ -11,19 +11,17 @@ import sys
 import time
 import sqlite3
 import argparse
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 
 from prometheus_client import start_http_server, REGISTRY
 from prometheus_client.core import GaugeMetricFamily
 
 from main import setup_logging
 import bot.db as db
-from bot.config import EXPORTER_PORT
+from bot.config import EXPORTER_PORT, JST
 
 setup_logging()
 logger = logging.getLogger(__name__)
-
-JST = timezone(timedelta(hours=9))
 DB_PATH = db.DB_PATH
 
 

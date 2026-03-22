@@ -6,14 +6,12 @@ import json
 import logging
 import requests
 from collections import defaultdict
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 
-from bot.config import DISCORD_WEBHOOK_URL as WEBHOOK_URL, TEKKEN_ID, TIMEOUT_WEBHOOK, TIMEOUT_WEBHOOK_IMAGE
-from bot.stats import calculate_streak, aggregate_by_character
+from bot.config import DISCORD_WEBHOOK_URL as WEBHOOK_URL, TEKKEN_ID, TIMEOUT_WEBHOOK, TIMEOUT_WEBHOOK_IMAGE, JST
+from bot.stats import calculate_streak, aggregate_by_character, count_wins, count_losses, filter_rated_battles
 
 logger = logging.getLogger(__name__)
-
-JST = timezone(timedelta(hours=9))
 
 
 # ---------------------------------------------------------------------------
@@ -23,7 +21,7 @@ JST = timezone(timedelta(hours=9))
 def _win_rate(battles: list[dict]) -> str:
     if not battles:
         return "-"
-    pct = sum(1 for b in battles if b["won"]) / len(battles) * 100
+    pct = count_wins(battles) / len(battles) * 100
     return f"{pct:.0f}%"
 
 
@@ -54,7 +52,7 @@ def _nemesis(battles: list[dict]) -> str | None:
 
 def _rating_summary(battles: list[dict]) -> str:
     """当日の合計レーティング変動と最終レーティングを返す。"""
-    rated = [b for b in battles if b.get("rating_change") is not None]
+    rated = filter_rated_battles(battles)
     if not rated:
         return ""
 
@@ -129,8 +127,8 @@ def build_message(battles: list[dict], date_str: str, player_name: str | None = 
     def _type_line(icon: str, label: str, subset: list[dict]) -> str | None:
         if not subset:
             return None
-        w = sum(1 for b in subset if b["won"])
-        l = len(subset) - w
+        w = count_wins(subset)
+        l = count_losses(subset)
         wr = _win_rate(subset)
         base = f"{icon} {label:<5} {w}勝{l}敗 ({wr})"
         if label == "ランク":
@@ -199,7 +197,7 @@ def build_weekly_message(
     quick  = [b for b in battles if b.get("battle_type") == "quick"]
 
     # レーティング変動
-    rated = [b for b in ranked if b.get("rating_change") is not None]
+    rated = filter_rated_battles(ranked)
     net_rating = sum(b["rating_change"] for b in rated) if rated else None
 
     # 最多使用キャラ
@@ -216,21 +214,21 @@ def build_weekly_message(
         opp_count[c] += 1
     top_opp = max(opp_count, key=opp_count.__getitem__) if opp_count else "???"
 
-    total_w = sum(1 for b in battles if b["won"])
-    total_l = len(battles) - total_w
+    total_w = count_wins(battles)
+    total_l = count_losses(battles)
 
     lines = [f"📅 **{display_name}** 週次サマリー（{week_start_str} 週）"]
     lines.append("━━━━━━━━━━━━━━━")
     lines.append(f"🏆 総合: {total_w}勝{total_l}敗 ({_win_rate(battles)})")
 
     if ranked:
-        rw = sum(1 for b in ranked if b["won"])
-        rl = len(ranked) - rw
+        rw = count_wins(ranked)
+        rl = count_losses(ranked)
         lines.append(f"📊 ランク: {rw}勝{rl}敗 ({_win_rate(ranked)})")
 
     if quick:
-        qw = sum(1 for b in quick if b["won"])
-        ql = len(quick) - qw
+        qw = count_wins(quick)
+        ql = count_losses(quick)
         lines.append(f"⚡ クイック: {qw}勝{ql}敗 ({_win_rate(quick)})")
 
     if net_rating is not None:

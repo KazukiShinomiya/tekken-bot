@@ -8,20 +8,18 @@ Tekken Bot メインスクリプト。
 
 import logging
 import sys
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from dotenv import load_dotenv
 load_dotenv()
 
-from bot.config import PLAYERS as PLAYERS_ENV, POLARIS_ID as POLARIS_ID_ENV, TEKKEN_ID as TEKKEN_ID_ENV, LOG_PATH
+from bot.config import PLAYERS as PLAYERS_ENV, POLARIS_ID as POLARIS_ID_ENV, TEKKEN_ID as TEKKEN_ID_ENV, LOG_PATH, JST
 import bot.db as db
 import bot.fetcher as fetcher
 import bot.discord_post as discord_post
 import bot.analyzer as analyzer
-
-JST = timezone(timedelta(hours=9))
 
 logger = logging.getLogger(__name__)
 

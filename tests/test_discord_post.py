@@ -191,8 +191,10 @@ def test_matchup_matrix_50_percent():
 
 
 def test_matchup_matrix_not_enough_battles():
-    battles = [_battle(True, "Jin")]  # 1戦のみ
-    assert _matchup_matrix(battles) is None
+    battles = [_battle(True, "Jin")]  # 1戦のみ（閾値1戦から表示）
+    result = _matchup_matrix(battles)
+    assert result is not None
+    assert "Jin" in result
 
 
 def test_matchup_matrix_sorted_by_win_rate():
@@ -314,9 +316,10 @@ def test_build_weekly_message_includes_matchup_matrix():
     assert "Jin" in msg
 
 
-def test_build_weekly_message_no_matchup_matrix_when_insufficient():
-    """1戦しかないキャラはマトリクスに出ない。"""
+def test_build_weekly_message_shows_matchup_matrix_with_one_battle():
+    """1戦のキャラもマトリクスに表示される（閾値1戦から表示）。"""
     battles = [_battle(True, "Jin"), _battle(False, "Dragunov")]
     msg = build_weekly_message(battles, "2024/01/15")
-    # マトリクスセクションが存在しない（各キャラ1戦のみ）
-    assert "📊 対戦成績" not in msg
+    assert "📊 対戦成績" in msg
+    assert "Jin" in msg
+    assert "Dragunov" in msg

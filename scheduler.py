@@ -6,10 +6,11 @@ Docker コンテナ用スケジューラ。
 
 import time
 import schedule
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 
 from main import setup_logging
 import main as bot
+from bot.config import JST
 
 setup_logging()
 
@@ -18,9 +19,6 @@ start_bot_thread()
 
 import logging
 logger = logging.getLogger(__name__)
-
-JST = timezone(timedelta(hours=9))
-
 
 def job():
     logger.info(f"[scheduler] 定時実行開始 {datetime.now(JST).isoformat()}")
@@ -41,11 +39,8 @@ def weekly_job():
         logger.error(f"[scheduler] weekly() で予期しないエラー: {e}")
 
 
-# JST 08:00 = UTC 23:00 (前日)
-schedule.every().day.at("23:00").do(job)
-
-# JST 21:00 (日曜) = UTC 12:00 (日曜)
-schedule.every().sunday.at("12:00").do(weekly_job)
+schedule.every().day.at("08:00").do(job)
+schedule.every().sunday.at("21:00").do(weekly_job)
 
 logger.info("スケジューラ起動。毎日 08:00 JST に前日分を投稿、毎週日曜 21:00 JST に週次サマリーを実行します。")
 logger.info(f"現在時刻: {datetime.now(JST).isoformat()}")
