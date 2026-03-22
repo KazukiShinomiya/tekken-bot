@@ -183,7 +183,9 @@ def weekly() -> None:
             discord_post.post_weekly(battles, week_start_str, llm_comment, player_name=player_name)
             logger.info(f"[{player_name}] 週次サマリー投稿完了。")
         except Exception as e:
-            logger.error(f"[{player_name}] 週次サマリー投稿失敗: {e}")
+            msg = f"[{player_name}] 週次サマリー投稿失敗: {e}"
+            logger.error(msg)
+            discord_post.notify_error(msg)
 
 
 if __name__ == "__main__":

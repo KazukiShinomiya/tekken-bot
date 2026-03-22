@@ -1,9 +1,10 @@
 """
 bot/fetcher.py のテスト。
-外部API呼び出しを含む関数は対象外とし、純粋な変換・パース関数のみをテストする。
+純粋な変換・パース関数と、requests をモックしたネットワーク層のテストを含む。
 """
 
 import pytest
+from unittest.mock import patch, MagicMock
 from bs4 import BeautifulSoup
 
 from bot.fetcher import (
@@ -11,6 +12,8 @@ from bot.fetcher import (
     _normalize_ewgf,
     _merge_bulk,
     _parse_wank_html_row,
+    fetch_battles_since,
+    fetch_quick_battles_from_ewgf,
     CHARA_NAMES,
 )
 
@@ -307,3 +310,155 @@ def test_parse_wank_row_missing_elements_returns_none():
     soup = BeautifulSoup("<tr><td>invalid</td></tr>", "html.parser")
     result = _parse_wank_html_row(soup.find("tr"))
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# fetch_battles_since — フォールバックチェーンのテスト
+# ---------------------------------------------------------------------------
+
+def _mock_battle(battle_at: int = 2000) -> dict:
+    return {
+        "battle_id":      f"wank_{battle_at}_opp",
+        "battle_at":      battle_at,
+        "battle_type":    "ranked",
+        "source":         "wank_bulk",
+        "won":            True,
+        "my_chara":       "Jin",
+        "my_chara_id":    6,
+        "my_rounds":      2,
+        "my_rank":        15,
+        "my_power":       10000,
+        "my_region":      "JP",
+        "rating_before":  10000,
+        "rating_change":  50,
+        "opp_name":       "Opp",
+        "opp_polaris_id": "opp_pid",
+        "opp_chara":      "Reina",
+        "opp_chara_id":   28,
+        "opp_rounds":     1,
+        "opp_rank":       12,
+        "opp_power":      8000,
+        "opp_region":     "US",
+        "opp_rating_before": None,
+        "opp_rating_change": None,
+        "game_version":   "1.0",
+        "stage_id":       3,
+    }
+
+
+@patch("bot.fetcher._enrich_from_bulk")
+@patch("bot.fetcher._fetch_from_wank_html")
+def test_fetch_battles_since_normal_path(mock_wank, mock_enrich):
+    """wank 成功 → enrich して返す。"""
+    battle = _mock_battle(2000)
+    mock_wank.return_value  = [battle]
+    mock_enrich.return_value = [battle]
+
+    result = fetch_battles_since(1000, polaris_id="me")
+
+    assert len(result) == 1
+    mock_wank.assert_called_once()
+    mock_enrich.assert_called_once()
+
+
+@patch("bot.fetcher._fetch_from_wank_html")
+def test_fetch_battles_since_wank_empty(mock_wank):
+    """wank 成功だが試合なし → enrich せず空リストを返す。"""
+    mock_wank.return_value = []
+
+    result = fetch_battles_since(1000, polaris_id="me")
+
+    assert result == []
+
+
+@patch("bot.fetcher._enrich_from_bulk")
+@patch("bot.fetcher._fetch_from_wank_html")
+def test_fetch_battles_since_enrich_fails_returns_html(mock_wank, mock_enrich):
+    """enrich 失敗 → HTMLデータのみで続行。"""
+    battle = _mock_battle(2000)
+    mock_wank.return_value = [battle]
+    mock_enrich.side_effect = Exception("bulk API down")
+
+    result = fetch_battles_since(1000, polaris_id="me")
+
+    assert len(result) == 1
+    assert result[0]["source"] == "wank_bulk"
+
+
+@patch("bot.fetcher._fetch_from_ewgf")
+@patch("bot.fetcher._fetch_from_wank_html")
+def test_fetch_battles_since_falls_back_to_ewgf(mock_wank, mock_ewgf):
+    """wank 完全失敗 → ewgf.gg にフォールバック。"""
+    mock_wank.side_effect = Exception("wank down")
+    ewgf_battle = {**_mock_battle(2000), "source": "ewgf"}
+    mock_ewgf.return_value = [ewgf_battle]
+
+    result = fetch_battles_since(1000, polaris_id="me")
+
+    assert len(result) == 1
+    mock_ewgf.assert_called_once()
+
+
+@patch("bot.fetcher._fetch_from_wank_html")
+@patch("bot.fetcher._fetch_from_ewgf")
+def test_fetch_battles_since_falls_back_to_wank_retry(mock_ewgf, mock_wank):
+    """wank 失敗 + ewgf 失敗 → wank を再試行（最終フォールバック）。"""
+    mock_ewgf.side_effect = Exception("ewgf also down")
+    battle = _mock_battle(2000)
+    mock_wank.side_effect = [Exception("first call fails"), [battle]]
+
+    result = fetch_battles_since(1000, polaris_id="me")
+
+    assert len(result) == 1
+    assert mock_wank.call_count == 2  # 最初の失敗 + 再試行
+
+
+@patch("bot.fetcher._fetch_from_wank_html")
+def test_fetch_battles_since_filters_old_battles(mock_wank):
+    """since_ts より古いバトルは ewgf フォールバック時に除外される。"""
+    old_battle = _mock_battle(500)   # since_ts=1000 より古い
+    new_battle = _mock_battle(2000)
+    mock_wank.side_effect = Exception("wank down")
+
+    with patch("bot.fetcher._fetch_from_ewgf") as mock_ewgf:
+        mock_ewgf.return_value = [old_battle, new_battle]
+        result = fetch_battles_since(1000, polaris_id="me")
+
+    assert len(result) == 1
+    assert result[0]["battle_at"] == 2000
+
+
+# ---------------------------------------------------------------------------
+# fetch_quick_battles_from_ewgf
+# ---------------------------------------------------------------------------
+
+@patch("bot.fetcher._fetch_from_ewgf")
+def test_fetch_quick_battles_returns_only_quick(mock_ewgf):
+    """quick タイプのみ返す。"""
+    mock_ewgf.return_value = [
+        {**_mock_battle(2000), "battle_type": "quick"},
+        {**_mock_battle(3000), "battle_type": "ranked"},  # 除外
+    ]
+    result = fetch_quick_battles_from_ewgf(1000, polaris_id="me")
+    assert len(result) == 1
+    assert result[0]["battle_type"] == "quick"
+
+
+@patch("bot.fetcher._fetch_from_ewgf")
+def test_fetch_quick_battles_filters_old(mock_ewgf):
+    """since_ts より古いバトルは除外される。"""
+    mock_ewgf.return_value = [
+        {**_mock_battle(500),  "battle_type": "quick"},  # 古い
+        {**_mock_battle(2000), "battle_type": "quick"},
+    ]
+    result = fetch_quick_battles_from_ewgf(1000, polaris_id="me")
+    assert len(result) == 1
+    assert result[0]["battle_at"] == 2000
+
+
+@patch("bot.fetcher._fetch_from_ewgf")
+def test_fetch_quick_battles_returns_empty_on_error(mock_ewgf):
+    """ewgf 失敗時は空リストを返す（例外を出さない）。"""
+    mock_ewgf.side_effect = Exception("ewgf down")
+    result = fetch_quick_battles_from_ewgf(0, polaris_id="me")
+    assert result == []

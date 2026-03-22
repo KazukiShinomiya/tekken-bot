@@ -173,6 +173,108 @@ def test_get_battles_since_player_filter(db):
     assert len(bob)   == 1 and bob[0]["battle_id"]   == "b1"
 
 
+# ---------------------------------------------------------------------------
+# 集計関数テスト
+# ---------------------------------------------------------------------------
+
+def test_get_current_rating_none_when_empty(db):
+    assert db.get_current_rating() is None
+
+
+def test_get_current_rating_returns_latest(db):
+    db.insert_battles([
+        _make_battle("b1", battle_at=1000, rating_before=10000, rating_change=50),
+        _make_battle("b2", battle_at=2000, rating_before=10050, rating_change=-30),
+    ])
+    assert db.get_current_rating() == 10020  # 10050 + (-30)
+
+
+def test_get_current_rating_skips_none(db):
+    """rating_before/change が NULL のバトルは無視される。"""
+    db.insert_battles([
+        _make_battle("b1", battle_at=1000),                               # rating なし
+        _make_battle("b2", battle_at=2000, rating_before=9000, rating_change=100),
+    ])
+    assert db.get_current_rating() == 9100
+
+
+def test_get_rating_delta_zero_when_empty(db):
+    assert db.get_rating_delta(0) == 0
+
+
+def test_get_rating_delta_sums_ranked_only(db):
+    db.insert_battles([
+        _make_battle("b1", battle_at=1000, battle_type="ranked", rating_change=50),
+        _make_battle("b2", battle_at=2000, battle_type="ranked", rating_change=-30),
+        _make_battle("b3", battle_at=3000, battle_type="quick",  rating_change=999),  # 除外
+    ])
+    assert db.get_rating_delta(0) == 20  # 50 + (-30)
+
+
+def test_get_rating_delta_respects_since_ts(db):
+    db.insert_battles([
+        _make_battle("b1", battle_at=1000, battle_type="ranked", rating_change=50),
+        _make_battle("b2", battle_at=3000, battle_type="ranked", rating_change=100),
+    ])
+    assert db.get_rating_delta(2000) == 100  # b1 は除外
+
+
+def test_get_win_loss_all_types(db):
+    db.insert_battles([
+        _make_battle("b1", won=True,  battle_type="ranked"),
+        _make_battle("b2", won=True,  battle_type="quick"),
+        _make_battle("b3", won=False, battle_type="ranked"),
+    ])
+    wins, losses = db.get_win_loss(0)
+    assert wins == 2
+    assert losses == 1
+
+
+def test_get_win_loss_ranked_only(db):
+    db.insert_battles([
+        _make_battle("b1", won=True,  battle_type="ranked"),
+        _make_battle("b2", won=True,  battle_type="quick"),
+        _make_battle("b3", won=False, battle_type="ranked"),
+    ])
+    wins, losses = db.get_win_loss(0, battle_type="ranked")
+    assert wins == 1
+    assert losses == 1
+
+
+def test_get_win_loss_empty(db):
+    assert db.get_win_loss(0) == (0, 0)
+
+
+def test_get_matchup_stats_returns_ranked_only(db):
+    db.insert_battles([
+        _make_battle("b1", won=True,  opp_chara="Jin",  battle_type="ranked"),
+        _make_battle("b2", won=True,  opp_chara="Jin",  battle_type="ranked"),
+        _make_battle("b3", won=True,  opp_chara="Jin",  battle_type="ranked"),
+        _make_battle("b4", won=False, opp_chara="Jin",  battle_type="quick"),  # 除外
+    ])
+    rows = db.get_matchup_stats(0, min_battles=3)
+    assert len(rows) == 1
+    assert rows[0]["opp_chara"] == "Jin"
+    assert rows[0]["wins"] == 3
+    assert rows[0]["total"] == 3
+
+
+def test_get_matchup_stats_min_battles_filter(db):
+    db.insert_battles([
+        _make_battle("b1", opp_chara="Jin",    battle_type="ranked"),
+        _make_battle("b2", opp_chara="Jin",    battle_type="ranked"),
+        _make_battle("b3", opp_chara="Reina",  battle_type="ranked"),  # 1戦のみ
+    ])
+    rows = db.get_matchup_stats(0, min_battles=2)
+    charas = [r["opp_chara"] for r in rows]
+    assert "Jin" in charas
+    assert "Reina" not in charas
+
+
+def test_get_matchup_stats_empty(db):
+    assert db.get_matchup_stats(0) == []
+
+
 def test_migration_adds_player_name(tmp_path, monkeypatch):
     """
     player_name カラムがないテーブルに対して init_db() が
