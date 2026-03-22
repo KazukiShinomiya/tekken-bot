@@ -9,7 +9,10 @@ from collections import defaultdict
 from datetime import datetime
 
 from bot.config import DISCORD_WEBHOOK_URL as WEBHOOK_URL, TEKKEN_ID, TIMEOUT_WEBHOOK, TIMEOUT_WEBHOOK_IMAGE, JST
-from bot.stats import calculate_streak, aggregate_by_character, count_wins, count_losses, filter_rated_battles
+from bot.stats import (
+    calculate_streak, aggregate_by_character, count_wins, count_losses,
+    filter_rated_battles, aggregate_by_hour, detect_momentum,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +97,45 @@ def _matchup_matrix(battles: list[dict]) -> str | None:
     return "\n".join(lines)
 
 
+def _hourly_section(battles: list[dict]) -> str | None:
+    """JST 時間帯別勝率セクションを返す。2試合以上の時間帯のみ表示。"""
+    hourly = aggregate_by_hour(battles)
+    rows = [(h, results) for h, results in hourly.items() if len(results) >= 2]
+    if not rows:
+        return None
+    rows.sort(key=lambda x: x[0])
+    lines = ["🕐 時間帯別"]
+    for hour, results in rows:
+        w   = sum(results)
+        l   = len(results) - w
+        wr  = w / len(results) * 100
+        icon = "✅" if wr > 50 else ("❌" if wr < 50 else "➖")
+        lines.append(f"  {hour:02d}時 {w}勝{l}敗 ({wr:.0f}%) {icon}")
+    return "\n".join(lines)
+
+
+def _rematch_section(battles: list[dict]) -> str | None:
+    """同一対戦相手と2戦以上した場合に今日の対面成績をまとめて返す。"""
+    from collections import Counter
+    pid_count: Counter = Counter(
+        b.get("opp_polaris_id") for b in battles if b.get("opp_polaris_id")
+    )
+    repeat_pids = {pid for pid, cnt in pid_count.items() if cnt >= 2}
+    if not repeat_pids:
+        return None
+
+    lines = ["🔄 リピート対戦"]
+    for pid in sorted(repeat_pids):
+        subset = [b for b in battles if b.get("opp_polaris_id") == pid]
+        opp_name  = subset[0].get("opp_name") or "???"
+        opp_chara = subset[0].get("opp_chara") or "???"
+        w  = sum(1 for b in subset if b["won"])
+        l  = len(subset) - w
+        wr = w / len(subset) * 100
+        lines.append(f"  {opp_name}({opp_chara}) {w}勝{l}敗 ({wr:.0f}%)")
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # メッセージ構築
 # ---------------------------------------------------------------------------
@@ -169,6 +211,11 @@ def build_message(battles: list[dict], date_str: str, player_name: str | None = 
     if nemesis:
         lines.append(f"😤 天敵: {nemesis}")
 
+    # 調子の波
+    momentum = detect_momentum(sorted_b)
+    if momentum:
+        lines.append(momentum)
+
     # 鉄拳力（ある場合）
     latest = max(battles, key=lambda x: x["battle_at"])
     if latest.get("my_power"):
@@ -179,6 +226,18 @@ def build_message(battles: list[dict], date_str: str, player_name: str | None = 
     if matrix:
         lines.append("━━━━━━━━━━━━━━━")
         lines.append(matrix)
+
+    # --- 時間帯別勝率 ---
+    hourly = _hourly_section(battles)
+    if hourly:
+        lines.append("━━━━━━━━━━━━━━━")
+        lines.append(hourly)
+
+    # --- リピート対戦 ---
+    rematch = _rematch_section(battles)
+    if rematch:
+        lines.append("━━━━━━━━━━━━━━━")
+        lines.append(rematch)
 
     return "\n".join(lines)
 

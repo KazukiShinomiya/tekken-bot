@@ -70,8 +70,23 @@ def _build_summary_text(stats: dict, date_str: str) -> str:
     return "\n".join(lines)
 
 
+def _build_rematch_section(rematch_data: dict) -> str:
+    """リピート対戦相手の通算成績セクションを構築する。"""
+    lines = []
+    for data in rematch_data.values():
+        history = data["history"]
+        wins  = sum(1 for b in history if b["won"])
+        total = len(history)
+        wr    = wins / total * 100 if total else 0
+        lines.append(f"  {data['name']}({data['chara']}): 通算{wins}勝{total - wins}敗 ({wr:.0f}%)")
+    if not lines:
+        return ""
+    return "【繰り返し対戦した相手の通算成績】\n" + "\n".join(lines)
+
+
 def _build_prompt(battles: list[dict], date_str: str, player_name: str = "",
-                  prev_battles: list[dict] | None = None, prev_date_str: str = "") -> str:
+                  prev_battles: list[dict] | None = None, prev_date_str: str = "",
+                  rematch_data: dict | None = None) -> str:
     stats   = _calculate_stats(battles)
     summary = _build_summary_text(stats, date_str)
 
@@ -81,15 +96,20 @@ def _build_prompt(battles: list[dict], date_str: str, player_name: str = "",
         prev_summary = _build_summary_text(prev_stats, prev_date_str)
         prev_section = f"\n【前日の成績】\n{prev_summary}\n"
 
+    rematch_section = ""
+    if rematch_data:
+        rematch_section = "\n" + _build_rematch_section(rematch_data) + "\n"
+
     return f"""あなたは鉄拳8の対戦コーチです。
 以下はプレイヤー「{player_name}」の戦績です。
 {prev_section}
 【本日の成績】
 {summary}
-
+{rematch_section}
 この戦績を分析して、日本語で150文字以内のコーチコメントをしてください。
 ・全体の調子を一言で評価する
 ・前日と比較して変化があれば触れる（前日データがない場合は本日分だけで評価する）
+・繰り返し対戦した相手がいれば通算成績に触れる（データがある場合のみ）
 ・上記のデータから読み取れる次の課題または強化すべき点を一つ述べる（好成績の場合は強みを伸ばす視点でも可）
 ・前向きに締めくくる
 
@@ -99,10 +119,12 @@ def _build_prompt(battles: list[dict], date_str: str, player_name: str = "",
 
 
 def analyze(battles: list[dict], date_str: str, player_name: str = "",
-            prev_battles: list[dict] | None = None) -> str | None:
+            prev_battles: list[dict] | None = None,
+            rematch_data: dict | None = None) -> str | None:
     """
     バトルデータをLLMで分析してコメントを返す。
     prev_battles が渡された場合は前日比のコンテキストをプロンプトに含める。
+    rematch_data が渡された場合はリピート対戦相手の通算成績をプロンプトに含める。
     失敗時は None を返す（投稿自体は続行）。
     """
     if not battles:
@@ -114,7 +136,11 @@ def analyze(battles: list[dict], date_str: str, player_name: str = "",
     except ValueError:
         prev_date_str = ""
 
-    prompt = _build_prompt(battles, date_str, player_name, prev_battles=prev_battles, prev_date_str=prev_date_str)
+    prompt = _build_prompt(
+        battles, date_str, player_name,
+        prev_battles=prev_battles, prev_date_str=prev_date_str,
+        rematch_data=rematch_data,
+    )
 
     try:
         resp = requests.post(

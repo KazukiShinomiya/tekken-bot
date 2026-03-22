@@ -227,3 +227,41 @@ def get_matchup_stats(since_ts: int, min_battles: int = 3) -> list[dict]:
             HAVING COUNT(*) >= ?
         """, (since_ts, min_battles)).fetchall()
     return [dict(r) for r in rows]
+
+
+def get_battles_vs_opponent(
+    opp_polaris_id: str,
+    since_ts: float = 0,
+    player_name: str | None = None,
+) -> list[dict]:
+    """特定の相手(polaris_id)との過去対戦履歴を返す。"""
+    with get_conn() as conn:
+        if player_name is not None:
+            rows = conn.execute(
+                "SELECT * FROM battles WHERE opp_polaris_id = ? AND battle_at >= ?"
+                "  AND player_name = ? ORDER BY battle_at",
+                (opp_polaris_id, int(since_ts), player_name),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM battles WHERE opp_polaris_id = ? AND battle_at >= ?"
+                "  ORDER BY battle_at",
+                (opp_polaris_id, int(since_ts)),
+            ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_win_loss_by_hour(since_ts: int) -> list[dict]:
+    """since_ts 以降の JST 時間帯別 (hour, wins, losses) を返す。"""
+    with get_conn() as conn:
+        rows = conn.execute("""
+            SELECT
+                CAST(strftime('%H', datetime(battle_at, 'unixepoch', '+9 hours')) AS INTEGER) AS hour,
+                SUM(won)           AS wins,
+                COUNT(*) - SUM(won) AS losses
+            FROM battles
+            WHERE battle_at >= ?
+            GROUP BY hour
+            ORDER BY hour
+        """, (since_ts,)).fetchall()
+    return [dict(r) for r in rows]

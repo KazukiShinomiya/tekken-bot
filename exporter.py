@@ -111,6 +111,30 @@ class TekkenCollector:
         yield matchup_wr_g
         yield matchup_n_g
 
+        # ── 5. 時間帯別勝率 (today / 7d) ─────────────────────────────────
+        hourly_wr_g = GaugeMetricFamily(
+            "tekken_hourly_win_rate",
+            "JST 時間帯別勝率",
+            labels=["hour", "period"],
+        )
+        hourly_n_g = GaugeMetricFamily(
+            "tekken_hourly_battles",
+            "JST 時間帯別試合数",
+            labels=["hour", "period"],
+        )
+
+        for period in ("today", "7d"):
+            rows = db.get_win_loss_by_hour(_period_start_ts(period))
+            for r in rows:
+                total = r["wins"] + r["losses"]
+                labels = [str(r["hour"]), period]
+                hourly_n_g.add_metric(labels, float(total))
+                if total > 0:
+                    hourly_wr_g.add_metric(labels, r["wins"] / total)
+
+        yield hourly_wr_g
+        yield hourly_n_g
+
 
 def main():
     parser = argparse.ArgumentParser(description="Tekken Bot Prometheus Exporter")

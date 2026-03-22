@@ -8,6 +8,7 @@ Tekken Bot メインスクリプト。
 
 import logging
 import sys
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import datetime, timedelta
 from logging.handlers import RotatingFileHandler
@@ -68,17 +69,41 @@ def get_players() -> list[tuple[str, str]]:
     return []
 
 
+def _collect_rematch_data(
+    today_battles: list[dict],
+    player_name: str,
+) -> dict:
+    """今日2戦以上した相手の通算成績を DB から収集する。"""
+    pid_count: Counter = Counter(
+        b.get("opp_polaris_id") for b in today_battles if b.get("opp_polaris_id")
+    )
+    rematch_data: dict = {}
+    for pid, cnt in pid_count.items():
+        if cnt < 2:
+            continue
+        history = db.get_battles_vs_opponent(pid, player_name=player_name)
+        if history:
+            sample = next(b for b in today_battles if b.get("opp_polaris_id") == pid)
+            rematch_data[pid] = {
+                "name":    sample.get("opp_name")  or "???",
+                "chara":   sample.get("opp_chara") or "???",
+                "history": history,
+            }
+    return rematch_data
+
+
 def _analyze_with_timeout(
     battles: list[dict],
     date_str: str,
     player_name: str = "",
     prev_battles: list[dict] | None = None,
+    rematch_data: dict | None = None,
 ) -> str | None:
     """LLM 分析を別スレッドで実行し、TIMEOUT_LLM 秒以内に結果を返す。タイムアウト時は None。"""
     pool = ThreadPoolExecutor(max_workers=1)
     future = pool.submit(
         analyzer.analyze, battles, date_str,
-        player_name, prev_battles,
+        player_name, prev_battles, rematch_data,
     )
     pool.shutdown(wait=False)
     try:
@@ -128,8 +153,12 @@ def _run_for_player(player_name: str, polaris_id: str, today_str: str, date_str:
     prev_battles  = db.get_battles_on_date(prev_date_str, player_name=player_name)
     logger.info(f"[{player_name}] 前日分: {len(prev_battles)} 件")
 
+    rematch_data = _collect_rematch_data(today_battles, player_name)
+    logger.info(f"[{player_name}] リピート対戦相手: {len(rematch_data)} 人")
+
     llm_comment = _analyze_with_timeout(
-        today_battles, date_str, player_name=player_name, prev_battles=prev_battles
+        today_battles, date_str, player_name=player_name,
+        prev_battles=prev_battles, rematch_data=rematch_data or None,
     )
 
     try:
