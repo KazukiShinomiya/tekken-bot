@@ -8,6 +8,7 @@ Tekken Bot メインスクリプト。
 
 import logging
 import sys
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import datetime, timedelta
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -15,7 +16,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv()
 
-from bot.config import PLAYERS as PLAYERS_ENV, POLARIS_ID as POLARIS_ID_ENV, TEKKEN_ID as TEKKEN_ID_ENV, LOG_PATH, JST
+from bot.config import PLAYERS as PLAYERS_ENV, POLARIS_ID as POLARIS_ID_ENV, TEKKEN_ID as TEKKEN_ID_ENV, LOG_PATH, JST, TIMEOUT_LLM
 import bot.db as db
 import bot.fetcher as fetcher
 import bot.discord_post as discord_post
@@ -67,6 +68,30 @@ def get_players() -> list[tuple[str, str]]:
     return []
 
 
+def _analyze_with_timeout(
+    battles: list[dict],
+    date_str: str,
+    player_name: str = "",
+    prev_battles: list[dict] | None = None,
+) -> str | None:
+    """LLM 分析を別スレッドで実行し、TIMEOUT_LLM 秒以内に結果を返す。タイムアウト時は None。"""
+    pool = ThreadPoolExecutor(max_workers=1)
+    future = pool.submit(
+        analyzer.analyze, battles, date_str,
+        player_name, prev_battles,
+    )
+    pool.shutdown(wait=False)
+    try:
+        return future.result(timeout=TIMEOUT_LLM)
+    except FutureTimeoutError:
+        logger.warning(f"[{player_name}] LLM分析タイムアウト（{TIMEOUT_LLM}s）、スキップ")
+        discord_post.notify_error(f"[{player_name}] LLM分析タイムアウト（投稿は続行）")
+        return None
+    except Exception as e:
+        logger.warning(f"[{player_name}] LLM分析失敗: {e}")
+        return None
+
+
 def _run_for_player(player_name: str, polaris_id: str, today_str: str, date_str: str) -> None:
     """1プレイヤー分のバトル取得・保存・投稿を実行する。"""
     logger.info(f"[{player_name}] 処理開始")
@@ -78,7 +103,9 @@ def _run_for_player(player_name: str, polaris_id: str, today_str: str, date_str:
     try:
         new_battles = fetcher.fetch_battles_since(since_ts, polaris_id=polaris_id)
     except Exception as e:
-        logger.error(f"[{player_name}] データ取得失敗: {e}")
+        msg = f"[{player_name}] データ取得失敗: {e}"
+        logger.error(msg)
+        discord_post.notify_error(msg)
         return
 
     inserted = db.insert_battles(new_battles, player_name=player_name)
@@ -101,7 +128,9 @@ def _run_for_player(player_name: str, polaris_id: str, today_str: str, date_str:
     prev_battles  = db.get_battles_on_date(prev_date_str, player_name=player_name)
     logger.info(f"[{player_name}] 前日分: {len(prev_battles)} 件")
 
-    llm_comment = analyzer.analyze(today_battles, date_str, player_name=player_name, prev_battles=prev_battles)
+    llm_comment = _analyze_with_timeout(
+        today_battles, date_str, player_name=player_name, prev_battles=prev_battles
+    )
 
     try:
         discord_post.post(today_battles, date_str, llm_comment, player_name=player_name)
@@ -148,7 +177,7 @@ def weekly() -> None:
         battles = db.get_battles_since(since_ts, player_name=player_name)
         logger.info(f"[{player_name}] 週間バトル: {len(battles)} 件")
 
-        llm_comment = analyzer.analyze(battles, week_start_str, player_name=player_name)
+        llm_comment = _analyze_with_timeout(battles, week_start_str, player_name=player_name)
 
         try:
             discord_post.post_weekly(battles, week_start_str, llm_comment, player_name=player_name)

@@ -162,3 +162,68 @@ def get_battles_since(since_ts: float, player_name: str | None = None) -> list[d
                 (int(since_ts),),
             ).fetchall()
     return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Prometheus Exporter 用集計クエリ
+# ---------------------------------------------------------------------------
+
+def get_current_rating() -> int | None:
+    """最新バトルから現在レーティングを返す。なければ None。"""
+    with get_conn() as conn:
+        row = conn.execute("""
+            SELECT rating_before + rating_change AS current_rating
+            FROM battles
+            WHERE rating_before IS NOT NULL AND rating_change IS NOT NULL
+            ORDER BY battle_at DESC
+            LIMIT 1
+        """).fetchone()
+    return int(row["current_rating"]) if row else None
+
+
+def get_rating_delta(since_ts: int) -> int:
+    """since_ts 以降のランク戦レーティング合計変動を返す。"""
+    with get_conn() as conn:
+        row = conn.execute("""
+            SELECT COALESCE(SUM(rating_change), 0) AS delta
+            FROM battles
+            WHERE battle_at >= ? AND battle_type = 'ranked'
+              AND rating_change IS NOT NULL
+        """, (since_ts,)).fetchone()
+    return int(row["delta"]) if row else 0
+
+
+def get_win_loss(since_ts: int, battle_type: str | None = None) -> tuple[int, int]:
+    """since_ts 以降の (勝数, 敗数) を返す。battle_type=None で全種別。"""
+    with get_conn() as conn:
+        if battle_type is None:
+            rows = conn.execute("""
+                SELECT won, COUNT(*) AS cnt
+                FROM battles WHERE battle_at >= ?
+                GROUP BY won
+            """, (since_ts,)).fetchall()
+        else:
+            rows = conn.execute("""
+                SELECT won, COUNT(*) AS cnt
+                FROM battles WHERE battle_at >= ? AND battle_type = ?
+                GROUP BY won
+            """, (since_ts, battle_type)).fetchall()
+    wins   = next((r["cnt"] for r in rows if r["won"]),     0)
+    losses = next((r["cnt"] for r in rows if not r["won"]), 0)
+    return wins, losses
+
+
+def get_matchup_stats(since_ts: int, min_battles: int = 3) -> list[dict]:
+    """since_ts 以降のランク戦キャラ対面別集計を返す（min_battles 以上のみ）。"""
+    with get_conn() as conn:
+        rows = conn.execute("""
+            SELECT opp_chara,
+                   SUM(won)  AS wins,
+                   COUNT(*)  AS total
+            FROM battles
+            WHERE battle_at >= ? AND battle_type = 'ranked'
+              AND opp_chara IS NOT NULL
+            GROUP BY opp_chara
+            HAVING COUNT(*) >= ?
+        """, (since_ts, min_battles)).fetchall()
+    return [dict(r) for r in rows]

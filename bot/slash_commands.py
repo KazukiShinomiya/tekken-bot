@@ -7,12 +7,15 @@ Discord スラッシュコマンド Bot。
   /tekken status — Bot 稼働状況を確認
 """
 
+import asyncio
 import logging
 import threading
+from datetime import datetime
 
 import discord
 from discord import app_commands
 
+import main as _bot_main
 from bot.config import DISCORD_BOT_TOKEN as BOT_TOKEN, JST
 
 logger = logging.getLogger(__name__)
@@ -28,9 +31,7 @@ tekken_group = app_commands.Group(name="tekken", description="鉄拳Bot コマ�
 async def cmd_today(interaction: discord.Interaction) -> None:
     await interaction.response.defer(thinking=True)
     try:
-        import asyncio
-        import main as bot
-        await asyncio.get_event_loop().run_in_executor(None, bot.main)
+        await asyncio.get_running_loop().run_in_executor(None, _bot_main.main)
         await interaction.followup.send("✅ 本日の戦績を投稿しました。")
     except Exception as e:
         logger.error(f"[slash_commands] /tekken today エラー: {e}")
@@ -41,9 +42,7 @@ async def cmd_today(interaction: discord.Interaction) -> None:
 async def cmd_weekly(interaction: discord.Interaction) -> None:
     await interaction.response.defer(thinking=True)
     try:
-        import asyncio
-        import main as bot
-        await asyncio.get_event_loop().run_in_executor(None, bot.weekly)
+        await asyncio.get_running_loop().run_in_executor(None, _bot_main.weekly)
         await interaction.followup.send("✅ 週次サマリーを投稿しました。")
     except Exception as e:
         logger.error(f"[slash_commands] /tekken weekly エラー: {e}")
@@ -52,7 +51,6 @@ async def cmd_weekly(interaction: discord.Interaction) -> None:
 
 @tekken_group.command(name="status", description="Bot の稼働状況を確認する")
 async def cmd_status(interaction: discord.Interaction) -> None:
-    from datetime import datetime
     now = datetime.now(JST).strftime("%Y/%m/%d %H:%M:%S")
     await interaction.response.send_message(f"✅ Bot 稼働中 | {now} JST")
 

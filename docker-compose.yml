@@ -9,7 +9,7 @@ services:
       - DB_PATH=/app/data/battles.db
       - LOG_PATH=/app/data/tekken_bot.log
       - PYTHONUNBUFFERED=1
-      - TZ=UTC
+      - TZ=Asia/Tokyo
     env_file:
       - .env
     healthcheck:
@@ -28,6 +28,7 @@ services:
       - DB_PATH=/app/data/battles.db
       - LOG_PATH=/app/data/tekken_bot.log
       - PYTHONUNBUFFERED=1
+      - TZ=Asia/Tokyo
     env_file:
       - .env
     command: python exporter.py

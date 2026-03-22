@@ -250,6 +250,16 @@ def build_weekly_message(
 # 投稿
 # ---------------------------------------------------------------------------
 
+def notify_error(message: str) -> None:
+    """エラーを Discord Webhook に通知する。失敗しても例外は出さない。"""
+    if not WEBHOOK_URL:
+        return
+    try:
+        requests.post(WEBHOOK_URL, json={"content": f"⚠️ {message}"}, timeout=TIMEOUT_WEBHOOK)
+    except Exception as e:
+        logger.warning(f"[discord_post] エラー通知失敗: {e}")
+
+
 def post(
     battles: list[dict],
     date_str: str | None = None,
