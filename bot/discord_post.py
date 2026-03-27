@@ -356,6 +356,235 @@ def build_weekly_message(
 
 
 # ---------------------------------------------------------------------------
+# Discord Embed ビルダー
+# ---------------------------------------------------------------------------
+
+def _embed_color(battles: list[dict]) -> int:
+    """勝率に基づいて Embed カラーコード（int）を返す。"""
+    if not battles:
+        return 0x5865F2  # Blurple
+    wr = count_wins(battles) / len(battles)
+    if wr >= 0.6:
+        return 0x57F287  # 緑
+    if wr <= 0.4:
+        return 0xED4245  # 赤
+    return 0xFEE75C      # 黄
+
+
+def build_embed(
+    battles: list[dict],
+    date_str: str,
+    player_name: str | None = None,
+    scout_data: dict[str, dict] | None = None,
+    llm_comment: str | None = None,
+    has_chart: bool = False,
+) -> dict | None:
+    """Discord Embed 形式の dict を返す。試合なしの場合は None。"""
+    if not battles:
+        return None
+
+    display_name = player_name or TEKKEN_ID
+    sorted_b = sorted(battles, key=lambda x: x["battle_at"])
+
+    ranked = [b for b in battles if b.get("battle_type") == "ranked"]
+    quick  = [b for b in battles if b.get("battle_type") == "quick"]
+    other  = [b for b in battles if b.get("battle_type") not in ("ranked", "quick")]
+
+    # 試合一覧（description）
+    battle_lines = []
+    for b in sorted_b:
+        icon  = "✅" if b["won"] else "❌"
+        score = f"{b['my_rounds']}-{b['opp_rounds']}"
+        chara = b.get("my_chara") or "???"
+        opp   = b.get("opp_chara") or "???"
+        battle_lines.append(f"⚔️ {chara} vs {opp:<12} {icon} {score}")
+    description = "\n".join(battle_lines)[:4096]
+
+    fields: list[dict] = []
+
+    def _add_type_field(icon: str, label: str, subset: list[dict]) -> None:
+        if not subset:
+            return
+        w   = count_wins(subset)
+        l   = count_losses(subset)
+        val = f"{w}勝{l}敗 ({_win_rate(subset)})"
+        if label == "ランク":
+            rating = _rating_summary(subset)
+            if rating:
+                val += f"\n{rating}"
+        fields.append({"name": f"{icon} {label}", "value": val, "inline": True})
+
+    _add_type_field("🏆", "ランク",   ranked)
+    _add_type_field("⚡", "クイック", quick)
+    _add_type_field("🎮", "その他",   other)
+
+    # ラウンド勝率・接戦
+    total_my  = sum(b.get("my_rounds",  0) or 0 for b in battles)
+    total_opp = sum(b.get("opp_rounds", 0) or 0 for b in battles)
+    total_r   = total_my + total_opp
+    round_wr  = f"{total_my / total_r * 100:.0f}%" if total_r else "-"
+    close     = sum(1 for b in battles if (b.get("my_rounds") or 0) + (b.get("opp_rounds") or 0) >= 5)
+    fields.append({"name": "🎯 ラウンド勝率", "value": f"{round_wr} | 接戦: {close}試合", "inline": True})
+
+    # 連勝・連敗
+    max_win, max_lose = _streak(sorted_b)
+    streak_parts = []
+    if max_win  >= 2: streak_parts.append(f"連勝: {max_win}")
+    if max_lose >= 2: streak_parts.append(f"連敗: {max_lose}")
+    if streak_parts:
+        fields.append({"name": "🔥 ストリーク", "value": " | ".join(streak_parts), "inline": True})
+
+    # 天敵
+    nemesis = _nemesis(battles)
+    if nemesis:
+        fields.append({"name": "😤 天敵", "value": nemesis, "inline": True})
+
+    # 調子の波
+    momentum = detect_momentum(sorted_b)
+    if momentum:
+        fields.append({"name": "📊 調子", "value": momentum, "inline": True})
+
+    # 鉄拳力
+    latest = max(battles, key=lambda x: x["battle_at"])
+    if latest.get("my_power"):
+        fields.append({"name": "💥 鉄拳力", "value": f"{latest['my_power']:,}", "inline": True})
+
+    # 対戦マトリクス（ヘッダー行を除いてフィールドに格納）
+    matrix = _matchup_matrix(battles)
+    if matrix:
+        matrix_body = "\n".join(matrix.split("\n")[1:])
+        fields.append({"name": "📊 対戦成績", "value": matrix_body[:1024], "inline": False})
+
+    # 時間帯別
+    hourly = _hourly_section(battles)
+    if hourly:
+        hourly_body = "\n".join(hourly.split("\n")[1:])
+        fields.append({"name": "🕐 時間帯別", "value": hourly_body[:1024], "inline": False})
+
+    # リピート対戦
+    rematch = _rematch_section(battles)
+    if rematch:
+        rematch_body = "\n".join(rematch.split("\n")[1:])
+        fields.append({"name": "🔄 リピート対戦", "value": rematch_body[:1024], "inline": False})
+
+    # スカウト
+    if scout_data:
+        scout = _scout_section(battles, scout_data)
+        if scout:
+            scout_body = "\n".join(scout.split("\n")[1:])
+            fields.append({"name": "🔍 スカウト", "value": scout_body[:1024], "inline": False})
+
+    embed: dict = {
+        "title":       f"🎮 {display_name} 本日の戦果 ({date_str})",
+        "color":       _embed_color(battles),
+        "description": description,
+        "fields":      fields[:25],  # Discord 上限
+    }
+    if llm_comment:
+        embed["footer"] = {"text": f"🤖 {llm_comment}"[:2048]}
+    if has_chart:
+        embed["image"] = {"url": "attachment://rating.png"}
+
+    return embed
+
+
+def build_weekly_embed(
+    battles: list[dict],
+    week_start_str: str,
+    player_name: str | None = None,
+    llm_comment: str | None = None,
+) -> dict | None:
+    """週次サマリーの Embed dict を返す。試合なしの場合は None。"""
+    if not battles:
+        return None
+
+    display_name = player_name or TEKKEN_ID
+    ranked = [b for b in battles if b.get("battle_type") == "ranked"]
+    quick  = [b for b in battles if b.get("battle_type") == "quick"]
+
+    rated      = filter_rated_battles(ranked)
+    net_rating = sum(b["rating_change"] for b in rated) if rated else None
+
+    from collections import defaultdict
+    my_chara_count: dict[str, int] = defaultdict(int)
+    for b in battles:
+        my_chara_count[b.get("my_chara") or "???"] += 1
+    top_chara = max(my_chara_count, key=my_chara_count.__getitem__) if my_chara_count else "???"
+
+    opp_count: dict[str, int] = defaultdict(int)
+    for b in battles:
+        opp_count[b.get("opp_chara") or "???"] += 1
+    top_opp = max(opp_count, key=opp_count.__getitem__) if opp_count else "???"
+
+    total_w = count_wins(battles)
+    total_l = count_losses(battles)
+
+    fields: list[dict] = []
+    fields.append({"name": "🏆 総合", "value": f"{total_w}勝{total_l}敗 ({_win_rate(battles)})", "inline": True})
+
+    if ranked:
+        rw = count_wins(ranked)
+        rl = count_losses(ranked)
+        fields.append({"name": "📊 ランク", "value": f"{rw}勝{rl}敗 ({_win_rate(ranked)})", "inline": True})
+    if quick:
+        qw = count_wins(quick)
+        ql = count_losses(quick)
+        fields.append({"name": "⚡ クイック", "value": f"{qw}勝{ql}敗 ({_win_rate(quick)})", "inline": True})
+    if net_rating is not None:
+        sign = "+" if net_rating >= 0 else ""
+        fields.append({"name": "📈 レーティング変動", "value": f"{sign}{net_rating}", "inline": True})
+
+    fields.append({"name": "🥊 最多使用キャラ", "value": f"{top_chara} ({my_chara_count.get(top_chara, 0)}戦)", "inline": True})
+    fields.append({"name": "🎯 最多対戦相手", "value": f"{top_opp} ({opp_count.get(top_opp, 0)}戦)", "inline": True})
+
+    # レーティングトレンド
+    trend = predict_rating_trend(battles)
+    if trend:
+        slope = trend["slope_per_day"]
+        sign  = "+" if slope >= 0 else ""
+        fields.append({"name": "📈 レーティングトレンド", "value": f"{sign}{slope:.0f}/日", "inline": True})
+        stag = trend.get("stagnation_days", 0)
+        if stag >= 3:
+            fields.append({"name": "⚠️ 停滞", "value": f"{stag}日間 変動が小さい", "inline": True})
+
+    # 対戦成績
+    matrix = _matchup_matrix(battles)
+    if matrix:
+        matrix_body = "\n".join(matrix.split("\n")[1:])
+        fields.append({"name": "📊 対戦成績", "value": matrix_body[:1024], "inline": False})
+
+    embed: dict = {
+        "title":  f"📅 {display_name} 週次サマリー（{week_start_str} 週）",
+        "color":  _embed_color(battles),
+        "fields": fields[:25],
+    }
+    if llm_comment:
+        embed["footer"] = {"text": f"🤖 {llm_comment}"[:2048]}
+
+    return embed
+
+
+def build_community_weekly_embed(players_stats: list[dict], week_start_str: str) -> dict:
+    """部内ランキングの Embed dict を返す。"""
+    sorted_players = sorted(players_stats, key=lambda p: p["net_rating"], reverse=True)
+    medals = ["🥇", "🥈", "🥉"]
+
+    lines = []
+    for i, p in enumerate(sorted_players):
+        medal  = medals[i] if i < 3 else f"{i + 1}."
+        sign   = "+" if p["net_rating"] >= 0 else ""
+        total  = p["wins"] + p["losses"]
+        wr_str = f"{p['wins'] / total * 100:.0f}%" if total else "-"
+        lines.append(f"{medal} {p['name']}: {sign}{p['net_rating']} ({p['wins']}勝{p['losses']}敗 {wr_str})")
+
+    return {
+        "title":       f"🏆 格ゲー部 週間ランキング ({week_start_str} 週)",
+        "color":       0xFFD700,  # ゴールド
+        "description": "\n".join(lines),
+    }
+
+
+# ---------------------------------------------------------------------------
 # 投稿
 # ---------------------------------------------------------------------------
 
@@ -387,23 +616,28 @@ def post_community_weekly(players_stats: list[dict], week_start_str: str) -> Non
     """部内週次ランキングを Discord に投稿する。2人以上いる場合のみ投稿。"""
     if not WEBHOOK_URL or len(players_stats) < 2:
         return
-    message = build_community_weekly(players_stats, week_start_str)
+    embed = build_community_weekly_embed(players_stats, week_start_str)
     try:
-        resp = requests.post(WEBHOOK_URL, json={"content": message}, timeout=TIMEOUT_WEBHOOK)
+        resp = requests.post(WEBHOOK_URL, json={"embeds": [embed]}, timeout=TIMEOUT_WEBHOOK)
         resp.raise_for_status()
         logger.info("[discord_post] 部内ランキング投稿完了")
     except Exception as e:
         logger.warning(f"[discord_post] 部内ランキング投稿失敗: {e}")
 
 
-def notify_error(message: str) -> None:
-    """エラーを Discord Webhook に通知する。失敗しても例外は出さない。"""
+def notify(message: str) -> None:
+    """任意のメッセージを Discord Webhook に投稿する。失敗しても例外は出さない。"""
     if not WEBHOOK_URL:
         return
     try:
-        requests.post(WEBHOOK_URL, json={"content": f"⚠️ {message}"}, timeout=TIMEOUT_WEBHOOK)
+        requests.post(WEBHOOK_URL, json={"content": message}, timeout=TIMEOUT_WEBHOOK)
     except Exception as e:
-        logger.warning(f"[discord_post] エラー通知失敗: {e}")
+        logger.warning(f"[discord_post] 通知失敗: {e}")
+
+
+def notify_error(message: str) -> None:
+    """エラーを Discord Webhook に通知する。失敗しても例外は出さない。"""
+    notify(f"⚠️ {message}")
 
 
 def post(
@@ -413,20 +647,16 @@ def post(
     player_name: str | None = None,
     scout_data: dict[str, dict] | None = None,
 ) -> bool:
-    """Discord Webhook にサマリーを投稿。投稿した場合 True を返す。"""
+    """Discord Webhook に Embed サマリーを投稿。投稿した場合 True を返す。"""
     if not WEBHOOK_URL:
         raise ValueError("DISCORD_WEBHOOK_URL が .env に設定されていません")
 
     if date_str is None:
         date_str = datetime.now(JST).strftime("%Y/%m/%d")
 
-    message = build_message(battles, date_str, player_name, scout_data=scout_data)
-    if message is None:
+    if not battles:
         logger.info("[discord_post] 本日の試合なし。投稿をスキップ。")
         return False
-
-    if llm_comment:
-        message += f"\n\n🤖 {llm_comment}"
 
     # グラフ生成を試みる
     chart = None
@@ -436,15 +666,23 @@ def post(
     except Exception as e:
         logger.warning(f"[discord_post] グラフ生成失敗（スキップ）: {e}")
 
+    embed = build_embed(
+        battles, date_str, player_name,
+        scout_data=scout_data, llm_comment=llm_comment,
+        has_chart=bool(chart),
+    )
+    if embed is None:
+        return False
+
     if chart:
         resp = requests.post(
             WEBHOOK_URL,
-            data={"payload_json": json.dumps({"content": message})},
+            data={"payload_json": json.dumps({"embeds": [embed]})},
             files={"files[0]": ("rating.png", chart, "image/png")},
             timeout=TIMEOUT_WEBHOOK_IMAGE,
         )
     else:
-        resp = requests.post(WEBHOOK_URL, json={"content": message}, timeout=TIMEOUT_WEBHOOK)
+        resp = requests.post(WEBHOOK_URL, json={"embeds": [embed]}, timeout=TIMEOUT_WEBHOOK)
 
     resp.raise_for_status()
     return True
@@ -456,18 +694,15 @@ def post_weekly(
     llm_comment: str | None = None,
     player_name: str | None = None,
 ) -> bool:
-    """週次サマリーを Discord Webhook に投稿。"""
+    """週次サマリーを Discord Webhook に Embed 形式で投稿。"""
     if not WEBHOOK_URL:
         raise ValueError("DISCORD_WEBHOOK_URL が .env に設定されていません")
 
-    message = build_weekly_message(battles, week_start_str, player_name)
-    if message is None:
+    embed = build_weekly_embed(battles, week_start_str, player_name, llm_comment=llm_comment)
+    if embed is None:
         logger.info(f"[discord_post][{player_name}] 今週の試合なし。週次投稿をスキップ。")
         return False
 
-    if llm_comment:
-        message += f"\n\n🤖 {llm_comment}"
-
-    resp = requests.post(WEBHOOK_URL, json={"content": message}, timeout=TIMEOUT_WEBHOOK)
+    resp = requests.post(WEBHOOK_URL, json={"embeds": [embed]}, timeout=TIMEOUT_WEBHOOK)
     resp.raise_for_status()
     return True

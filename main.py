@@ -19,7 +19,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv()
 
-from bot.config import PLAYERS as PLAYERS_ENV, POLARIS_ID as POLARIS_ID_ENV, TEKKEN_ID as TEKKEN_ID_ENV, LOG_PATH, JST, TIMEOUT_LLM
+from bot.config import (
+    PLAYERS as PLAYERS_ENV, POLARIS_ID as POLARIS_ID_ENV, TEKKEN_ID as TEKKEN_ID_ENV,
+    LOG_PATH, JST, TIMEOUT_LLM, TIMEOUT_API, RATING_GOAL, LOSS_ALERT_THRESHOLD,
+)
 import bot.db as db
 import bot.fetcher as fetcher
 import bot.discord_post as discord_post
@@ -162,19 +165,52 @@ def _run_for_player(player_name: str, polaris_id: str, today_str: str, date_str:
     rematch_data = _collect_rematch_data(today_battles, player_name)
     logger.info(f"[{player_name}] リピート対戦相手: {len(rematch_data)} 人")
 
-    # リピート相手（上位3人）のスカウト情報を取得
+    # リピート相手（上位3人）のスカウト情報を並列取得
     from collections import Counter as _Counter
     pid_count = _Counter(
         b.get("opp_polaris_id") for b in today_battles if b.get("opp_polaris_id")
     )
+    pids_to_scout = [pid for pid, cnt in pid_count.most_common(3) if cnt >= 2]
     scout_data: dict = {}
-    for pid, _ in pid_count.most_common(3):
-        if pid_count[pid] >= 2:
-            summary = fetcher.fetch_opponent_summary(pid)
-            if summary:
-                scout_data[pid] = summary
+    if pids_to_scout:
+        with ThreadPoolExecutor(max_workers=len(pids_to_scout)) as pool:
+            futures = {pid: pool.submit(fetcher.fetch_opponent_summary, pid) for pid in pids_to_scout}
+            for pid, future in futures.items():
+                try:
+                    summary = future.result(timeout=TIMEOUT_API)
+                    if summary:
+                        scout_data[pid] = summary
+                except Exception as e:
+                    logger.warning(f"[{player_name}] スカウト取得失敗 ({pid}): {e}")
     if scout_data:
         logger.info(f"[{player_name}] スカウト取得: {len(scout_data)} 人")
+
+    # 連敗アラート（末尾から連続敗北を検出）
+    if LOSS_ALERT_THRESHOLD > 0:
+        sorted_today = sorted(today_battles, key=lambda x: x["battle_at"])
+        streak = 0
+        for b in reversed(sorted_today):
+            if not b["won"]:
+                streak += 1
+            else:
+                break
+        if streak >= LOSS_ALERT_THRESHOLD:
+            discord_post.notify(
+                f"⚠️ [{player_name}] 現在 **{streak} 連敗中** です。少し休憩しましょう！"
+            )
+            logger.info(f"[{player_name}] 連敗アラート送信: {streak} 連敗")
+
+    # 目標レーティング達成通知
+    if RATING_GOAL > 0:
+        rated_today = [b for b in today_battles if b.get("rating_before") is not None and b.get("rating_change") is not None]
+        if rated_today:
+            latest_rated = max(rated_today, key=lambda x: x["battle_at"])
+            current_rating = latest_rated["rating_before"] + latest_rated["rating_change"]
+            if current_rating >= RATING_GOAL:
+                discord_post.notify(
+                    f"🎉 [{player_name}] 目標レーティング **{RATING_GOAL:,}** 達成！現在: **{current_rating:,}**"
+                )
+                logger.info(f"[{player_name}] 目標レーティング達成通知: {current_rating}")
 
     llm_comment = _analyze_with_timeout(
         today_battles, date_str, player_name=player_name,
@@ -189,7 +225,11 @@ def _run_for_player(player_name: str, polaris_id: str, today_str: str, date_str:
         logger.error(f"[{player_name}] Discord 投稿失敗: {e}")
 
 
-async def main() -> None:
+async def main(target_date: str | None = None) -> None:
+    """
+    target_date: 対象日を 'YYYY-MM-DD' 形式で指定。None の場合は前日（スケジューラ 08:00 実行用）。
+    スラッシュコマンドからは今日の日付を渡す。
+    """
     if not _main_lock.acquire(blocking=False):
         logger.warning("main() は既に実行中のためスキップ")
         return
@@ -205,9 +245,14 @@ async def main() -> None:
             logger.error("プレイヤーが設定されていません。PLAYERS または POLARIS_ID を .env に設定してください。")
             sys.exit(1)
 
-        yesterday = now - timedelta(days=1)
-        today_str = yesterday.strftime("%Y-%m-%d")
-        date_str  = yesterday.strftime("%Y/%m/%d")
+        if target_date is not None:
+            target_dt = datetime.strptime(target_date, "%Y-%m-%d").replace(tzinfo=JST)
+            today_str = target_date
+            date_str  = target_dt.strftime("%Y/%m/%d")
+        else:
+            yesterday = now - timedelta(days=1)
+            today_str = yesterday.strftime("%Y-%m-%d")
+            date_str  = yesterday.strftime("%Y/%m/%d")
 
         # 複数プレイヤーを並列処理
         await asyncio.gather(*(
@@ -216,6 +261,35 @@ async def main() -> None:
         ))
     finally:
         _main_lock.release()
+
+
+def _run_weekly_for_player(
+    player_name: str,
+    since_ts: float,
+    week_start_str: str,
+) -> dict:
+    """1プレイヤー分の週次サマリー処理（DB取得・LLM・投稿）。community_stats エントリを返す。"""
+    battles = db.get_battles_since(since_ts, player_name=player_name)
+    logger.info(f"[{player_name}] 週間バトル: {len(battles)} 件")
+
+    llm_comment = _analyze_with_timeout(battles, week_start_str, player_name=player_name)
+
+    try:
+        discord_post.post_weekly(battles, week_start_str, llm_comment, player_name=player_name)
+        logger.info(f"[{player_name}] 週次サマリー投稿完了。")
+    except Exception as e:
+        msg = f"[{player_name}] 週次サマリー投稿失敗: {e}"
+        logger.error(msg)
+        discord_post.notify_error(msg)
+
+    ranked = [b for b in battles if b.get("battle_type") == "ranked"]
+    rated  = filter_rated_battles(ranked)
+    return {
+        "name":       player_name,
+        "wins":       count_wins(battles),
+        "losses":     count_losses(battles),
+        "net_rating": sum(b["rating_change"] for b in rated) if rated else 0,
+    }
 
 
 async def weekly() -> None:
@@ -235,34 +309,16 @@ async def weekly() -> None:
             logger.warning("プレイヤーが設定されていません。週次サマリーをスキップ。")
             return
 
-        since_ts = (now - timedelta(days=7)).timestamp()
+        since_ts       = (now - timedelta(days=7)).timestamp()
         week_start_str = (now - timedelta(days=6)).strftime("%Y/%m/%d")
 
-        community_stats: list[dict] = []
+        # 複数プレイヤーを並列処理
+        results = await asyncio.gather(*(
+            asyncio.to_thread(_run_weekly_for_player, name, since_ts, week_start_str)
+            for name, _ in players
+        ), return_exceptions=True)
 
-        for player_name, _ in players:
-            battles = db.get_battles_since(since_ts, player_name=player_name)
-            logger.info(f"[{player_name}] 週間バトル: {len(battles)} 件")
-
-            llm_comment = _analyze_with_timeout(battles, week_start_str, player_name=player_name)
-
-            try:
-                discord_post.post_weekly(battles, week_start_str, llm_comment, player_name=player_name)
-                logger.info(f"[{player_name}] 週次サマリー投稿完了。")
-            except Exception as e:
-                msg = f"[{player_name}] 週次サマリー投稿失敗: {e}"
-                logger.error(msg)
-                discord_post.notify_error(msg)
-
-            # コミュニティランキング用の集計
-            ranked = [b for b in battles if b.get("battle_type") == "ranked"]
-            rated  = filter_rated_battles(ranked)
-            community_stats.append({
-                "name":       player_name,
-                "wins":       count_wins(battles),
-                "losses":     count_losses(battles),
-                "net_rating": sum(b["rating_change"] for b in rated) if rated else 0,
-            })
+        community_stats = [r for r in results if isinstance(r, dict)]
 
         # 2人以上のとき部内ランキングを投稿
         discord_post.post_community_weekly(community_stats, week_start_str)

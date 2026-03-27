@@ -38,3 +38,7 @@ TIMEOUT_API           = 15   # wank / ewgf.gg API
 TIMEOUT_LLM           = 300  # Ollama（7bモデル、CPU推論で実測約2分）
 TIMEOUT_WEBHOOK       = 10   # Discord Webhook（テキストのみ）
 TIMEOUT_WEBHOOK_IMAGE = 15   # Discord Webhook（画像添付）
+
+# ── 通知設定 ──────────────────────────────────────────────────────────────────
+RATING_GOAL          = int(os.getenv("RATING_GOAL", "0"))          # 0=無効
+LOSS_ALERT_THRESHOLD = int(os.getenv("LOSS_ALERT_THRESHOLD", "5")) # 0=無効

@@ -258,6 +258,76 @@ def get_battles_vs_opponent(
     return [dict(r) for r in rows]
 
 
+def get_battles_by_opp_chara(
+    opp_chara: str,
+    player_name: str | None = None,
+) -> list[dict]:
+    """特定キャラとの全期間対戦履歴を返す（大文字小文字無視）。"""
+    with get_conn() as conn:
+        if player_name is not None:
+            rows = conn.execute(
+                "SELECT * FROM battles WHERE LOWER(opp_chara) = LOWER(?) AND player_name = ? ORDER BY battle_at",
+                (opp_chara, player_name),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM battles WHERE LOWER(opp_chara) = LOWER(?) ORDER BY battle_at",
+                (opp_chara,),
+            ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_matchup_ranking(
+    player_name: str | None = None,
+    min_battles: int = 2,
+) -> list[dict]:
+    """全キャラとの通算対戦成績を試合数降順で返す（min_battles 以上のみ）。"""
+    with get_conn() as conn:
+        if player_name is not None:
+            rows = conn.execute("""
+                SELECT opp_chara,
+                       SUM(won)  AS wins,
+                       COUNT(*)  AS total
+                FROM battles
+                WHERE player_name = ? AND opp_chara IS NOT NULL
+                GROUP BY opp_chara
+                HAVING COUNT(*) >= ?
+                ORDER BY total DESC, wins DESC
+            """, (player_name, min_battles)).fetchall()
+        else:
+            rows = conn.execute("""
+                SELECT opp_chara,
+                       SUM(won)  AS wins,
+                       COUNT(*)  AS total
+                FROM battles
+                WHERE opp_chara IS NOT NULL
+                GROUP BY opp_chara
+                HAVING COUNT(*) >= ?
+                ORDER BY total DESC, wins DESC
+            """, (min_battles,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def search_battles_vs_opponent(
+    opp_name: str,
+    player_name: str | None = None,
+) -> list[dict]:
+    """相手名（部分一致、大文字小文字無視）との対戦履歴を返す。"""
+    pattern = f"%{opp_name}%"
+    with get_conn() as conn:
+        if player_name is not None:
+            rows = conn.execute(
+                "SELECT * FROM battles WHERE LOWER(opp_name) LIKE LOWER(?) AND player_name = ? ORDER BY battle_at",
+                (pattern, player_name),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM battles WHERE LOWER(opp_name) LIKE LOWER(?) ORDER BY battle_at",
+                (pattern,),
+            ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def save_chara_name(chara_id: int, name: str) -> None:
     """動的に学習したキャラクター名マッピングを永続化する。"""
     with get_conn() as conn:
