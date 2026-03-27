@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:wank.wavu.wiki)",
+      "WebFetch(domain:api.ewgf.gg)",
+      "WebFetch(domain:ewgf.gg)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(git *)",
+      "Bash(python -m pytest*)",
+      "Bash(python -m py_compile*)",
+      "Bash(docker compose*)",
+      "Bash(wsl bash -c*)",
+      "Bash(pip install*)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -c \"import sys,json,subprocess; d=json.load(sys.stdin); f=d.get('tool_input',{}).get('file_path',''); (subprocess.run(['python','-m','py_compile',f]) if f and f.endswith('.py') else None)\""
+          }
+        ]
+      }
+    ]
+  }
+}
