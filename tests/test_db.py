@@ -66,6 +66,30 @@ def test_init_db_creates_table(db):
     assert len(tables) == 1
 
 
+def test_init_db_creates_chara_names_table(db):
+    """init_db() が chara_names テーブルを作成することを確認。"""
+    with db.get_conn() as conn:
+        tables = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='chara_names'"
+        ).fetchall()
+    assert len(tables) == 1
+
+
+def test_save_and_load_chara_name(db):
+    """save_chara_name / load_chara_names の往復テスト。"""
+    db.save_chara_name(99, "TestChar")
+    result = db.load_chara_names()
+    assert result[99] == "TestChar"
+
+
+def test_save_chara_name_upsert(db):
+    """同じ ID を2回 save しても最新値で上書きされる。"""
+    db.save_chara_name(99, "OldName")
+    db.save_chara_name(99, "NewName")
+    result = db.load_chara_names()
+    assert result[99] == "NewName"
+
+
 def test_init_db_adds_player_name_column(db):
     """player_name カラムが存在することを確認。"""
     with db.get_conn() as conn:

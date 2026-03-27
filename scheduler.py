@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 def job():
     logger.info(f"[scheduler] 定時実行開始 {datetime.now(JST).isoformat()}")
     try:
-        bot.main()
+        bot.run_main_sync()
     except SystemExit as e:
         # main() が sys.exit() しても scheduler は継続
         logger.warning(f"[scheduler] main() が終了コード {e.code} で終了")
@@ -34,7 +34,7 @@ def job():
 def weekly_job():
     logger.info(f"[scheduler] 週次サマリー実行開始 {datetime.now(JST).isoformat()}")
     try:
-        bot.weekly()
+        bot.run_weekly_sync()
     except Exception as e:
         logger.error(f"[scheduler] weekly() で予期しないエラー: {e}")
 

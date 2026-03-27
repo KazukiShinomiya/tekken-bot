@@ -1,8 +1,7 @@
-requests
-python-dotenv
-beautifulsoup4
-schedule
-prometheus_client
-matplotlib
-pytest
-discord.py
+requests>=2.32.0,<3.0
+python-dotenv>=1.0.0,<2.0
+beautifulsoup4>=4.12.0,<5.0
+schedule>=1.2.0,<2.0
+prometheus_client>=0.21.0,<1.0
+matplotlib>=3.9.0,<4.0
+discord.py>=2.4.0,<3.0

@@ -15,7 +15,9 @@ from bot.fetcher import (
     fetch_battles_since,
     fetch_quick_battles_from_ewgf,
     CHARA_NAMES,
+    _learned_chara_names,
 )
+import bot.fetcher as _fetcher_module
 
 
 # ---------------------------------------------------------------------------
@@ -39,6 +41,13 @@ def test_get_chara_name_all_defined():
     """CHARA_NAMES の全IDが文字列を返すことを確認。"""
     for cid in CHARA_NAMES:
         assert isinstance(get_chara_name(cid), str)
+
+
+def test_get_chara_name_learned_takes_precedence(monkeypatch):
+    """_learned_chara_names の値が CHARA_NAMES より優先される。"""
+    monkeypatch.setitem(_fetcher_module._learned_chara_names, 999, "LearnedChar")
+    assert get_chara_name(999) == "LearnedChar"
+    monkeypatch.delitem(_fetcher_module._learned_chara_names, 999)
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +219,22 @@ def test_merge_bulk_p2_perspective():
     assert result["my_chara"] == "Reina"
     assert result["opp_chara"] == "Jin"
     assert result["my_rank"] == 12
+
+
+def test_merge_bulk_unknown_id_keeps_html_name(monkeypatch):
+    """未知のキャラID（Chara#N）の場合、HTML名を保持して学習する。"""
+    learned: dict = {}
+    monkeypatch.setattr(_fetcher_module, "_learned_chara_names", learned)
+    # DB 保存は無効化
+    monkeypatch.setattr(_fetcher_module, "_learn_chara_name",
+                        lambda cid, name: learned.update({cid: name}))
+
+    bulk = {**_bulk_record(), "p2_chara_id": 99}  # 99 は未知ID
+    battle = {**_html_battle(), "opp_chara": "FutureChar"}
+    result = _merge_bulk(battle, bulk, "me")
+
+    assert result["opp_chara"] == "FutureChar"  # HTML名を保持
+    assert learned.get(99) == "FutureChar"       # 学習されている
 
 
 # ---------------------------------------------------------------------------

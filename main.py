@@ -6,8 +6,10 @@ Tekken Bot メインスクリプト。
     python main.py
 """
 
+import asyncio
 import logging
 import sys
+import threading
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import datetime, timedelta
@@ -24,6 +26,10 @@ import bot.discord_post as discord_post
 import bot.analyzer as analyzer
 
 logger = logging.getLogger(__name__)
+
+# スケジューラとスラッシュコマンドの同時実行を防ぐロック
+_main_lock = threading.Lock()
+_weekly_lock = threading.Lock()
 
 
 def setup_logging() -> None:
@@ -100,21 +106,20 @@ def _analyze_with_timeout(
     rematch_data: dict | None = None,
 ) -> str | None:
     """LLM 分析を別スレッドで実行し、TIMEOUT_LLM 秒以内に結果を返す。タイムアウト時は None。"""
-    pool = ThreadPoolExecutor(max_workers=1)
-    future = pool.submit(
-        analyzer.analyze, battles, date_str,
-        player_name, prev_battles, rematch_data,
-    )
-    pool.shutdown(wait=False)
-    try:
-        return future.result(timeout=TIMEOUT_LLM)
-    except FutureTimeoutError:
-        logger.warning(f"[{player_name}] LLM分析タイムアウト（{TIMEOUT_LLM}s）、スキップ")
-        discord_post.notify_error(f"[{player_name}] LLM分析タイムアウト（投稿は続行）")
-        return None
-    except Exception as e:
-        logger.warning(f"[{player_name}] LLM分析失敗: {e}")
-        return None
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(
+            analyzer.analyze, battles, date_str,
+            player_name, prev_battles, rematch_data,
+        )
+        try:
+            return future.result(timeout=TIMEOUT_LLM)
+        except FutureTimeoutError:
+            logger.warning(f"[{player_name}] LLM分析タイムアウト（{TIMEOUT_LLM}s）、スキップ")
+            discord_post.notify_error(f"[{player_name}] LLM分析タイムアウト（投稿は続行）")
+            return None
+        except Exception as e:
+            logger.warning(f"[{player_name}] LLM分析失敗: {e}")
+            return None
 
 
 def _run_for_player(player_name: str, polaris_id: str, today_str: str, date_str: str) -> None:
@@ -168,55 +173,82 @@ def _run_for_player(player_name: str, polaris_id: str, today_str: str, date_str:
         logger.error(f"[{player_name}] Discord 投稿失敗: {e}")
 
 
-def main() -> None:
-    now = datetime.now(JST)
-    logger.info(f"Tekken Bot 起動 {now.isoformat()}")
-
-    db.init_db()
-
-    players = get_players()
-    if not players:
-        logger.error("プレイヤーが設定されていません。PLAYERS または POLARIS_ID を .env に設定してください。")
-        sys.exit(1)
-
-    yesterday = now - timedelta(days=1)
-    today_str = yesterday.strftime("%Y-%m-%d")
-    date_str  = yesterday.strftime("%Y/%m/%d")
-
-    for player_name, polaris_id in players:
-        _run_for_player(player_name, polaris_id, today_str, date_str)
-
-
-def weekly() -> None:
-    """週次サマリーを全プレイヤー分投稿する（日曜 JST 21:00 実行想定）。"""
-    now = datetime.now(JST)
-    logger.info(f"Tekken Bot 週次サマリー開始 {now.isoformat()}")
-
-    db.init_db()
-
-    players = get_players()
-    if not players:
-        logger.warning("プレイヤーが設定されていません。週次サマリーをスキップ。")
+async def main() -> None:
+    if not _main_lock.acquire(blocking=False):
+        logger.warning("main() は既に実行中のためスキップ")
         return
+    try:
+        now = datetime.now(JST)
+        logger.info(f"Tekken Bot 起動 {now.isoformat()}")
 
-    since_ts = (now - timedelta(days=7)).timestamp()
-    week_start_str = (now - timedelta(days=6)).strftime("%Y/%m/%d")
+        db.init_db()
+        fetcher.load_learned_chara_names()
 
-    for player_name, _ in players:
-        battles = db.get_battles_since(since_ts, player_name=player_name)
-        logger.info(f"[{player_name}] 週間バトル: {len(battles)} 件")
+        players = get_players()
+        if not players:
+            logger.error("プレイヤーが設定されていません。PLAYERS または POLARIS_ID を .env に設定してください。")
+            sys.exit(1)
 
-        llm_comment = _analyze_with_timeout(battles, week_start_str, player_name=player_name)
+        yesterday = now - timedelta(days=1)
+        today_str = yesterday.strftime("%Y-%m-%d")
+        date_str  = yesterday.strftime("%Y/%m/%d")
 
-        try:
-            discord_post.post_weekly(battles, week_start_str, llm_comment, player_name=player_name)
-            logger.info(f"[{player_name}] 週次サマリー投稿完了。")
-        except Exception as e:
-            msg = f"[{player_name}] 週次サマリー投稿失敗: {e}"
-            logger.error(msg)
-            discord_post.notify_error(msg)
+        # 複数プレイヤーを並列処理
+        await asyncio.gather(*(
+            asyncio.to_thread(_run_for_player, name, pid, today_str, date_str)
+            for name, pid in players
+        ))
+    finally:
+        _main_lock.release()
+
+
+async def weekly() -> None:
+    """週次サマリーを全プレイヤー分投稿する（日曜 JST 21:00 実行想定）。"""
+    if not _weekly_lock.acquire(blocking=False):
+        logger.warning("weekly() は既に実行中のためスキップ")
+        return
+    try:
+        now = datetime.now(JST)
+        logger.info(f"Tekken Bot 週次サマリー開始 {now.isoformat()}")
+
+        db.init_db()
+        fetcher.load_learned_chara_names()
+
+        players = get_players()
+        if not players:
+            logger.warning("プレイヤーが設定されていません。週次サマリーをスキップ。")
+            return
+
+        since_ts = (now - timedelta(days=7)).timestamp()
+        week_start_str = (now - timedelta(days=6)).strftime("%Y/%m/%d")
+
+        for player_name, _ in players:
+            battles = db.get_battles_since(since_ts, player_name=player_name)
+            logger.info(f"[{player_name}] 週間バトル: {len(battles)} 件")
+
+            llm_comment = _analyze_with_timeout(battles, week_start_str, player_name=player_name)
+
+            try:
+                discord_post.post_weekly(battles, week_start_str, llm_comment, player_name=player_name)
+                logger.info(f"[{player_name}] 週次サマリー投稿完了。")
+            except Exception as e:
+                msg = f"[{player_name}] 週次サマリー投稿失敗: {e}"
+                logger.error(msg)
+                discord_post.notify_error(msg)
+    finally:
+        _weekly_lock.release()
+
+
+def run_main_sync() -> None:
+    """スケジューラ・スラッシュコマンドから呼ぶ同期エントリポイント。"""
+    asyncio.run(main())
+
+
+def run_weekly_sync() -> None:
+    """スケジューラ・スラッシュコマンドから呼ぶ同期エントリポイント（週次）。"""
+    asyncio.run(weekly())
 
 
 if __name__ == "__main__":
     setup_logging()
-    main()
+    asyncio.run(main())

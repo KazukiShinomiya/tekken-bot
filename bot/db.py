@@ -65,6 +65,13 @@ def init_db() -> None:
             conn.execute("ALTER TABLE battles ADD COLUMN player_name TEXT DEFAULT 'default'")
             logger.info("[db] マイグレーション: player_name カラムを追加")
 
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS chara_names (
+                chara_id  INTEGER PRIMARY KEY,
+                name      TEXT NOT NULL
+            )
+        """)
+
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_battle_at ON battles(battle_at)"
         )
@@ -249,6 +256,25 @@ def get_battles_vs_opponent(
                 (opp_polaris_id, int(since_ts)),
             ).fetchall()
     return [dict(r) for r in rows]
+
+
+def save_chara_name(chara_id: int, name: str) -> None:
+    """動的に学習したキャラクター名マッピングを永続化する。"""
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO chara_names (chara_id, name) VALUES (?, ?)",
+            (chara_id, name),
+        )
+
+
+def load_chara_names() -> dict[int, str]:
+    """DB に保存された動的キャラクター名マッピングを返す。"""
+    with get_conn() as conn:
+        try:
+            rows = conn.execute("SELECT chara_id, name FROM chara_names").fetchall()
+            return {r["chara_id"]: r["name"] for r in rows}
+        except Exception:
+            return {}
 
 
 def get_win_loss_by_hour(since_ts: int) -> list[dict]:

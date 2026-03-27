@@ -10,11 +10,34 @@
 import logging
 import re
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
 
 from bot.config import EWGF_API_KEY as API_KEY, POLARIS_ID, TIMEOUT_API
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# HTTP セッション（リトライ付き）
+# ---------------------------------------------------------------------------
+
+_retry = Retry(
+    total=3,
+    backoff_factor=1.0,
+    status_forcelist=[429, 500, 502, 503, 504],
+    allowed_methods=["GET"],
+)
+_session = requests.Session()
+_session.mount("https://", HTTPAdapter(max_retries=_retry))
+_session.mount("http://",  HTTPAdapter(max_retries=_retry))
+
+# ---------------------------------------------------------------------------
+# 動的キャラクター名学習
+# ---------------------------------------------------------------------------
+
+# DB から起動時にロードし、enrichment で随時更新される
+_learned_chara_names: dict[int, str] = {}
 
 EWGF_API    = "https://api.ewgf.gg/external"
 WANK_BULK   = "https://wank.wavu.wiki/api/replays"
@@ -47,9 +70,36 @@ BATTLE_TYPES = {
 
 
 def get_chara_name(chara_id: int | None) -> str | None:
+    """キャラクターIDから名前を返す。DB学習済み名 → CHARA_NAMES → "Chara#N" の優先順。"""
     if chara_id is None:
         return None
-    return CHARA_NAMES.get(chara_id, f"Chara#{chara_id}")
+    return _learned_chara_names.get(chara_id) or CHARA_NAMES.get(chara_id, f"Chara#{chara_id}")
+
+
+def _learn_chara_name(chara_id: int, name: str) -> None:
+    """新しいキャラクター名マッピングをメモリと DB に保存する。"""
+    if chara_id in _learned_chara_names or chara_id in CHARA_NAMES:
+        return
+    _learned_chara_names[chara_id] = name
+    try:
+        from bot.db import save_chara_name
+        save_chara_name(chara_id, name)
+        logger.info(f"[fetcher] 新キャラクターを学習: ID={chara_id} → {name}")
+    except Exception as e:
+        logger.warning(f"[fetcher] キャラクター名DB保存失敗: {e}")
+
+
+def load_learned_chara_names() -> None:
+    """DB から学習済みキャラクター名をロードする（起動時・init_db 後に呼ぶ）。"""
+    global _learned_chara_names
+    try:
+        from bot.db import load_chara_names
+        _learned_chara_names = load_chara_names()
+        if _learned_chara_names:
+            logger.info(f"[fetcher] 学習済みキャラ名 {len(_learned_chara_names)} 件をロード: "
+                        f"{_learned_chara_names}")
+    except Exception as e:
+        logger.warning(f"[fetcher] 学習済みキャラ名ロード失敗: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -65,7 +115,7 @@ EWGF_BATTLE_TYPES = {
 
 def _fetch_from_ewgf(polaris_id: str) -> list[dict]:
     url = f"{EWGF_API}/battles/{polaris_id}"
-    resp = requests.get(url, headers={"Authorization": f"Bearer {API_KEY}"}, timeout=TIMEOUT_API)
+    resp = _session.get(url, headers={"Authorization": f"Bearer {API_KEY}"}, timeout=TIMEOUT_API)
     resp.raise_for_status()
     data = resp.json()
     raw_list = data.get("data", data.get("battles", []))
@@ -129,7 +179,7 @@ def _normalize_ewgf(raw: dict, polaris_id: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def _fetch_from_wank_html(since_ts: float, polaris_id: str, limit: int = 50) -> list[dict]:
-    resp = requests.get(f"{WANK_PLAYER}/{polaris_id}", timeout=TIMEOUT_API)
+    resp = _session.get(f"{WANK_PLAYER}/{polaris_id}", timeout=TIMEOUT_API)
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "html.parser")
 
@@ -238,7 +288,7 @@ def _parse_wank_html_row(row) -> dict | None:
 # ---------------------------------------------------------------------------
 
 def _fetch_bulk_batch(before: int) -> list[dict]:
-    resp = requests.get(
+    resp = _session.get(
         WANK_BULK,
         params={"before": before},
         headers={"Accept-Encoding": "gzip"},
@@ -268,9 +318,20 @@ def _merge_bulk(battle: dict, bulk: dict, polaris_id: str) -> dict:
     battle["opp_power"]         = bulk.get(f"{opp}_power")
     battle["opp_region"]        = bulk.get(f"{opp}_region_id")
     if battle["my_chara_id"] is not None:
-        battle["my_chara"] = get_chara_name(battle["my_chara_id"])
+        mapped = get_chara_name(battle["my_chara_id"])
+        if mapped and not mapped.startswith("Chara#"):
+            battle["my_chara"] = mapped
+        # else: HTMLスクレイプ名を保持（未知IDでも名前が残る）
+
     if battle["opp_chara_id"] is not None:
-        battle["opp_chara"] = get_chara_name(battle["opp_chara_id"])
+        opp_html_name = battle.get("opp_chara")  # HTML スクレイプ名を退避
+        mapped = get_chara_name(battle["opp_chara_id"])
+        if mapped and not mapped.startswith("Chara#"):
+            battle["opp_chara"] = mapped
+        elif opp_html_name:
+            # 未知ID: HTML名を保持しつつDB学習
+            _learn_chara_name(battle["opp_chara_id"], opp_html_name)
+
     return battle
 
 

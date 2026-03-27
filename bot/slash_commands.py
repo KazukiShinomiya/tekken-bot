@@ -31,7 +31,7 @@ tekken_group = app_commands.Group(name="tekken", description="鉄拳Bot コマ�
 async def cmd_today(interaction: discord.Interaction) -> None:
     await interaction.response.defer(thinking=True)
     try:
-        await asyncio.get_running_loop().run_in_executor(None, _bot_main.main)
+        await _bot_main.main()
         await interaction.followup.send("✅ 本日の戦績を投稿しました。")
     except Exception as e:
         logger.error(f"[slash_commands] /tekken today エラー: {e}")
@@ -42,7 +42,7 @@ async def cmd_today(interaction: discord.Interaction) -> None:
 async def cmd_weekly(interaction: discord.Interaction) -> None:
     await interaction.response.defer(thinking=True)
     try:
-        await asyncio.get_running_loop().run_in_executor(None, _bot_main.weekly)
+        await _bot_main.weekly()
         await interaction.followup.send("✅ 週次サマリーを投稿しました。")
     except Exception as e:
         logger.error(f"[slash_commands] /tekken weekly エラー: {e}")
