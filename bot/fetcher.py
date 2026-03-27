@@ -394,6 +394,44 @@ def _enrich_from_bulk(battles: list[dict], polaris_id: str) -> list[dict]:
 # 公開インターフェース
 # ---------------------------------------------------------------------------
 
+def fetch_opponent_summary(polaris_id: str, limit: int = 20) -> dict | None:
+    """
+    対戦相手の直近バトル履歴（wank HTML）を取得してサマリーを返す。
+    失敗時は None を返す（投稿は続行）。
+    """
+    try:
+        battles = _fetch_from_wank_html(since_ts=0, polaris_id=polaris_id, limit=limit)
+        if not battles:
+            return None
+
+        wins  = sum(1 for b in battles if b["won"])
+        total = len(battles)
+
+        # メインキャラ（最多使用）— 相手視点なので my_chara が相手のキャラ
+        chara_count: dict[str, int] = {}
+        for b in battles:
+            c = b.get("my_chara") or "???"
+            chara_count[c] = chara_count.get(c, 0) + 1
+        main_chara = max(chara_count, key=chara_count.__getitem__) if chara_count else "???"
+
+        # 直近10戦の調子（wank HTML は新着順）
+        recent       = battles[:10]
+        recent_wins  = sum(1 for b in recent if b["won"])
+        recent_total = len(recent)
+
+        return {
+            "total":            total,
+            "win_rate":         wins / total * 100,
+            "main_chara":       main_chara,
+            "recent_wins":      recent_wins,
+            "recent_total":     recent_total,
+            "recent_win_rate":  recent_wins / recent_total * 100 if recent_total else 0,
+        }
+    except Exception as e:
+        logger.warning(f"[fetcher] 対戦相手スカウト失敗 ({polaris_id}): {e}")
+        return None
+
+
 def fetch_quick_battles_from_ewgf(since_ts: float, polaris_id: str | None = None) -> list[dict]:
     """
     ewgf.gg からクイックマッチのみを取得する（週次サマリー補完用）。

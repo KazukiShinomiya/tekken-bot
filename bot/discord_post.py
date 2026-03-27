@@ -11,7 +11,7 @@ from datetime import datetime
 from bot.config import DISCORD_WEBHOOK_URL as WEBHOOK_URL, TEKKEN_ID, TIMEOUT_WEBHOOK, TIMEOUT_WEBHOOK_IMAGE, JST
 from bot.stats import (
     calculate_streak, aggregate_by_character, count_wins, count_losses,
-    filter_rated_battles, aggregate_by_hour, detect_momentum,
+    filter_rated_battles, aggregate_by_hour, detect_momentum, predict_rating_trend,
 )
 
 logger = logging.getLogger(__name__)
@@ -114,6 +114,34 @@ def _hourly_section(battles: list[dict]) -> str | None:
     return "\n".join(lines)
 
 
+def _scout_section(battles: list[dict], scout_data: dict[str, dict]) -> str | None:
+    """
+    リピート対戦相手のスカウトレポートを返す。
+    scout_data: {polaris_id: {win_rate, main_chara, recent_wins, recent_total, recent_win_rate}}
+    """
+    from collections import Counter
+    pid_count: Counter = Counter(
+        b.get("opp_polaris_id") for b in battles if b.get("opp_polaris_id")
+    )
+    repeat_pids = [pid for pid, cnt in pid_count.most_common() if cnt >= 2 and pid in scout_data]
+    if not repeat_pids:
+        return None
+
+    lines = ["🔍 対戦相手スカウト"]
+    for pid in repeat_pids:
+        s = scout_data[pid]
+        opp_name  = next((b.get("opp_name") for b in battles if b.get("opp_polaris_id") == pid), "???")
+        wr        = s["win_rate"]
+        recent_wr = s["recent_win_rate"]
+        trend_icon = "↑" if recent_wr > wr + 5 else ("↓" if recent_wr < wr - 5 else "→")
+        lines.append(
+            f"  {opp_name}({s['main_chara']}) "
+            f"直近{s['total']}戦 勝率{wr:.0f}% | "
+            f"直近{s['recent_total']}戦 {s['recent_wins']}勝 ({recent_wr:.0f}%) {trend_icon}"
+        )
+    return "\n".join(lines)
+
+
 def _rematch_section(battles: list[dict]) -> str | None:
     """同一対戦相手と2戦以上した場合に今日の対面成績をまとめて返す。"""
     from collections import Counter
@@ -140,7 +168,12 @@ def _rematch_section(battles: list[dict]) -> str | None:
 # メッセージ構築
 # ---------------------------------------------------------------------------
 
-def build_message(battles: list[dict], date_str: str, player_name: str | None = None) -> str | None:
+def build_message(
+    battles: list[dict],
+    date_str: str,
+    player_name: str | None = None,
+    scout_data: dict[str, dict] | None = None,
+) -> str | None:
     if not battles:
         return None
 
@@ -239,6 +272,13 @@ def build_message(battles: list[dict], date_str: str, player_name: str | None = 
         lines.append("━━━━━━━━━━━━━━━")
         lines.append(rematch)
 
+    # --- 対戦相手スカウト ---
+    if scout_data:
+        scout = _scout_section(battles, scout_data)
+        if scout:
+            lines.append("━━━━━━━━━━━━━━━")
+            lines.append(scout)
+
     return "\n".join(lines)
 
 
@@ -297,6 +337,16 @@ def build_weekly_message(
     lines.append(f"🥊 最多使用キャラ: {top_chara} ({my_chara_count.get(top_chara, 0)}戦)")
     lines.append(f"🎯 最多対戦相手: {top_opp} ({opp_count.get(top_opp, 0)}戦)")
 
+    # --- レーティングトレンド ---
+    trend = predict_rating_trend(battles)
+    if trend:
+        slope = trend["slope_per_day"]
+        sign  = "+" if slope >= 0 else ""
+        lines.append(f"📈 レーティングトレンド: {sign}{slope:.0f}/日")
+        stag = trend.get("stagnation_days", 0)
+        if stag >= 3:
+            lines.append(f"⚠️ 停滞気味: {stag}日間 変動が小さい")
+
     matrix = _matchup_matrix(battles)
     if matrix:
         lines.append("━━━━━━━━━━━━━━━")
@@ -308,6 +358,43 @@ def build_weekly_message(
 # ---------------------------------------------------------------------------
 # 投稿
 # ---------------------------------------------------------------------------
+
+def build_community_weekly(players_stats: list[dict], week_start_str: str) -> str:
+    """
+    複数プレイヤーの週次ランキングメッセージを構築する。
+    players_stats: [{name, wins, losses, net_rating}, ...]
+    """
+    sorted_players = sorted(players_stats, key=lambda p: p["net_rating"], reverse=True)
+    medals = ["🥇", "🥈", "🥉"]
+
+    lines = [f"🏆 **格ゲー部 週間ランキング** ({week_start_str} 週)"]
+    lines.append("━━━━━━━━━━━━━━━")
+
+    for i, p in enumerate(sorted_players):
+        medal  = medals[i] if i < 3 else f"{i + 1}."
+        sign   = "+" if p["net_rating"] >= 0 else ""
+        total  = p["wins"] + p["losses"]
+        wr_str = f"{p['wins'] / total * 100:.0f}%" if total else "-"
+        lines.append(
+            f"{medal} {p['name']}: {sign}{p['net_rating']} "
+            f"({p['wins']}勝{p['losses']}敗 {wr_str})"
+        )
+
+    return "\n".join(lines)
+
+
+def post_community_weekly(players_stats: list[dict], week_start_str: str) -> None:
+    """部内週次ランキングを Discord に投稿する。2人以上いる場合のみ投稿。"""
+    if not WEBHOOK_URL or len(players_stats) < 2:
+        return
+    message = build_community_weekly(players_stats, week_start_str)
+    try:
+        resp = requests.post(WEBHOOK_URL, json={"content": message}, timeout=TIMEOUT_WEBHOOK)
+        resp.raise_for_status()
+        logger.info("[discord_post] 部内ランキング投稿完了")
+    except Exception as e:
+        logger.warning(f"[discord_post] 部内ランキング投稿失敗: {e}")
+
 
 def notify_error(message: str) -> None:
     """エラーを Discord Webhook に通知する。失敗しても例外は出さない。"""
@@ -324,6 +411,7 @@ def post(
     date_str: str | None = None,
     llm_comment: str | None = None,
     player_name: str | None = None,
+    scout_data: dict[str, dict] | None = None,
 ) -> bool:
     """Discord Webhook にサマリーを投稿。投稿した場合 True を返す。"""
     if not WEBHOOK_URL:
@@ -332,7 +420,7 @@ def post(
     if date_str is None:
         date_str = datetime.now(JST).strftime("%Y/%m/%d")
 
-    message = build_message(battles, date_str, player_name)
+    message = build_message(battles, date_str, player_name, scout_data=scout_data)
     if message is None:
         logger.info("[discord_post] 本日の試合なし。投稿をスキップ。")
         return False

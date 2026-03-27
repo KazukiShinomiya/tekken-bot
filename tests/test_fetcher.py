@@ -14,6 +14,7 @@ from bot.fetcher import (
     _parse_wank_html_row,
     fetch_battles_since,
     fetch_quick_battles_from_ewgf,
+    fetch_opponent_summary,
     CHARA_NAMES,
     _learned_chara_names,
 )
@@ -487,3 +488,98 @@ def test_fetch_quick_battles_returns_empty_on_error(mock_ewgf):
     mock_ewgf.side_effect = Exception("ewgf down")
     result = fetch_quick_battles_from_ewgf(0, polaris_id="me")
     assert result == []
+
+
+# ---------------------------------------------------------------------------
+# fetch_opponent_summary
+# ---------------------------------------------------------------------------
+
+def _opp_battle(won: bool, my_chara: str = "Jin", battle_at: int = 1000) -> dict:
+    """fetch_opponent_summary 内で使う（opponent 視点）の HTML バトル。"""
+    return {
+        "won": won,
+        "my_chara": my_chara,
+        "opp_chara": "Lee",
+        "battle_at": battle_at,
+        "battle_type": "ranked",
+        "my_rounds": 2,
+        "opp_rounds": 1,
+        "rating_before": None,
+        "rating_change": None,
+        "opp_polaris_id": "target",
+        "opp_name": "target",
+        "my_chara_id": None,
+        "opp_chara_id": None,
+        "my_rank": None,
+        "my_power": None,
+        "opp_rank": None,
+        "opp_power": None,
+        "my_region": None,
+        "opp_region": None,
+        "opp_rating_before": None,
+        "opp_rating_change": None,
+        "battle_id": f"wank_{battle_at}_target",
+        "source": "wank_html",
+        "game_version": None,
+        "stage_id": None,
+    }
+
+
+@patch("bot.fetcher._fetch_from_wank_html")
+def test_fetch_opponent_summary_basic(mock_wank):
+    """正常系: 20戦取得して勝率・メインキャラを集計。"""
+    battles = [_opp_battle(True, "Jin", i * 100) for i in range(12)] + \
+              [_opp_battle(False, "Jin", i * 100 + 50) for i in range(8)]
+    mock_wank.return_value = battles
+
+    result = fetch_opponent_summary("target_pid")
+
+    assert result is not None
+    assert result["total"] == 20
+    assert abs(result["win_rate"] - 60.0) < 1.0
+    assert result["main_chara"] == "Jin"
+    mock_wank.assert_called_once()
+
+
+@patch("bot.fetcher._fetch_from_wank_html")
+def test_fetch_opponent_summary_empty(mock_wank):
+    """試合なし → None を返す。"""
+    mock_wank.return_value = []
+    assert fetch_opponent_summary("target_pid") is None
+
+
+@patch("bot.fetcher._fetch_from_wank_html")
+def test_fetch_opponent_summary_error(mock_wank):
+    """取得失敗 → None を返す（例外を出さない）。"""
+    mock_wank.side_effect = Exception("wank down")
+    assert fetch_opponent_summary("target_pid") is None
+
+
+@patch("bot.fetcher._fetch_from_wank_html")
+def test_fetch_opponent_summary_recent_win_rate(mock_wank):
+    """直近10戦の勝率が計算される。"""
+    # HTML は新しい順（降順）で返す → 最初の10件が直近
+    # 直近10戦は全勝、古い10戦は全敗
+    battles = [_opp_battle(True, "Jin", 1000 + i * 100) for i in range(10)] + \
+              [_opp_battle(False, "Jin", i * 100) for i in range(10)]
+    mock_wank.return_value = battles
+
+    result = fetch_opponent_summary("target_pid")
+
+    assert result is not None
+    # battles[:10] が直近 → 全勝
+    assert result["recent_wins"] == 10
+    assert result["recent_total"] == 10
+    assert result["recent_win_rate"] == 100.0
+
+
+@patch("bot.fetcher._fetch_from_wank_html")
+def test_fetch_opponent_summary_main_chara_most_common(mock_wank):
+    """最多使用キャラが main_chara になる。"""
+    battles = [_opp_battle(True, "Jin")] * 3 + [_opp_battle(True, "Reina")] * 7
+    mock_wank.return_value = battles
+
+    result = fetch_opponent_summary("target_pid")
+
+    assert result is not None
+    assert result["main_chara"] == "Reina"

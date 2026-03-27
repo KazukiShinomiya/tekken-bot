@@ -58,6 +58,59 @@ def aggregate_by_hour(battles: list[dict]) -> dict[int, list[bool]]:
     return result
 
 
+def predict_rating_trend(battles: list[dict]) -> dict:
+    """
+    レーティングの推移を線形回帰で分析する。
+    numpy が必要（不在の場合は空 dict を返す）。
+
+    Returns:
+        slope_per_day: 1日あたりの平均レーティング変動（正=上昇傾向）
+        stagnation_days: 末尾から連続して停滞（±100/日以内）した日数
+    """
+    ranked_rated = filter_rated_battles([b for b in battles if b.get("battle_type") == "ranked"])
+    if len(ranked_rated) < 3:
+        return {}
+
+    sorted_rated = sorted(ranked_rated, key=lambda b: b["battle_at"])
+
+    try:
+        import numpy as np
+        cumulative = 0.0
+        xs, ys = [], []
+        for b in sorted_rated:
+            cumulative += b["rating_change"]
+            xs.append(b["battle_at"])
+            ys.append(cumulative)
+
+        slope, _ = np.polyfit(xs, ys, 1)
+        slope_per_day = float(slope) * 86400  # 秒 → 日
+
+        stagnation_days = _count_stagnation_days(sorted_rated)
+
+        return {"slope_per_day": slope_per_day, "stagnation_days": stagnation_days}
+    except Exception:
+        return {}
+
+
+def _count_stagnation_days(sorted_rated: list[dict]) -> int:
+    """末尾から連続して1日の変動が ±100 以内の日数を返す。"""
+    from collections import defaultdict
+
+    THRESHOLD = 100
+    daily: dict[str, int] = defaultdict(int)
+    for b in sorted_rated:
+        day = datetime.fromtimestamp(b["battle_at"], JST).strftime("%Y-%m-%d")
+        daily[day] += b["rating_change"]
+
+    stagnation = 0
+    for delta in reversed(list(daily.values())):
+        if abs(delta) <= THRESHOLD:
+            stagnation += 1
+        else:
+            break
+    return stagnation
+
+
 def detect_momentum(sorted_battles: list[dict]) -> str | None:
     """
     時系列順バトルリストの前半・後半を比較し、調子の波を文字列で返す。

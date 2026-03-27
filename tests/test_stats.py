@@ -2,7 +2,10 @@
 bot/stats.py の単体テスト。
 """
 
-from bot.stats import calculate_streak, aggregate_by_character
+from bot.stats import (
+    calculate_streak, aggregate_by_character,
+    predict_rating_trend, detect_momentum,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -81,3 +84,99 @@ def test_aggregate_by_character_multiple_same_chara():
     battles = [{"won": True, "opp_chara": "Dragunov"}] * 3
     result = aggregate_by_character(battles)
     assert result["Dragunov"] == [True, True, True]
+
+
+# ---------------------------------------------------------------------------
+# predict_rating_trend
+# ---------------------------------------------------------------------------
+
+def _ranked_rated(battle_at: int, rating_change: int) -> dict:
+    return {
+        "won": rating_change > 0,
+        "battle_type": "ranked",
+        "battle_at": battle_at,
+        "rating_change": rating_change,
+    }
+
+
+def test_predict_rating_trend_upward():
+    """連続プラス変動 → slope_per_day が正。"""
+    battles = [_ranked_rated(i * 3600, 50) for i in range(5)]
+    result = predict_rating_trend(battles)
+    assert "slope_per_day" in result
+    assert result["slope_per_day"] > 0
+
+
+def test_predict_rating_trend_downward():
+    """連続マイナス変動 → slope_per_day が負。"""
+    battles = [_ranked_rated(i * 3600, -30) for i in range(5)]
+    result = predict_rating_trend(battles)
+    assert "slope_per_day" in result
+    assert result["slope_per_day"] < 0
+
+
+def test_predict_rating_trend_too_few_battles():
+    """2戦以下は空 dict を返す。"""
+    battles = [_ranked_rated(i * 3600, 50) for i in range(2)]
+    assert predict_rating_trend(battles) == {}
+
+
+def test_predict_rating_trend_no_rated_battles():
+    """rating_change なしのバトルは空 dict。"""
+    battles = [{"won": True, "battle_type": "ranked", "battle_at": i * 3600, "rating_change": None}
+               for i in range(5)]
+    assert predict_rating_trend(battles) == {}
+
+
+def test_predict_rating_trend_quick_battles_excluded():
+    """クイックマッチは trend 計算に含まれない。"""
+    quick = [{"won": True, "battle_type": "quick", "battle_at": i * 3600, "rating_change": 50}
+             for i in range(5)]
+    assert predict_rating_trend(quick) == {}
+
+
+def test_predict_rating_trend_stagnation_days():
+    """連続±100以内の日が3日あれば stagnation_days >= 3。"""
+    # 各バトルは別々の日に0変動
+    battles = [_ranked_rated(i * 86400, 10) for i in range(5)]
+    result = predict_rating_trend(battles)
+    assert result.get("stagnation_days", 0) >= 3
+
+
+# ---------------------------------------------------------------------------
+# detect_momentum
+# ---------------------------------------------------------------------------
+
+def _b(won: bool, battle_at: int = 0) -> dict:
+    return {"won": won, "battle_at": battle_at}
+
+
+def test_detect_momentum_upswing():
+    """前半負け越し → 後半勝ち越しで ↑ を返す。"""
+    battles = [_b(False), _b(False), _b(True), _b(True), _b(True), _b(True)]
+    result = detect_momentum(battles)
+    assert result is not None
+    assert "上" in result  # 後半に調子が上向いた
+
+
+def test_detect_momentum_downswing():
+    """前半勝ち越し → 後半負け越しで ↓ を返す。"""
+    battles = [_b(True), _b(True), _b(True), _b(False), _b(False), _b(False)]
+    result = detect_momentum(battles)
+    assert result is not None
+    assert "落ち" in result  # 後半に調子が落ちた
+
+
+def test_detect_momentum_stable():
+    """前後半の差が小さい場合は None。"""
+    battles = [_b(True), _b(False), _b(True), _b(False)]
+    assert detect_momentum(battles) is None
+
+
+def test_detect_momentum_too_few():
+    """3戦以下は None。"""
+    assert detect_momentum([_b(True), _b(False), _b(True)]) is None
+
+
+def test_detect_momentum_empty():
+    assert detect_momentum([]) is None

@@ -24,6 +24,7 @@ import bot.db as db
 import bot.fetcher as fetcher
 import bot.discord_post as discord_post
 import bot.analyzer as analyzer
+from bot.stats import count_wins, count_losses, filter_rated_battles
 
 logger = logging.getLogger(__name__)
 
@@ -161,13 +162,28 @@ def _run_for_player(player_name: str, polaris_id: str, today_str: str, date_str:
     rematch_data = _collect_rematch_data(today_battles, player_name)
     logger.info(f"[{player_name}] リピート対戦相手: {len(rematch_data)} 人")
 
+    # リピート相手（上位3人）のスカウト情報を取得
+    from collections import Counter as _Counter
+    pid_count = _Counter(
+        b.get("opp_polaris_id") for b in today_battles if b.get("opp_polaris_id")
+    )
+    scout_data: dict = {}
+    for pid, _ in pid_count.most_common(3):
+        if pid_count[pid] >= 2:
+            summary = fetcher.fetch_opponent_summary(pid)
+            if summary:
+                scout_data[pid] = summary
+    if scout_data:
+        logger.info(f"[{player_name}] スカウト取得: {len(scout_data)} 人")
+
     llm_comment = _analyze_with_timeout(
         today_battles, date_str, player_name=player_name,
         prev_battles=prev_battles, rematch_data=rematch_data or None,
     )
 
     try:
-        discord_post.post(today_battles, date_str, llm_comment, player_name=player_name)
+        discord_post.post(today_battles, date_str, llm_comment, player_name=player_name,
+                          scout_data=scout_data or None)
         logger.info(f"[{player_name}] 投稿完了。")
     except Exception as e:
         logger.error(f"[{player_name}] Discord 投稿失敗: {e}")
@@ -222,6 +238,8 @@ async def weekly() -> None:
         since_ts = (now - timedelta(days=7)).timestamp()
         week_start_str = (now - timedelta(days=6)).strftime("%Y/%m/%d")
 
+        community_stats: list[dict] = []
+
         for player_name, _ in players:
             battles = db.get_battles_since(since_ts, player_name=player_name)
             logger.info(f"[{player_name}] 週間バトル: {len(battles)} 件")
@@ -235,6 +253,19 @@ async def weekly() -> None:
                 msg = f"[{player_name}] 週次サマリー投稿失敗: {e}"
                 logger.error(msg)
                 discord_post.notify_error(msg)
+
+            # コミュニティランキング用の集計
+            ranked = [b for b in battles if b.get("battle_type") == "ranked"]
+            rated  = filter_rated_battles(ranked)
+            community_stats.append({
+                "name":       player_name,
+                "wins":       count_wins(battles),
+                "losses":     count_losses(battles),
+                "net_rating": sum(b["rating_change"] for b in rated) if rated else 0,
+            })
+
+        # 2人以上のとき部内ランキングを投稿
+        discord_post.post_community_weekly(community_stats, week_start_str)
     finally:
         _weekly_lock.release()
 
