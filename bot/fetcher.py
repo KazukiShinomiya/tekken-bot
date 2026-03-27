@@ -21,15 +21,22 @@ WANK_BULK   = "https://wank.wavu.wiki/api/replays"
 WANK_PLAYER = "https://wank.wavu.wiki/player"
 
 CHARA_NAMES = {
-    # wank bulk API は 0-indexed でキャラIDを返す（DLC は 44/45 で共通）
-    0: "Paul", 1: "Law", 2: "King", 3: "Yoshimitsu", 4: "Hwoarang",
-    5: "Xiaoyu", 6: "Jin", 7: "Bryan", 8: "Kazuya", 9: "Steve",
-    10: "Jack-8", 11: "Asuka", 12: "Devil Jin", 13: "Feng", 14: "Lili",
-    15: "Dragunov", 16: "Leo", 17: "Lars", 18: "Alisa", 19: "Claudio",
-    20: "Shaheen", 21: "Nina", 22: "Lee", 23: "Kuma", 24: "Panda",
-    25: "Zafina", 26: "Leroy", 27: "Jun", 28: "Reina", 29: "Azucena",
-    30: "Victor", 31: "Raven", 32: "Eddy", 33: "Lidia", 34: "Heihachi",
-    35: "Clive", 44: "Armor King", 45: "Miary Zo",
+    # wank bulk API のキャラID（1-indexed。0 も Paul として記録される場合あり）
+    # Season 2 DLC 追加により Zafina 以降がシフト: Zafina/Leroy +2、Jun 以降 +4、
+    # Season1 DLC（Eddy-Clive）は +5、Season2 末尾に Anna/Fahkumram/Armor King/Miary Zo
+    0: "Paul",
+    1: "Paul", 2: "Law", 3: "King", 4: "Yoshimitsu", 5: "Hwoarang",
+    6: "Xiaoyu", 7: "Jin", 8: "Bryan", 9: "Kazuya", 10: "Steve",
+    11: "Jack-8", 12: "Asuka", 13: "Devil Jin", 14: "Feng", 15: "Lili",
+    16: "Dragunov", 17: "Leo", 18: "Lars", 19: "Alisa", 20: "Claudio",
+    21: "Shaheen", 22: "Nina", 23: "Lee", 24: "Kuma", 25: "Panda",
+    # 26-27: Season 2 DLC（未確認）
+    28: "Zafina", 29: "Leroy",
+    # 30-31: Season 2 DLC（未確認）
+    32: "Jun", 33: "Reina", 34: "Azucena", 35: "Victor", 36: "Raven",
+    # 37: Season 2 DLC（未確認）
+    38: "Eddy", 39: "Lidia", 40: "Heihachi", 41: "Clive",
+    42: "Anna", 43: "Fahkumram", 44: "Armor King", 45: "Miary Zo",
 }
 
 # battle_type の数値 → 文字列マッピング

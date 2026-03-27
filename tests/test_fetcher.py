@@ -23,8 +23,8 @@ from bot.fetcher import (
 # ---------------------------------------------------------------------------
 
 def test_get_chara_name_known_id():
-    assert get_chara_name(6) == "Jin"
-    assert get_chara_name(28) == "Reina"
+    assert get_chara_name(7) == "Jin"
+    assert get_chara_name(33) == "Reina"
 
 
 def test_get_chara_name_unknown_id():
@@ -163,11 +163,11 @@ def _bulk_record(p1_polaris_id: str = "me", p2_polaris_id: str = "opp_pid") -> d
         "stage_id":       5,
         "p1_polaris_id":  p1_polaris_id,
         "p2_polaris_id":  p2_polaris_id,
-        "p1_chara_id":    6,        # Jin
+        "p1_chara_id":    7,        # Jin
         "p1_rank":        15,
         "p1_power":       10500,
         "p1_region_id":   "JP",
-        "p2_chara_id":    28,       # Reina
+        "p2_chara_id":    33,       # Reina
         "p2_rank":        12,
         "p2_power":       8200,
         "p2_region_id":   "US",
@@ -324,7 +324,7 @@ def _mock_battle(battle_at: int = 2000) -> dict:
         "source":         "wank_bulk",
         "won":            True,
         "my_chara":       "Jin",
-        "my_chara_id":    6,
+        "my_chara_id":    7,
         "my_rounds":      2,
         "my_rank":        15,
         "my_power":       10000,
@@ -334,7 +334,7 @@ def _mock_battle(battle_at: int = 2000) -> dict:
         "opp_name":       "Opp",
         "opp_polaris_id": "opp_pid",
         "opp_chara":      "Reina",
-        "opp_chara_id":   28,
+        "opp_chara_id":   33,
         "opp_rounds":     1,
         "opp_rank":       12,
         "opp_power":      8000,
