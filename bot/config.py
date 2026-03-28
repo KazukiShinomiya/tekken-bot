@@ -43,6 +43,19 @@ TIMEOUT_WEBHOOK_IMAGE = 15   # Discord Webhook（画像添付）
 RATING_GOAL          = int(os.getenv("RATING_GOAL", "0"))          # 0=無効
 LOSS_ALERT_THRESHOLD = int(os.getenv("LOSS_ALERT_THRESHOLD", "5")) # 0=無効
 
+def validate_config() -> list[str]:
+    """
+    設定の問題点をリストで返す。空リストなら問題なし。
+    main() の冒頭で呼んで sys.exit() する想定。
+    """
+    errors: list[str] = []
+    if not DISCORD_WEBHOOK_URL:
+        errors.append("DISCORD_WEBHOOK_URL が未設定（Discord 投稿不可）")
+    if not POLARIS_ID and not PLAYERS:
+        errors.append("POLARIS_ID または PLAYERS が未設定（プレイヤーデータ取得不可）")
+    return errors
+
+
 # ── マジックナンバー定数 ──────────────────────────────────────────────────────
 # HTTP リトライ設定
 RETRY_TOTAL          = 3

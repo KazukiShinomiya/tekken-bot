@@ -18,7 +18,7 @@ from discord import app_commands
 import bot.db as db
 import main as _bot_main
 from bot.config import DISCORD_BOT_TOKEN as BOT_TOKEN, JST
-from bot.stats import count_wins, count_losses
+from bot.stats import count_wins, count_losses, get_most_common
 
 logger = logging.getLogger(__name__)
 
@@ -79,11 +79,7 @@ async def cmd_vs(interaction: discord.Interaction, name: str) -> None:
     total  = wins + losses
     wr     = wins / total * 100 if total else 0
 
-    chara_count: dict[str, int] = {}
-    for b in battles:
-        c = b.get("opp_chara") or "???"
-        chara_count[c] = chara_count.get(c, 0) + 1
-    main_chara = max(chara_count, key=chara_count.__getitem__) if chara_count else "???"
+    main_chara, _ = get_most_common(battles, "opp_chara")
 
     recent = sorted(battles, key=lambda x: x["battle_at"], reverse=True)[:5]
     recent_lines = []

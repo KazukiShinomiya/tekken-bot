@@ -22,6 +22,7 @@ load_dotenv()
 from bot.config import (
     PLAYERS as PLAYERS_ENV, POLARIS_ID as POLARIS_ID_ENV, TEKKEN_ID as TEKKEN_ID_ENV,
     LOG_PATH, JST, TIMEOUT_LLM, TIMEOUT_API, RATING_GOAL, LOSS_ALERT_THRESHOLD,
+    validate_config,
 )
 import bot.db as db
 import bot.fetcher as fetcher
@@ -206,17 +207,29 @@ def _run_for_player(player_name: str, polaris_id: str, today_str: str, date_str:
                 )
                 logger.info(f"[{player_name}] 目標レーティング達成通知: {current_rating}")
 
+    # Discord に即時投稿（LLM コメントなし）
+    post_result = None
+    try:
+        post_result = discord_post.post(
+            today_battles, date_str,
+            player_name=player_name,
+            scout_data=scout_data or None,
+        )
+        logger.info(f"[{player_name}] 投稿完了。")
+    except Exception as e:
+        logger.error(f"[{player_name}] Discord 投稿失敗: {e}")
+
+    # LLM 分析（投稿後に実行することで Discord でのレスポンスタイムを改善）
     llm_comment = _analyze_with_timeout(
         today_battles, date_str, player_name=player_name,
         prev_battles=prev_battles, rematch_data=rematch_data or None,
     )
 
-    try:
-        discord_post.post(today_battles, date_str, llm_comment, player_name=player_name,
-                          scout_data=scout_data or None)
-        logger.info(f"[{player_name}] 投稿完了。")
-    except Exception as e:
-        logger.error(f"[{player_name}] Discord 投稿失敗: {e}")
+    # LLM コメントを Embed フッターとして追記
+    if llm_comment and post_result:
+        message_id, embed = post_result
+        discord_post.edit_llm_comment(message_id, embed, llm_comment)
+        logger.info(f"[{player_name}] LLMコメント追記完了。")
 
 
 async def main(target_date: str | None = None) -> None:
@@ -230,6 +243,12 @@ async def main(target_date: str | None = None) -> None:
     try:
         now = datetime.now(JST)
         logger.info(f"Tekken Bot 起動 {now.isoformat()}")
+
+        config_errors = validate_config()
+        if config_errors:
+            for err in config_errors:
+                logger.error(f"設定エラー: {err}")
+            sys.exit(1)
 
         db.init_db()
         fetcher.load_learned_chara_names()
@@ -266,15 +285,24 @@ def _run_weekly_for_player(
     battles = db.get_battles_since(since_ts, player_name=player_name)
     logger.info(f"[{player_name}] 週間バトル: {len(battles)} 件")
 
-    llm_comment = _analyze_with_timeout(battles, week_start_str, player_name=player_name)
-
+    # Discord に即時投稿（LLM コメントなし）
+    post_result = None
     try:
-        discord_post.post_weekly(battles, week_start_str, llm_comment, player_name=player_name)
+        post_result = discord_post.post_weekly(battles, week_start_str, player_name=player_name)
         logger.info(f"[{player_name}] 週次サマリー投稿完了。")
     except Exception as e:
         msg = f"[{player_name}] 週次サマリー投稿失敗: {e}"
         logger.error(msg)
         discord_post.notify_error(msg)
+
+    # LLM 分析（投稿後）
+    llm_comment = _analyze_with_timeout(battles, week_start_str, player_name=player_name)
+
+    # LLM コメントを Embed フッターとして追記
+    if llm_comment and post_result:
+        message_id, embed = post_result
+        discord_post.edit_llm_comment(message_id, embed, llm_comment)
+        logger.info(f"[{player_name}] 週次LLMコメント追記完了。")
 
     ranked = [b for b in battles if b.get("battle_type") == "ranked"]
     rated  = filter_rated_battles(ranked)

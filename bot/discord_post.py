@@ -4,12 +4,20 @@ Discord Webhook にバトルサマリーを投稿するモジュール。
 
 import json
 import logging
+import re
 import requests
-from collections import defaultdict
+from collections import Counter
 from datetime import datetime
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
-from bot.config import DISCORD_WEBHOOK_URL as WEBHOOK_URL, TEKKEN_ID, TIMEOUT_WEBHOOK, TIMEOUT_WEBHOOK_IMAGE, JST
-from bot.config import DISCORD_EMBED_MAX_FIELDS
+from bot.config import (
+    DISCORD_WEBHOOK_URL as WEBHOOK_URL, TEKKEN_ID,
+    TIMEOUT_WEBHOOK, TIMEOUT_WEBHOOK_IMAGE, JST,
+    DISCORD_EMBED_MAX_FIELDS,
+    RETRY_TOTAL, RETRY_BACKOFF_FACTOR,
+)
+from bot.models import Battle
 from bot.stats import (
     calculate_streak, aggregate_by_character, count_wins, count_losses,
     filter_rated_battles, aggregate_by_hour, detect_momentum, predict_rating_trend,
@@ -17,6 +25,27 @@ from bot.stats import (
 )
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Webhook 専用 HTTP セッション（リトライ付き）
+# ---------------------------------------------------------------------------
+
+_webhook_retry = Retry(
+    total=RETRY_TOTAL,
+    backoff_factor=RETRY_BACKOFF_FACTOR,
+    status_forcelist=[500, 502, 503],
+    allowed_methods=["GET", "POST", "PATCH"],
+)
+_webhook_session = requests.Session()
+_webhook_session.mount("https://", HTTPAdapter(max_retries=_webhook_retry))
+
+
+def _parse_webhook_id_token() -> tuple[str, str] | None:
+    """WEBHOOK_URL から (webhook_id, token) を抽出する。"""
+    if not WEBHOOK_URL:
+        return None
+    m = re.match(r"https://discord(?:app)?\.com/api/webhooks/(\d+)/([^/?]+)", WEBHOOK_URL)
+    return (m.group(1), m.group(2)) if m else None
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +150,6 @@ def _scout_section(battles: list[dict], scout_data: dict[str, dict]) -> str | No
     リピート対戦相手のスカウトレポートを返す。
     scout_data: {polaris_id: {win_rate, main_chara, recent_wins, recent_total, recent_win_rate}}
     """
-    from collections import Counter
     pid_count: Counter = Counter(
         b.get("opp_polaris_id") for b in battles if b.get("opp_polaris_id")
     )
@@ -146,7 +174,6 @@ def _scout_section(battles: list[dict], scout_data: dict[str, dict]) -> str | No
 
 def _rematch_section(battles: list[dict]) -> str | None:
     """同一対戦相手と2戦以上した場合に今日の対面成績をまとめて返す。"""
-    from collections import Counter
     pid_count: Counter = Counter(
         b.get("opp_polaris_id") for b in battles if b.get("opp_polaris_id")
     )
@@ -367,10 +394,9 @@ def build_embed(
     date_str: str,
     player_name: str | None = None,
     scout_data: dict[str, dict] | None = None,
-    llm_comment: str | None = None,
     has_chart: bool = False,
 ) -> dict | None:
-    """Discord Embed 形式の dict を返す。試合なしの場合は None。"""
+    """Discord Embed 形式の dict を返す。試合なしの場合は None。LLM コメントは含まない。"""
     if not battles:
         return None
 
@@ -471,8 +497,6 @@ def build_embed(
         "description": description,
         "fields":      fields[:DISCORD_EMBED_MAX_FIELDS],
     }
-    if llm_comment:
-        embed["footer"] = {"text": f"🤖 {llm_comment}"[:2048]}
     if has_chart:
         embed["image"] = {"url": "attachment://rating.png"}
 
@@ -483,9 +507,8 @@ def build_weekly_embed(
     battles: list[dict],
     week_start_str: str,
     player_name: str | None = None,
-    llm_comment: str | None = None,
 ) -> dict | None:
-    """週次サマリーの Embed dict を返す。試合なしの場合は None。"""
+    """週次サマリーの Embed dict を返す。試合なしの場合は None。LLM コメントは含まない。"""
     if not battles:
         return None
 
@@ -536,15 +559,11 @@ def build_weekly_embed(
         matrix_body = "\n".join(matrix.split("\n")[1:])
         fields.append({"name": "📊 対戦成績", "value": matrix_body[:1024], "inline": False})
 
-    embed: dict = {
+    return {
         "title":  f"📅 {display_name} 週次サマリー（{week_start_str} 週）",
         "color":  _embed_color(battles),
         "fields": fields[:DISCORD_EMBED_MAX_FIELDS],
     }
-    if llm_comment:
-        embed["footer"] = {"text": f"🤖 {llm_comment}"[:2048]}
-
-    return embed
 
 
 def build_community_weekly_embed(players_stats: list[dict], week_start_str: str) -> dict:
@@ -601,7 +620,7 @@ def post_community_weekly(players_stats: list[dict], week_start_str: str) -> Non
         return
     embed = build_community_weekly_embed(players_stats, week_start_str)
     try:
-        resp = requests.post(WEBHOOK_URL, json={"embeds": [embed]}, timeout=TIMEOUT_WEBHOOK)
+        resp = _webhook_session.post(WEBHOOK_URL, json={"embeds": [embed]}, timeout=TIMEOUT_WEBHOOK)
         resp.raise_for_status()
         logger.info("[discord_post] 部内ランキング投稿完了")
     except requests.RequestException as e:
@@ -613,7 +632,7 @@ def notify(message: str) -> None:
     if not WEBHOOK_URL:
         return
     try:
-        requests.post(WEBHOOK_URL, json={"content": message}, timeout=TIMEOUT_WEBHOOK)
+        _webhook_session.post(WEBHOOK_URL, json={"content": message}, timeout=TIMEOUT_WEBHOOK)
     except requests.RequestException as e:
         logger.warning(f"[discord_post] 通知失敗: {e}")
 
@@ -624,13 +643,16 @@ def notify_error(message: str) -> None:
 
 
 def post(
-    battles: list[dict],
+    battles: list[Battle],
     date_str: str | None = None,
-    llm_comment: str | None = None,
     player_name: str | None = None,
     scout_data: dict[str, dict] | None = None,
-) -> bool:
-    """Discord Webhook に Embed サマリーを投稿。投稿した場合 True を返す。"""
+) -> tuple[str, dict] | None:
+    """
+    Discord Webhook に Embed サマリーを投稿。
+    成功時は (message_id, embed) を返す。試合なし・失敗時は None。
+    LLM コメントは含まず、後から edit_llm_comment() で追記する。
+    """
     if not WEBHOOK_URL:
         raise ValueError("DISCORD_WEBHOOK_URL が .env に設定されていません")
 
@@ -639,7 +661,7 @@ def post(
 
     if not battles:
         logger.info("[discord_post] 本日の試合なし。投稿をスキップ。")
-        return False
+        return None
 
     # グラフ生成を試みる
     chart = None
@@ -649,43 +671,80 @@ def post(
     except Exception as e:
         logger.warning(f"[discord_post] グラフ生成失敗（スキップ）: {e}")
 
-    embed = build_embed(
-        battles, date_str, player_name,
-        scout_data=scout_data, llm_comment=llm_comment,
-        has_chart=bool(chart),
-    )
+    embed = build_embed(battles, date_str, player_name, scout_data=scout_data, has_chart=bool(chart))
     if embed is None:
-        return False
+        return None
 
+    wait_url = WEBHOOK_URL + "?wait=true"
     if chart:
-        resp = requests.post(
-            WEBHOOK_URL,
+        resp = _webhook_session.post(
+            wait_url,
             data={"payload_json": json.dumps({"embeds": [embed]})},
             files={"files[0]": ("rating.png", chart, "image/png")},
             timeout=TIMEOUT_WEBHOOK_IMAGE,
         )
     else:
-        resp = requests.post(WEBHOOK_URL, json={"embeds": [embed]}, timeout=TIMEOUT_WEBHOOK)
+        resp = _webhook_session.post(wait_url, json={"embeds": [embed]}, timeout=TIMEOUT_WEBHOOK)
 
     resp.raise_for_status()
-    return True
+    message_id: str = resp.json()["id"]
+    return message_id, embed
 
 
 def post_weekly(
-    battles: list[dict],
+    battles: list[Battle],
     week_start_str: str,
-    llm_comment: str | None = None,
     player_name: str | None = None,
-) -> bool:
-    """週次サマリーを Discord Webhook に Embed 形式で投稿。"""
+) -> tuple[str, dict] | None:
+    """
+    週次サマリーを Discord Webhook に Embed 形式で投稿。
+    成功時は (message_id, embed) を返す。試合なし・失敗時は None。
+    """
     if not WEBHOOK_URL:
         raise ValueError("DISCORD_WEBHOOK_URL が .env に設定されていません")
 
-    embed = build_weekly_embed(battles, week_start_str, player_name, llm_comment=llm_comment)
+    embed = build_weekly_embed(battles, week_start_str, player_name)
     if embed is None:
         logger.info(f"[discord_post][{player_name}] 今週の試合なし。週次投稿をスキップ。")
-        return False
+        return None
 
-    resp = requests.post(WEBHOOK_URL, json={"embeds": [embed]}, timeout=TIMEOUT_WEBHOOK)
+    resp = _webhook_session.post(
+        WEBHOOK_URL + "?wait=true", json={"embeds": [embed]}, timeout=TIMEOUT_WEBHOOK
+    )
     resp.raise_for_status()
-    return True
+    message_id = resp.json()["id"]
+    return message_id, embed
+
+
+def edit_llm_comment(message_id: str, embed: dict, llm_comment: str) -> None:
+    """
+    投稿済み Embed のフッターに LLM コメントを追記する（PATCH）。
+    チャート添付ファイルを保持するため GET → PATCH の順で処理する。
+    失敗しても例外は出さない。
+    """
+    parts = _parse_webhook_id_token()
+    if not parts:
+        return
+    webhook_id, token = parts
+    url = f"https://discord.com/api/webhooks/{webhook_id}/{token}/messages/{message_id}"
+
+    # 既存の添付ファイル ID を保持するため現在のメッセージを取得
+    attachments: list[dict] = []
+    try:
+        get_resp = _webhook_session.get(url, timeout=TIMEOUT_WEBHOOK)
+        get_resp.raise_for_status()
+        attachments = get_resp.json().get("attachments", [])
+    except requests.RequestException as e:
+        logger.warning(f"[discord_post] メッセージ取得失敗（添付ファイルなしで続行）: {e}")
+
+    updated = {**embed, "footer": {"text": f"🤖 {llm_comment}"[:2048]}}
+    patch_body: dict = {"embeds": [updated]}
+    if attachments:
+        patch_body["attachments"] = [{"id": a["id"]} for a in attachments]
+
+    try:
+        resp = _webhook_session.patch(url, json=patch_body, timeout=TIMEOUT_WEBHOOK)
+        resp.raise_for_status()
+        logger.info("[discord_post] LLMコメントを Embed に追記しました。")
+    except requests.RequestException as e:
+        logger.warning(f"[discord_post] LLMコメント追記失敗: {e}")
