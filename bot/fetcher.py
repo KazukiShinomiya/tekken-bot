@@ -9,12 +9,19 @@
 
 import logging
 import re
+import sqlite3
+import threading
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
 
-from bot.config import EWGF_API_KEY as API_KEY, POLARIS_ID, TIMEOUT_API
+from bot.config import (
+    EWGF_API_KEY as API_KEY, POLARIS_ID, TIMEOUT_API,
+    RETRY_TOTAL, RETRY_BACKOFF_FACTOR, RETRY_STATUS_CODES,
+    WANK_FETCH_LIMIT, UNKNOWN_CHARACTER,
+)
+from bot.stats import get_most_common
 
 logger = logging.getLogger(__name__)
 
@@ -23,9 +30,9 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _retry = Retry(
-    total=3,
-    backoff_factor=1.0,
-    status_forcelist=[429, 500, 502, 503, 504],
+    total=RETRY_TOTAL,
+    backoff_factor=RETRY_BACKOFF_FACTOR,
+    status_forcelist=RETRY_STATUS_CODES,
     allowed_methods=["GET"],
 )
 _session = requests.Session()
@@ -37,7 +44,9 @@ _session.mount("http://",  HTTPAdapter(max_retries=_retry))
 # ---------------------------------------------------------------------------
 
 # DB から起動時にロードし、enrichment で随時更新される
+# 複数スレッドからアクセスされるためロックで保護する
 _learned_chara_names: dict[int, str] = {}
+_chara_lock = threading.Lock()
 
 EWGF_API    = "https://api.ewgf.gg/external"
 WANK_BULK   = "https://wank.wavu.wiki/api/replays"
@@ -73,19 +82,21 @@ def get_chara_name(chara_id: int | None) -> str | None:
     """キャラクターIDから名前を返す。DB学習済み名 → CHARA_NAMES → "Chara#N" の優先順。"""
     if chara_id is None:
         return None
-    return _learned_chara_names.get(chara_id) or CHARA_NAMES.get(chara_id, f"Chara#{chara_id}")
+    with _chara_lock:
+        return _learned_chara_names.get(chara_id) or CHARA_NAMES.get(chara_id, f"Chara#{chara_id}")
 
 
 def _learn_chara_name(chara_id: int, name: str) -> None:
     """新しいキャラクター名マッピングをメモリと DB に保存する。"""
-    if chara_id in _learned_chara_names or chara_id in CHARA_NAMES:
-        return
-    _learned_chara_names[chara_id] = name
+    with _chara_lock:
+        if chara_id in _learned_chara_names or chara_id in CHARA_NAMES:
+            return
+        _learned_chara_names[chara_id] = name
     try:
         from bot.db import save_chara_name
         save_chara_name(chara_id, name)
         logger.info(f"[fetcher] 新キャラクターを学習: ID={chara_id} → {name}")
-    except Exception as e:
+    except sqlite3.Error as e:
         logger.warning(f"[fetcher] キャラクター名DB保存失敗: {e}")
 
 
@@ -94,10 +105,11 @@ def load_learned_chara_names() -> None:
     global _learned_chara_names
     try:
         from bot.db import load_chara_names
-        _learned_chara_names = load_chara_names()
-        if _learned_chara_names:
-            logger.info(f"[fetcher] 学習済みキャラ名 {len(_learned_chara_names)} 件をロード: "
-                        f"{_learned_chara_names}")
+        loaded = load_chara_names()
+        with _chara_lock:
+            _learned_chara_names = loaded
+        if loaded:
+            logger.info(f"[fetcher] 学習済みキャラ名 {len(loaded)} 件をロード: {loaded}")
     except Exception as e:
         logger.warning(f"[fetcher] 学習済みキャラ名ロード失敗: {e}")
 
@@ -178,7 +190,7 @@ def _normalize_ewgf(raw: dict, polaris_id: str) -> dict:
 # wank HTML スクレイパー
 # ---------------------------------------------------------------------------
 
-def _fetch_from_wank_html(since_ts: float, polaris_id: str, limit: int = 50) -> list[dict]:
+def _fetch_from_wank_html(since_ts: float, polaris_id: str, limit: int = WANK_FETCH_LIMIT) -> list[dict]:
     resp = _session.get(f"{WANK_PLAYER}/{polaris_id}", timeout=TIMEOUT_API)
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "html.parser")
@@ -349,7 +361,7 @@ def _build_bulk_index(sorted_battles: list[dict], polaris_id: str) -> tuple[dict
         try:
             batch = _fetch_bulk_batch(ts + 10)
             requests_made += 1
-        except Exception as e:
+        except requests.RequestException as e:
             logger.warning(f"[fetcher] enrichment失敗 ts={ts}: {e}")
             i += 1
             continue
@@ -408,11 +420,7 @@ def fetch_opponent_summary(polaris_id: str, limit: int = 20) -> dict | None:
         total = len(battles)
 
         # メインキャラ（最多使用）— 相手視点なので my_chara が相手のキャラ
-        chara_count: dict[str, int] = {}
-        for b in battles:
-            c = b.get("my_chara") or "???"
-            chara_count[c] = chara_count.get(c, 0) + 1
-        main_chara = max(chara_count, key=chara_count.__getitem__) if chara_count else "???"
+        main_chara, _ = get_most_common(battles, "my_chara")
 
         # 直近10戦の調子（wank HTML は新着順）
         recent       = battles[:10]
@@ -427,7 +435,7 @@ def fetch_opponent_summary(polaris_id: str, limit: int = 20) -> dict | None:
             "recent_total":     recent_total,
             "recent_win_rate":  recent_wins / recent_total * 100 if recent_total else 0,
         }
-    except Exception as e:
+    except requests.RequestException as e:
         logger.warning(f"[fetcher] 対戦相手スカウト失敗 ({polaris_id}): {e}")
         return None
 
@@ -443,7 +451,7 @@ def fetch_quick_battles_from_ewgf(since_ts: float, polaris_id: str | None = None
         result = [b for b in battles if b["battle_at"] > since_ts and b.get("battle_type") == "quick"]
         logger.info(f"[fetcher] ewgf.gg クイックマッチ: {len(result)} 件取得")
         return result
-    except Exception as e:
+    except requests.RequestException as e:
         logger.warning(f"[fetcher] ewgf.gg クイックマッチ取得失敗: {e}")
         return []
 
@@ -462,14 +470,14 @@ def fetch_battles_since(since_ts: float, polaris_id: str | None = None) -> list[
         html_battles = _fetch_from_wank_html(since_ts, pid)
         wank_ok = True
         logger.info(f"[fetcher] wank HTML: {len(html_battles)} 件取得")
-    except Exception as e:
+    except requests.RequestException as e:
         logger.warning(f"[fetcher] wank HTML 失敗 ({e})")
 
     if wank_ok:
         if html_battles:
             try:
                 return _enrich_from_bulk(html_battles, pid)
-            except Exception as e:
+            except requests.RequestException as e:
                 logger.warning(f"[fetcher] enrichment 失敗（HTMLデータのみで続行）: {e}")
         return html_battles
 
@@ -479,7 +487,7 @@ def fetch_battles_since(since_ts: float, polaris_id: str | None = None) -> list[
         result = [b for b in battles if b["battle_at"] > since_ts]
         logger.info(f"[fetcher] ewgf.gg フォールバック: {len(result)} 件")
         return result
-    except Exception as e:
+    except requests.RequestException as e:
         logger.warning(f"[fetcher] ewgf.gg 失敗 ({e})")
 
     # 3. wank HTML のみ（最終手段）

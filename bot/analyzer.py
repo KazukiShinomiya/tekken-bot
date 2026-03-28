@@ -256,6 +256,6 @@ def analyze(battles: list[dict], date_str: str, player_name: str = "",
         comment = resp.json().get("response", "").strip()
         logger.info(f"[analyzer] LLM分析完了: {len(comment)}文字")
         return comment if comment else None
-    except Exception as e:
+    except requests.RequestException as e:
         logger.warning(f"[analyzer] LLM分析失敗（スキップ）: {e}")
         return None

@@ -42,3 +42,22 @@ TIMEOUT_WEBHOOK_IMAGE = 15   # Discord Webhook（画像添付）
 # ── 通知設定 ──────────────────────────────────────────────────────────────────
 RATING_GOAL          = int(os.getenv("RATING_GOAL", "0"))          # 0=無効
 LOSS_ALERT_THRESHOLD = int(os.getenv("LOSS_ALERT_THRESHOLD", "5")) # 0=無効
+
+# ── マジックナンバー定数 ──────────────────────────────────────────────────────
+# HTTP リトライ設定
+RETRY_TOTAL          = 3
+RETRY_BACKOFF_FACTOR = 1.0
+RETRY_STATUS_CODES   = [429, 500, 502, 503, 504]
+
+# バトル取得
+WANK_FETCH_LIMIT = 50
+
+# スタッツ計算
+MIN_BATTLES_FOR_STAT         = 2
+RATING_STAGNATION_THRESHOLD  = 100
+
+# Discord
+DISCORD_EMBED_MAX_FIELDS = 25
+
+# デフォルト値
+UNKNOWN_CHARACTER = "???"

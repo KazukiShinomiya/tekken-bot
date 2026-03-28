@@ -12,6 +12,23 @@ from bot.config import DB_PATH
 logger = logging.getLogger(__name__)
 
 
+def _query_battles(
+    conn: sqlite3.Connection,
+    where_sql: str,
+    params: tuple,
+    player_name: str | None,
+) -> list[sqlite3.Row]:
+    """
+    WHERE 句に player_name フィルタを条件付きで追加して SELECT * FROM battles を実行する。
+    ORDER BY battle_at は常に付与する。
+    """
+    if player_name is not None:
+        sql = f"SELECT * FROM battles WHERE {where_sql} AND player_name = ? ORDER BY battle_at"
+        return conn.execute(sql, params + (player_name,)).fetchall()
+    sql = f"SELECT * FROM battles WHERE {where_sql} ORDER BY battle_at"
+    return conn.execute(sql, params).fetchall()
+
+
 def get_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -142,32 +159,19 @@ def get_battles_on_date(
     day_end = day_start + timedelta(days=1)
 
     with get_conn() as conn:
-        if player_name is not None:
-            rows = conn.execute(
-                "SELECT * FROM battles WHERE battle_at >= ? AND battle_at < ? AND player_name = ? ORDER BY battle_at",
-                (int(day_start.timestamp()), int(day_end.timestamp()), player_name),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM battles WHERE battle_at >= ? AND battle_at < ? ORDER BY battle_at",
-                (int(day_start.timestamp()), int(day_end.timestamp())),
-            ).fetchall()
+        rows = _query_battles(
+            conn,
+            "battle_at >= ? AND battle_at < ?",
+            (int(day_start.timestamp()), int(day_end.timestamp())),
+            player_name,
+        )
     return [dict(r) for r in rows]
 
 
 def get_battles_since(since_ts: float, player_name: str | None = None) -> list[dict]:
     """since_ts 以降の全バトルを返す（週次サマリー用）。"""
     with get_conn() as conn:
-        if player_name is not None:
-            rows = conn.execute(
-                "SELECT * FROM battles WHERE battle_at >= ? AND player_name = ? ORDER BY battle_at",
-                (int(since_ts), player_name),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM battles WHERE battle_at >= ? ORDER BY battle_at",
-                (int(since_ts),),
-            ).fetchall()
+        rows = _query_battles(conn, "battle_at >= ?", (int(since_ts),), player_name)
     return [dict(r) for r in rows]
 
 
@@ -243,18 +247,12 @@ def get_battles_vs_opponent(
 ) -> list[dict]:
     """特定の相手(polaris_id)との過去対戦履歴を返す。"""
     with get_conn() as conn:
-        if player_name is not None:
-            rows = conn.execute(
-                "SELECT * FROM battles WHERE opp_polaris_id = ? AND battle_at >= ?"
-                "  AND player_name = ? ORDER BY battle_at",
-                (opp_polaris_id, int(since_ts), player_name),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM battles WHERE opp_polaris_id = ? AND battle_at >= ?"
-                "  ORDER BY battle_at",
-                (opp_polaris_id, int(since_ts)),
-            ).fetchall()
+        rows = _query_battles(
+            conn,
+            "opp_polaris_id = ? AND battle_at >= ?",
+            (opp_polaris_id, int(since_ts)),
+            player_name,
+        )
     return [dict(r) for r in rows]
 
 
@@ -264,16 +262,7 @@ def get_battles_by_opp_chara(
 ) -> list[dict]:
     """特定キャラとの全期間対戦履歴を返す（大文字小文字無視）。"""
     with get_conn() as conn:
-        if player_name is not None:
-            rows = conn.execute(
-                "SELECT * FROM battles WHERE LOWER(opp_chara) = LOWER(?) AND player_name = ? ORDER BY battle_at",
-                (opp_chara, player_name),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM battles WHERE LOWER(opp_chara) = LOWER(?) ORDER BY battle_at",
-                (opp_chara,),
-            ).fetchall()
+        rows = _query_battles(conn, "LOWER(opp_chara) = LOWER(?)", (opp_chara,), player_name)
     return [dict(r) for r in rows]
 
 
@@ -315,16 +304,7 @@ def search_battles_vs_opponent(
     """相手名（部分一致、大文字小文字無視）との対戦履歴を返す。"""
     pattern = f"%{opp_name}%"
     with get_conn() as conn:
-        if player_name is not None:
-            rows = conn.execute(
-                "SELECT * FROM battles WHERE LOWER(opp_name) LIKE LOWER(?) AND player_name = ? ORDER BY battle_at",
-                (pattern, player_name),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM battles WHERE LOWER(opp_name) LIKE LOWER(?) ORDER BY battle_at",
-                (pattern,),
-            ).fetchall()
+        rows = _query_battles(conn, "LOWER(opp_name) LIKE LOWER(?)", (pattern,), player_name)
     return [dict(r) for r in rows]
 
 
@@ -343,7 +323,8 @@ def load_chara_names() -> dict[int, str]:
         try:
             rows = conn.execute("SELECT chara_id, name FROM chara_names").fetchall()
             return {r["chara_id"]: r["name"] for r in rows}
-        except Exception:
+        except sqlite3.Error as e:
+            logger.warning(f"[db] キャラクター名ロード失敗: {e}")
             return {}
 
 

@@ -4,6 +4,7 @@ bot/fetcher.py のテスト。
 """
 
 import pytest
+import requests
 from unittest.mock import patch, MagicMock
 from bs4 import BeautifulSoup
 
@@ -403,7 +404,7 @@ def test_fetch_battles_since_enrich_fails_returns_html(mock_wank, mock_enrich):
     """enrich 失敗 → HTMLデータのみで続行。"""
     battle = _mock_battle(2000)
     mock_wank.return_value = [battle]
-    mock_enrich.side_effect = Exception("bulk API down")
+    mock_enrich.side_effect = requests.RequestException("bulk API down")
 
     result = fetch_battles_since(1000, polaris_id="me")
 
@@ -415,7 +416,7 @@ def test_fetch_battles_since_enrich_fails_returns_html(mock_wank, mock_enrich):
 @patch("bot.fetcher._fetch_from_wank_html")
 def test_fetch_battles_since_falls_back_to_ewgf(mock_wank, mock_ewgf):
     """wank 完全失敗 → ewgf.gg にフォールバック。"""
-    mock_wank.side_effect = Exception("wank down")
+    mock_wank.side_effect = requests.RequestException("wank down")
     ewgf_battle = {**_mock_battle(2000), "source": "ewgf"}
     mock_ewgf.return_value = [ewgf_battle]
 
@@ -429,9 +430,9 @@ def test_fetch_battles_since_falls_back_to_ewgf(mock_wank, mock_ewgf):
 @patch("bot.fetcher._fetch_from_ewgf")
 def test_fetch_battles_since_falls_back_to_wank_retry(mock_ewgf, mock_wank):
     """wank 失敗 + ewgf 失敗 → wank を再試行（最終フォールバック）。"""
-    mock_ewgf.side_effect = Exception("ewgf also down")
+    mock_ewgf.side_effect = requests.RequestException("ewgf also down")
     battle = _mock_battle(2000)
-    mock_wank.side_effect = [Exception("first call fails"), [battle]]
+    mock_wank.side_effect = [requests.RequestException("first call fails"), [battle]]
 
     result = fetch_battles_since(1000, polaris_id="me")
 
@@ -444,7 +445,7 @@ def test_fetch_battles_since_filters_old_battles(mock_wank):
     """since_ts より古いバトルは ewgf フォールバック時に除外される。"""
     old_battle = _mock_battle(500)   # since_ts=1000 より古い
     new_battle = _mock_battle(2000)
-    mock_wank.side_effect = Exception("wank down")
+    mock_wank.side_effect = requests.RequestException("wank down")
 
     with patch("bot.fetcher._fetch_from_ewgf") as mock_ewgf:
         mock_ewgf.return_value = [old_battle, new_battle]
@@ -485,7 +486,7 @@ def test_fetch_quick_battles_filters_old(mock_ewgf):
 @patch("bot.fetcher._fetch_from_ewgf")
 def test_fetch_quick_battles_returns_empty_on_error(mock_ewgf):
     """ewgf 失敗時は空リストを返す（例外を出さない）。"""
-    mock_ewgf.side_effect = Exception("ewgf down")
+    mock_ewgf.side_effect = requests.RequestException("ewgf down")
     result = fetch_quick_battles_from_ewgf(0, polaris_id="me")
     assert result == []
 
@@ -551,7 +552,7 @@ def test_fetch_opponent_summary_empty(mock_wank):
 @patch("bot.fetcher._fetch_from_wank_html")
 def test_fetch_opponent_summary_error(mock_wank):
     """取得失敗 → None を返す（例外を出さない）。"""
-    mock_wank.side_effect = Exception("wank down")
+    mock_wank.side_effect = requests.RequestException("wank down")
     assert fetch_opponent_summary("target_pid") is None
 
 

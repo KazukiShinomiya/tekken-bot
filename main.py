@@ -27,7 +27,7 @@ import bot.db as db
 import bot.fetcher as fetcher
 import bot.discord_post as discord_post
 import bot.analyzer as analyzer
-from bot.stats import count_wins, count_losses, filter_rated_battles
+from bot.stats import count_wins, count_losses, filter_rated_battles, detect_losing_streak
 
 logger = logging.getLogger(__name__)
 
@@ -166,8 +166,7 @@ def _run_for_player(player_name: str, polaris_id: str, today_str: str, date_str:
     logger.info(f"[{player_name}] リピート対戦相手: {len(rematch_data)} 人")
 
     # リピート相手（上位3人）のスカウト情報を並列取得
-    from collections import Counter as _Counter
-    pid_count = _Counter(
+    pid_count = Counter(
         b.get("opp_polaris_id") for b in today_battles if b.get("opp_polaris_id")
     )
     pids_to_scout = [pid for pid, cnt in pid_count.most_common(3) if cnt >= 2]
@@ -188,12 +187,7 @@ def _run_for_player(player_name: str, polaris_id: str, today_str: str, date_str:
     # 連敗アラート（末尾から連続敗北を検出）
     if LOSS_ALERT_THRESHOLD > 0:
         sorted_today = sorted(today_battles, key=lambda x: x["battle_at"])
-        streak = 0
-        for b in reversed(sorted_today):
-            if not b["won"]:
-                streak += 1
-            else:
-                break
+        streak = detect_losing_streak(sorted_today)
         if streak >= LOSS_ALERT_THRESHOLD:
             discord_post.notify(
                 f"⚠️ [{player_name}] 現在 **{streak} 連敗中** です。少し休憩しましょう！"

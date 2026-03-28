@@ -9,9 +9,11 @@ from collections import defaultdict
 from datetime import datetime
 
 from bot.config import DISCORD_WEBHOOK_URL as WEBHOOK_URL, TEKKEN_ID, TIMEOUT_WEBHOOK, TIMEOUT_WEBHOOK_IMAGE, JST
+from bot.config import DISCORD_EMBED_MAX_FIELDS
 from bot.stats import (
     calculate_streak, aggregate_by_character, count_wins, count_losses,
     filter_rated_battles, aggregate_by_hour, detect_momentum, predict_rating_trend,
+    get_most_common,
 )
 
 logger = logging.getLogger(__name__)
@@ -299,19 +301,8 @@ def build_weekly_message(
     rated = filter_rated_battles(ranked)
     net_rating = sum(b["rating_change"] for b in rated) if rated else None
 
-    # 最多使用キャラ
-    my_chara_count: dict[str, int] = defaultdict(int)
-    for b in battles:
-        c = b.get("my_chara") or "???"
-        my_chara_count[c] += 1
-    top_chara = max(my_chara_count, key=my_chara_count.__getitem__) if my_chara_count else "???"
-
-    # 最多対戦相手
-    opp_count: dict[str, int] = defaultdict(int)
-    for b in battles:
-        c = b.get("opp_chara") or "???"
-        opp_count[c] += 1
-    top_opp = max(opp_count, key=opp_count.__getitem__) if opp_count else "???"
+    top_chara, top_chara_count = get_most_common(battles, "my_chara")
+    top_opp,   top_opp_count   = get_most_common(battles, "opp_chara")
 
     total_w = count_wins(battles)
     total_l = count_losses(battles)
@@ -334,8 +325,8 @@ def build_weekly_message(
         sign = "+" if net_rating >= 0 else ""
         lines.append(f"📈 レーティング変動: {sign}{net_rating}")
 
-    lines.append(f"🥊 最多使用キャラ: {top_chara} ({my_chara_count.get(top_chara, 0)}戦)")
-    lines.append(f"🎯 最多対戦相手: {top_opp} ({opp_count.get(top_opp, 0)}戦)")
+    lines.append(f"🥊 最多使用キャラ: {top_chara} ({top_chara_count}戦)")
+    lines.append(f"🎯 最多対戦相手: {top_opp} ({top_opp_count}戦)")
 
     # --- レーティングトレンド ---
     trend = predict_rating_trend(battles)
@@ -478,7 +469,7 @@ def build_embed(
         "title":       f"🎮 {display_name} 本日の戦果 ({date_str})",
         "color":       _embed_color(battles),
         "description": description,
-        "fields":      fields[:25],  # Discord 上限
+        "fields":      fields[:DISCORD_EMBED_MAX_FIELDS],
     }
     if llm_comment:
         embed["footer"] = {"text": f"🤖 {llm_comment}"[:2048]}
@@ -505,16 +496,8 @@ def build_weekly_embed(
     rated      = filter_rated_battles(ranked)
     net_rating = sum(b["rating_change"] for b in rated) if rated else None
 
-    from collections import defaultdict
-    my_chara_count: dict[str, int] = defaultdict(int)
-    for b in battles:
-        my_chara_count[b.get("my_chara") or "???"] += 1
-    top_chara = max(my_chara_count, key=my_chara_count.__getitem__) if my_chara_count else "???"
-
-    opp_count: dict[str, int] = defaultdict(int)
-    for b in battles:
-        opp_count[b.get("opp_chara") or "???"] += 1
-    top_opp = max(opp_count, key=opp_count.__getitem__) if opp_count else "???"
+    top_chara, top_chara_count = get_most_common(battles, "my_chara")
+    top_opp,   top_opp_count   = get_most_common(battles, "opp_chara")
 
     total_w = count_wins(battles)
     total_l = count_losses(battles)
@@ -534,8 +517,8 @@ def build_weekly_embed(
         sign = "+" if net_rating >= 0 else ""
         fields.append({"name": "📈 レーティング変動", "value": f"{sign}{net_rating}", "inline": True})
 
-    fields.append({"name": "🥊 最多使用キャラ", "value": f"{top_chara} ({my_chara_count.get(top_chara, 0)}戦)", "inline": True})
-    fields.append({"name": "🎯 最多対戦相手", "value": f"{top_opp} ({opp_count.get(top_opp, 0)}戦)", "inline": True})
+    fields.append({"name": "🥊 最多使用キャラ", "value": f"{top_chara} ({top_chara_count}戦)", "inline": True})
+    fields.append({"name": "🎯 最多対戦相手", "value": f"{top_opp} ({top_opp_count}戦)", "inline": True})
 
     # レーティングトレンド
     trend = predict_rating_trend(battles)
@@ -556,7 +539,7 @@ def build_weekly_embed(
     embed: dict = {
         "title":  f"📅 {display_name} 週次サマリー（{week_start_str} 週）",
         "color":  _embed_color(battles),
-        "fields": fields[:25],
+        "fields": fields[:DISCORD_EMBED_MAX_FIELDS],
     }
     if llm_comment:
         embed["footer"] = {"text": f"🤖 {llm_comment}"[:2048]}
@@ -621,7 +604,7 @@ def post_community_weekly(players_stats: list[dict], week_start_str: str) -> Non
         resp = requests.post(WEBHOOK_URL, json={"embeds": [embed]}, timeout=TIMEOUT_WEBHOOK)
         resp.raise_for_status()
         logger.info("[discord_post] 部内ランキング投稿完了")
-    except Exception as e:
+    except requests.RequestException as e:
         logger.warning(f"[discord_post] 部内ランキング投稿失敗: {e}")
 
 
@@ -631,7 +614,7 @@ def notify(message: str) -> None:
         return
     try:
         requests.post(WEBHOOK_URL, json={"content": message}, timeout=TIMEOUT_WEBHOOK)
-    except Exception as e:
+    except requests.RequestException as e:
         logger.warning(f"[discord_post] 通知失敗: {e}")
 
 

@@ -4,7 +4,7 @@ analyzer.py と discord_post.py で共有する純粋関数。
 """
 
 from datetime import datetime
-from bot.config import JST
+from bot.config import JST, UNKNOWN_CHARACTER, RATING_STAGNATION_THRESHOLD
 
 
 def count_wins(battles: list[dict]) -> int:
@@ -41,9 +41,35 @@ def aggregate_by_character(battles: list[dict]) -> dict[str, list[bool]]:
     """対戦相手キャラ別に勝敗をグループ化して返す。"""
     result: dict[str, list[bool]] = {}
     for b in battles:
-        c = b.get("opp_chara") or "???"
+        c = b.get("opp_chara") or UNKNOWN_CHARACTER
         result.setdefault(c, []).append(bool(b["won"]))
     return result
+
+
+def get_most_common(battles: list[dict], key: str) -> tuple[str, int]:
+    """
+    バトルリストから指定キーの最多値と出現回数を返す。
+    空の場合は (UNKNOWN_CHARACTER, 0) を返す。
+    """
+    counts: dict[str, int] = {}
+    for b in battles:
+        c = b.get(key) or UNKNOWN_CHARACTER
+        counts[c] = counts.get(c, 0) + 1
+    if not counts:
+        return UNKNOWN_CHARACTER, 0
+    top = max(counts, key=counts.__getitem__)
+    return top, counts[top]
+
+
+def detect_losing_streak(sorted_battles: list[dict]) -> int:
+    """時系列順バトルリストの末尾から連続敗北数を返す。"""
+    streak = 0
+    for b in reversed(sorted_battles):
+        if not b["won"]:
+            streak += 1
+        else:
+            break
+    return streak
 
 
 def aggregate_by_hour(battles: list[dict]) -> dict[int, list[bool]]:
@@ -93,10 +119,9 @@ def predict_rating_trend(battles: list[dict]) -> dict:
 
 
 def _count_stagnation_days(sorted_rated: list[dict]) -> int:
-    """末尾から連続して1日の変動が ±100 以内の日数を返す。"""
+    """末尾から連続して1日の変動が ±RATING_STAGNATION_THRESHOLD 以内の日数を返す。"""
     from collections import defaultdict
 
-    THRESHOLD = 100
     daily: dict[str, int] = defaultdict(int)
     for b in sorted_rated:
         day = datetime.fromtimestamp(b["battle_at"], JST).strftime("%Y-%m-%d")
@@ -104,7 +129,7 @@ def _count_stagnation_days(sorted_rated: list[dict]) -> int:
 
     stagnation = 0
     for delta in reversed(list(daily.values())):
-        if abs(delta) <= THRESHOLD:
+        if abs(delta) <= RATING_STAGNATION_THRESHOLD:
             stagnation += 1
         else:
             break
