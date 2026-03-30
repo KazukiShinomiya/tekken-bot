@@ -78,3 +78,30 @@ DISCORD_EMBED_MAX_FIELDS = 25
 
 # デフォルト値
 UNKNOWN_CHARACTER = "???"
+
+# 鉄拳8段位マッピング（wank bulk API の rank 整数値 → 段位名）
+RANK_NAMES: dict[int, str] = {
+    1:  "Beginner",
+    2:  "1段",
+    3:  "2段",
+    4:  "3段",
+    5:  "Tekken Fighter",
+    6:  "Advanced Tekken Fighter",
+    7:  "Intermediate Tekken Fighter",
+    8:  "Superior Tekken Fighter",
+    9:  "Garyu",
+    10: "Shinryu",
+    11: "Tenryu",
+    12: "Mighty Ruler",
+    13: "Flame Ruler",
+    14: "Battle Ruler",
+    15: "Fujin",
+    16: "Raijin",
+    17: "Kishin",
+    18: "Bushin",
+    19: "Tekken King",
+    20: "Tekken Emperor",
+    21: "Tekken God",
+    22: "Tekken God Supreme",
+    23: "God of Destruction",
+}

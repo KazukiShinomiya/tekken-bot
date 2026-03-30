@@ -16,6 +16,7 @@ from bot.config import (
     TIMEOUT_WEBHOOK, TIMEOUT_WEBHOOK_IMAGE, JST,
     DISCORD_EMBED_MAX_FIELDS,
     RETRY_TOTAL, RETRY_BACKOFF_FACTOR,
+    RANK_NAMES,
 )
 
 # 後方互換用（単一 URL を想定している既存ロジックの参照先）
@@ -282,7 +283,12 @@ def build_message(
     # 鉄拳力（ある場合）
     latest = max(battles, key=lambda x: x["battle_at"])
     if latest.get("my_power"):
-        lines.append(f"💥 鉄拳力: {latest['my_power']:,}")
+        rank_name = RANK_NAMES.get(latest.get("my_rank"), "")
+        power_str = f"{latest['my_power']:,}"
+        if rank_name:
+            lines.append(f"💥 {rank_name} ({power_str})")
+        else:
+            lines.append(f"💥 鉄拳力: {power_str}")
 
     # --- 対戦マトリクス ---
     matrix = _matchup_matrix(battles)
@@ -465,7 +471,10 @@ def build_embed(
     # 鉄拳力
     latest = max(battles, key=lambda x: x["battle_at"])
     if latest.get("my_power"):
-        fields.append({"name": "💥 鉄拳力", "value": f"{latest['my_power']:,}", "inline": True})
+        rank_name = RANK_NAMES.get(latest.get("my_rank"), "")
+        power_str = f"{latest['my_power']:,}"
+        field_name = f"💥 {rank_name}" if rank_name else "💥 鉄拳力"
+        fields.append({"name": field_name, "value": power_str, "inline": True})
 
     # 対戦マトリクス（ヘッダー行を除いてフィールドに格納）
     matrix = _matchup_matrix(battles)
