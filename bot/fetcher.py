@@ -53,11 +53,14 @@ WANK_BULK   = "https://wank.wavu.wiki/api/replays"
 WANK_PLAYER = "https://wank.wavu.wiki/player"
 
 CHARA_NAMES = {
-    # wank bulk API のキャラID（1-indexed。0 も Paul として記録される場合あり）
+    # wank bulk API のキャラID（0-indexed）
+    # Season 2 DLC 追加で初期キャラが 0-indexed にシフト済み（Paul=0, Law=1, ...）
+    # 位置 5 に未知の DLC キャラが挿入されたため Xiaoyu 以降は旧番号と一致
     # Season 2 DLC 追加により Zafina 以降がシフト: Zafina/Leroy +2、Jun 以降 +4、
     # Season1 DLC（Eddy-Clive）は +5、Season2 末尾に Anna/Fahkumram/Armor King/Miary Zo
     0: "Paul",
-    1: "Paul", 2: "Law", 3: "King", 4: "Yoshimitsu", 5: "Hwoarang",
+    1: "Law", 2: "King", 3: "Yoshimitsu", 4: "Hwoarang",
+    # 5: Season 2 挿入 DLC キャラ（未確認）
     6: "Xiaoyu", 7: "Jin", 8: "Bryan", 9: "Kazuya", 10: "Steve",
     11: "Jack-8", 12: "Asuka", 13: "Devil Jin", 14: "Feng", 15: "Lili",
     16: "Dragunov", 17: "Leo", 18: "Lars", 19: "Alisa", 20: "Claudio",
