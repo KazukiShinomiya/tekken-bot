@@ -12,11 +12,14 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from bot.config import (
-    DISCORD_WEBHOOK_URL as WEBHOOK_URL, TEKKEN_ID,
+    WEBHOOK_URLS, TEKKEN_ID,
     TIMEOUT_WEBHOOK, TIMEOUT_WEBHOOK_IMAGE, JST,
     DISCORD_EMBED_MAX_FIELDS,
     RETRY_TOTAL, RETRY_BACKOFF_FACTOR,
 )
+
+# 後方互換用（単一 URL を想定している既存ロジックの参照先）
+WEBHOOK_URL = WEBHOOK_URLS[0] if WEBHOOK_URLS else None
 from bot.models import Battle
 from bot.stats import (
     calculate_streak, aggregate_by_character, count_wins, count_losses,
@@ -40,11 +43,9 @@ _webhook_session = requests.Session()
 _webhook_session.mount("https://", HTTPAdapter(max_retries=_webhook_retry))
 
 
-def _parse_webhook_id_token() -> tuple[str, str] | None:
-    """WEBHOOK_URL から (webhook_id, token) を抽出する。"""
-    if not WEBHOOK_URL:
-        return None
-    m = re.match(r"https://discord(?:app)?\.com/api/webhooks/(\d+)/([^/?]+)", WEBHOOK_URL)
+def _parse_webhook_id_token(url: str) -> tuple[str, str] | None:
+    """Webhook URL から (webhook_id, token) を抽出する。"""
+    m = re.match(r"https://discord(?:app)?\.com/api/webhooks/(\d+)/([^/?]+)", url)
     return (m.group(1), m.group(2)) if m else None
 
 
@@ -615,26 +616,26 @@ def build_community_weekly(players_stats: list[dict], week_start_str: str) -> st
 
 
 def post_community_weekly(players_stats: list[dict], week_start_str: str) -> None:
-    """部内週次ランキングを Discord に投稿する。2人以上いる場合のみ投稿。"""
-    if not WEBHOOK_URL or len(players_stats) < 2:
+    """部内週次ランキングを全 Discord Webhook に投稿する。2人以上いる場合のみ投稿。"""
+    if not WEBHOOK_URLS or len(players_stats) < 2:
         return
     embed = build_community_weekly_embed(players_stats, week_start_str)
-    try:
-        resp = _webhook_session.post(WEBHOOK_URL, json={"embeds": [embed]}, timeout=TIMEOUT_WEBHOOK)
-        resp.raise_for_status()
-        logger.info("[discord_post] 部内ランキング投稿完了")
-    except requests.RequestException as e:
-        logger.warning(f"[discord_post] 部内ランキング投稿失敗: {e}")
+    for url in WEBHOOK_URLS:
+        try:
+            resp = _webhook_session.post(url, json={"embeds": [embed]}, timeout=TIMEOUT_WEBHOOK)
+            resp.raise_for_status()
+            logger.info("[discord_post] 部内ランキング投稿完了")
+        except requests.RequestException as e:
+            logger.warning(f"[discord_post] 部内ランキング投稿失敗: {e}")
 
 
 def notify(message: str) -> None:
-    """任意のメッセージを Discord Webhook に投稿する。失敗しても例外は出さない。"""
-    if not WEBHOOK_URL:
-        return
-    try:
-        _webhook_session.post(WEBHOOK_URL, json={"content": message}, timeout=TIMEOUT_WEBHOOK)
-    except requests.RequestException as e:
-        logger.warning(f"[discord_post] 通知失敗: {e}")
+    """任意のメッセージを全 Discord Webhook に投稿する。失敗しても例外は出さない。"""
+    for url in WEBHOOK_URLS:
+        try:
+            _webhook_session.post(url, json={"content": message}, timeout=TIMEOUT_WEBHOOK)
+        except requests.RequestException as e:
+            logger.warning(f"[discord_post] 通知失敗: {e}")
 
 
 def notify_error(message: str) -> None:
@@ -647,13 +648,13 @@ def post(
     date_str: str | None = None,
     player_name: str | None = None,
     scout_data: dict[str, dict] | None = None,
-) -> tuple[str, dict] | None:
+) -> tuple[list[tuple[str, str]], dict] | None:
     """
-    Discord Webhook に Embed サマリーを投稿。
-    成功時は (message_id, embed) を返す。試合なし・失敗時は None。
+    全 Discord Webhook に Embed サマリーを投稿。
+    成功時は ([(message_id, webhook_url), ...], embed) を返す。試合なし・全失敗時は None。
     LLM コメントは含まず、後から edit_llm_comment() で追記する。
     """
-    if not WEBHOOK_URL:
+    if not WEBHOOK_URLS:
         raise ValueError("DISCORD_WEBHOOK_URL が .env に設定されていません")
 
     if date_str is None:
@@ -675,32 +676,37 @@ def post(
     if embed is None:
         return None
 
-    wait_url = WEBHOOK_URL + "?wait=true"
-    if chart:
-        resp = _webhook_session.post(
-            wait_url,
-            data={"payload_json": json.dumps({"embeds": [embed]})},
-            files={"files[0]": ("rating.png", chart, "image/png")},
-            timeout=TIMEOUT_WEBHOOK_IMAGE,
-        )
-    else:
-        resp = _webhook_session.post(wait_url, json={"embeds": [embed]}, timeout=TIMEOUT_WEBHOOK)
+    results: list[tuple[str, str]] = []
+    for url in WEBHOOK_URLS:
+        try:
+            wait_url = url + "?wait=true"
+            if chart:
+                resp = _webhook_session.post(
+                    wait_url,
+                    data={"payload_json": json.dumps({"embeds": [embed]})},
+                    files={"files[0]": ("rating.png", chart, "image/png")},
+                    timeout=TIMEOUT_WEBHOOK_IMAGE,
+                )
+            else:
+                resp = _webhook_session.post(wait_url, json={"embeds": [embed]}, timeout=TIMEOUT_WEBHOOK)
+            resp.raise_for_status()
+            results.append((resp.json()["id"], url))
+        except requests.RequestException as e:
+            logger.warning(f"[discord_post] 投稿失敗 ({url[:60]}): {e}")
 
-    resp.raise_for_status()
-    message_id: str = resp.json()["id"]
-    return message_id, embed
+    return (results, embed) if results else None
 
 
 def post_weekly(
     battles: list[Battle],
     week_start_str: str,
     player_name: str | None = None,
-) -> tuple[str, dict] | None:
+) -> tuple[list[tuple[str, str]], dict] | None:
     """
-    週次サマリーを Discord Webhook に Embed 形式で投稿。
-    成功時は (message_id, embed) を返す。試合なし・失敗時は None。
+    週次サマリーを全 Discord Webhook に Embed 形式で投稿。
+    成功時は ([(message_id, webhook_url), ...], embed) を返す。試合なし・全失敗時は None。
     """
-    if not WEBHOOK_URL:
+    if not WEBHOOK_URLS:
         raise ValueError("DISCORD_WEBHOOK_URL が .env に設定されていません")
 
     embed = build_weekly_embed(battles, week_start_str, player_name)
@@ -708,43 +714,55 @@ def post_weekly(
         logger.info(f"[discord_post][{player_name}] 今週の試合なし。週次投稿をスキップ。")
         return None
 
-    resp = _webhook_session.post(
-        WEBHOOK_URL + "?wait=true", json={"embeds": [embed]}, timeout=TIMEOUT_WEBHOOK
-    )
-    resp.raise_for_status()
-    message_id = resp.json()["id"]
-    return message_id, embed
+    results: list[tuple[str, str]] = []
+    for url in WEBHOOK_URLS:
+        try:
+            resp = _webhook_session.post(
+                url + "?wait=true", json={"embeds": [embed]}, timeout=TIMEOUT_WEBHOOK
+            )
+            resp.raise_for_status()
+            results.append((resp.json()["id"], url))
+        except requests.RequestException as e:
+            logger.warning(f"[discord_post] 週次投稿失敗 ({url[:60]}): {e}")
+
+    return (results, embed) if results else None
 
 
-def edit_llm_comment(message_id: str, embed: dict, llm_comment: str) -> None:
+def edit_llm_comment(
+    message_ids: list[tuple[str, str]],
+    embed: dict,
+    llm_comment: str,
+) -> None:
     """
     投稿済み Embed のフッターに LLM コメントを追記する（PATCH）。
+    message_ids は [(message_id, webhook_url), ...] のリスト。
     チャート添付ファイルを保持するため GET → PATCH の順で処理する。
     失敗しても例外は出さない。
     """
-    parts = _parse_webhook_id_token()
-    if not parts:
-        return
-    webhook_id, token = parts
-    url = f"https://discord.com/api/webhooks/{webhook_id}/{token}/messages/{message_id}"
-
-    # 既存の添付ファイル ID を保持するため現在のメッセージを取得
-    attachments: list[dict] = []
-    try:
-        get_resp = _webhook_session.get(url, timeout=TIMEOUT_WEBHOOK)
-        get_resp.raise_for_status()
-        attachments = get_resp.json().get("attachments", [])
-    except requests.RequestException as e:
-        logger.warning(f"[discord_post] メッセージ取得失敗（添付ファイルなしで続行）: {e}")
-
     updated = {**embed, "footer": {"text": f"🤖 {llm_comment}"[:2048]}}
-    patch_body: dict = {"embeds": [updated]}
-    if attachments:
-        patch_body["attachments"] = [{"id": a["id"]} for a in attachments]
+    for message_id, webhook_url in message_ids:
+        parts = _parse_webhook_id_token(webhook_url)
+        if not parts:
+            continue
+        webhook_id, token = parts
+        msg_url = f"https://discord.com/api/webhooks/{webhook_id}/{token}/messages/{message_id}"
 
-    try:
-        resp = _webhook_session.patch(url, json=patch_body, timeout=TIMEOUT_WEBHOOK)
-        resp.raise_for_status()
-        logger.info("[discord_post] LLMコメントを Embed に追記しました。")
-    except requests.RequestException as e:
-        logger.warning(f"[discord_post] LLMコメント追記失敗: {e}")
+        # 既存の添付ファイル ID を保持するため現在のメッセージを取得
+        attachments: list[dict] = []
+        try:
+            get_resp = _webhook_session.get(msg_url, timeout=TIMEOUT_WEBHOOK)
+            get_resp.raise_for_status()
+            attachments = get_resp.json().get("attachments", [])
+        except requests.RequestException as e:
+            logger.warning(f"[discord_post] メッセージ取得失敗（添付ファイルなしで続行）: {e}")
+
+        patch_body: dict = {"embeds": [updated]}
+        if attachments:
+            patch_body["attachments"] = [{"id": a["id"]} for a in attachments]
+
+        try:
+            resp = _webhook_session.patch(msg_url, json=patch_body, timeout=TIMEOUT_WEBHOOK)
+            resp.raise_for_status()
+            logger.info("[discord_post] LLMコメントを Embed に追記しました。")
+        except requests.RequestException as e:
+            logger.warning(f"[discord_post] LLMコメント追記失敗: {e}")

@@ -9,6 +9,10 @@ from pathlib import Path
 
 # ── Discord ──────────────────────────────────────────────────────────────────
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+# カンマ区切りで複数 Webhook URL をサポート（例: "https://...,...,https://..."）
+WEBHOOK_URLS: list[str] = [
+    u.strip() for u in (DISCORD_WEBHOOK_URL or "").split(",") if u.strip()
+]
 DISCORD_BOT_TOKEN   = os.getenv("DISCORD_BOT_TOKEN")
 
 # ── プレイヤー設定 ─────────────────────────────────────────────────────────

@@ -227,8 +227,8 @@ def _run_for_player(player_name: str, polaris_id: str, today_str: str, date_str:
 
     # LLM コメントを Embed フッターとして追記
     if llm_comment and post_result:
-        message_id, embed = post_result
-        discord_post.edit_llm_comment(message_id, embed, llm_comment)
+        message_ids, embed = post_result
+        discord_post.edit_llm_comment(message_ids, embed, llm_comment)
         logger.info(f"[{player_name}] LLMコメント追記完了。")
 
 
@@ -300,8 +300,8 @@ def _run_weekly_for_player(
 
     # LLM コメントを Embed フッターとして追記
     if llm_comment and post_result:
-        message_id, embed = post_result
-        discord_post.edit_llm_comment(message_id, embed, llm_comment)
+        message_ids, embed = post_result
+        discord_post.edit_llm_comment(message_ids, embed, llm_comment)
         logger.info(f"[{player_name}] 週次LLMコメント追記完了。")
 
     ranked = [b for b in battles if b.get("battle_type") == "ranked"]
