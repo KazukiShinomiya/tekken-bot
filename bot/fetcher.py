@@ -61,7 +61,7 @@ CHARA_NAMES = {
     0: "Paul",
     1: "Law", 2: "King", 3: "Yoshimitsu", 4: "Hwoarang",
     # 5: Season 2 挿入 DLC キャラ（未確認）
-    6: "Xiaoyu", 7: "Jin", 8: "Bryan", 9: "Kazuya", 10: "Steve",
+    6: "Xiaoyu", 7: "Jin", 8: "Kazuya", 9: "Bryan", 10: "Steve",
     11: "Jack-8", 12: "Asuka", 13: "Devil Jin", 14: "Feng", 15: "Lili",
     16: "Dragunov", 17: "Leo", 18: "Lars", 19: "Alisa", 20: "Claudio",
     21: "Shaheen", 22: "Nina", 23: "Lee", 24: "Kuma", 25: "Panda",
