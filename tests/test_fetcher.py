@@ -27,7 +27,7 @@ import bot.fetcher as _fetcher_module
 # ---------------------------------------------------------------------------
 
 def test_get_chara_name_known_id():
-    assert get_chara_name(7) == "Jin"
+    assert get_chara_name(6) == "Jin"
     assert get_chara_name(33) == "Reina"
 
 
@@ -174,7 +174,7 @@ def _bulk_record(p1_polaris_id: str = "me", p2_polaris_id: str = "opp_pid") -> d
         "stage_id":       5,
         "p1_polaris_id":  p1_polaris_id,
         "p2_polaris_id":  p2_polaris_id,
-        "p1_chara_id":    7,        # Jin
+        "p1_chara_id":    6,        # Jin
         "p1_rank":        15,
         "p1_power":       10500,
         "p1_region_id":   "JP",

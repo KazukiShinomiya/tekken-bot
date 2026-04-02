@@ -54,22 +54,19 @@ WANK_PLAYER = "https://wank.wavu.wiki/player"
 
 CHARA_NAMES = {
     # wank bulk API のキャラID（0-indexed）
-    # Season 2 DLC 追加で初期キャラが 0-indexed にシフト済み（Paul=0, Law=1, ...）
-    # 位置 5 に未知の DLC キャラが挿入されたため Xiaoyu 以降は旧番号と一致
-    # Season 2 DLC 追加により Zafina 以降がシフト: Zafina/Leroy +2、Jun 以降 +4、
-    # Season1 DLC（Eddy-Clive）は +5、Season2 末尾に Anna/Fahkumram/Armor King/Miary Zo
+    # ベースキャラ 0-24 はオリジナル 0-indexed（シフトなし）
+    # DLC キャラは 25 以降に追加（未確認スロットあり）
     0: "Paul",
     1: "Law", 2: "King", 3: "Yoshimitsu", 4: "Hwoarang",
-    # 5: Season 2 挿入 DLC キャラ（未確認）
-    6: "Xiaoyu", 7: "Jin", 8: "Kazuya", 9: "Bryan", 10: "Steve",
-    11: "Jack-8", 12: "Asuka", 13: "Devil Jin", 14: "Feng", 15: "Lili",
-    16: "Dragunov", 17: "Leo", 18: "Lars", 19: "Alisa", 20: "Claudio",
-    21: "Shaheen", 22: "Nina", 23: "Lee", 24: "Kuma", 25: "Panda",
-    # 26-27: Season 2 DLC（未確認）
+    5: "Xiaoyu", 6: "Jin", 7: "Kazuya", 8: "Bryan", 9: "Steve",
+    10: "Jack-8", 11: "Asuka", 12: "Devil Jin", 13: "Feng", 14: "Lili",
+    15: "Dragunov", 16: "Leo", 17: "Lars", 18: "Alisa", 19: "Claudio",
+    20: "Shaheen", 21: "Nina", 22: "Lee", 23: "Kuma", 24: "Panda",
+    # 25-27: DLC（未確認）
     28: "Zafina", 29: "Leroy",
-    # 30-31: Season 2 DLC（未確認）
+    # 30-31: DLC（未確認）
     32: "Jun", 33: "Reina", 34: "Azucena", 35: "Victor", 36: "Raven",
-    # 37: Season 2 DLC（未確認）
+    # 37: DLC（未確認）
     38: "Eddy", 39: "Lidia", 40: "Heihachi", 41: "Clive",
     42: "Anna", 43: "Fahkumram", 44: "Armor King", 45: "Miary Zo",
 }
