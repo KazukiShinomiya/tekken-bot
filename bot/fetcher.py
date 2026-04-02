@@ -100,6 +100,43 @@ def _learn_chara_name(chara_id: int, name: str) -> None:
         logger.warning(f"[fetcher] キャラクター名DB保存失敗: {e}")
 
 
+def _verify_and_learn_chara_name(chara_id: int, html_name: str) -> None:
+    """HTML スクレイプ名と既知マッピングを照合し、不一致ならログ警告・上書き学習する。
+
+    HTML名は wank サイトから直接取得した正確な名前として扱う。
+    CHARA_NAMES との差異を検出することで、マッピング誤りを自動観測できる。
+    """
+    should_save = False
+    is_mismatch = False
+    is_new = False
+
+    with _chara_lock:
+        if _learned_chara_names.get(chara_id) == html_name:
+            return
+        known_static = CHARA_NAMES.get(chara_id)
+        if known_static == html_name and chara_id not in _learned_chara_names:
+            return  # 静的マッピングと一致、学習不要
+        is_new = known_static is None and chara_id not in _learned_chara_names
+        is_mismatch = known_static is not None and known_static != html_name
+        _learned_chara_names[chara_id] = html_name
+        should_save = True
+
+    if not should_save:
+        return
+    if is_mismatch:
+        logger.warning(
+            f"[fetcher] キャラID不一致検出: ID={chara_id} "
+            f"CHARA_NAMES={CHARA_NAMES.get(chara_id)!r} HTML={html_name!r} → HTML名を優先"
+        )
+    elif is_new:
+        logger.info(f"[fetcher] 新キャラクターを学習: ID={chara_id} → {html_name}")
+    try:
+        from bot.db import save_chara_name
+        save_chara_name(chara_id, html_name)
+    except sqlite3.Error as e:
+        logger.warning(f"[fetcher] キャラクター名DB保存失敗: {e}")
+
+
 def load_learned_chara_names() -> None:
     """DB から学習済みキャラクター名をロードする（起動時・init_db 後に呼ぶ）。"""
     global _learned_chara_names
@@ -330,19 +367,24 @@ def _merge_bulk(battle: dict, bulk: dict, polaris_id: str) -> dict:
     battle["opp_power"]         = bulk.get(f"{opp}_power")
     battle["opp_region"]        = bulk.get(f"{opp}_region_id")
     if battle["my_chara_id"] is not None:
-        mapped = get_chara_name(battle["my_chara_id"])
-        if mapped and not mapped.startswith("Chara#"):
-            battle["my_chara"] = mapped
-        # else: HTMLスクレイプ名を保持（未知IDでも名前が残る）
+        html_name = battle.get("my_chara")
+        if html_name:
+            # HTML名が正 → chara_id との対応を検証・学習し、HTML名をそのまま維持
+            _verify_and_learn_chara_name(battle["my_chara_id"], html_name)
+        else:
+            # HTML名なし → CHARA_NAMES から補完
+            mapped = get_chara_name(battle["my_chara_id"])
+            if mapped and not mapped.startswith("Chara#"):
+                battle["my_chara"] = mapped
 
     if battle["opp_chara_id"] is not None:
-        opp_html_name = battle.get("opp_chara")  # HTML スクレイプ名を退避
-        mapped = get_chara_name(battle["opp_chara_id"])
-        if mapped and not mapped.startswith("Chara#"):
-            battle["opp_chara"] = mapped
-        elif opp_html_name:
-            # 未知ID: HTML名を保持しつつDB学習
-            _learn_chara_name(battle["opp_chara_id"], opp_html_name)
+        html_name = battle.get("opp_chara")
+        if html_name:
+            _verify_and_learn_chara_name(battle["opp_chara_id"], html_name)
+        else:
+            mapped = get_chara_name(battle["opp_chara_id"])
+            if mapped and not mapped.startswith("Chara#"):
+                battle["opp_chara"] = mapped
 
     return battle
 

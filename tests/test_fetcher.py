@@ -216,7 +216,8 @@ def test_merge_bulk_updates_battle_id():
 
 def test_merge_bulk_p2_perspective():
     """自分が p2 の場合も正しくマージされる。"""
-    battle = _html_battle()
+    # HTML は常に自分のキャラを my_chara に持つ。p2=自分(Reina)の場合は HTML 側も Reina になる。
+    battle = {**_html_battle(), "my_chara": "Reina", "opp_chara": "Jin"}
     result = _merge_bulk(battle, _bulk_record(p1_polaris_id="opp_pid", p2_polaris_id="me"), "me")
     assert result["my_chara"] == "Reina"
     assert result["opp_chara"] == "Jin"
@@ -226,9 +227,8 @@ def test_merge_bulk_p2_perspective():
 def test_merge_bulk_unknown_id_keeps_html_name(monkeypatch):
     """未知のキャラID（Chara#N）の場合、HTML名を保持して学習する。"""
     learned: dict = {}
-    monkeypatch.setattr(_fetcher_module, "_learned_chara_names", learned)
-    # DB 保存は無効化
-    monkeypatch.setattr(_fetcher_module, "_learn_chara_name",
+    # _verify_and_learn_chara_name の副作用（DB保存）を無効化しつつ学習内容を捕捉
+    monkeypatch.setattr(_fetcher_module, "_verify_and_learn_chara_name",
                         lambda cid, name: learned.update({cid: name}))
 
     bulk = {**_bulk_record(), "p2_chara_id": 99}  # 99 は未知ID
