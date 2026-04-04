@@ -104,12 +104,16 @@ def test_insert_battles_returns_count(db):
 
 
 def test_insert_battles_dedup(db):
-    """同じ battle_id を2回挿入しても2件目はスキップされる。"""
+    """同じ battle_id を2回挿入すると2件目は上書き（INSERT OR REPLACE）される。"""
     battle = _make_battle("dup_1")
     count1 = db.insert_battles([battle], player_name="Alice")
     count2 = db.insert_battles([battle], player_name="Alice")
     assert count1 == 1
-    assert count2 == 0
+    assert count2 == 1
+    # レコードは1件のみ存在する
+    with db.get_conn() as conn:
+        row = conn.execute("SELECT COUNT(*) FROM battles WHERE battle_id='dup_1'").fetchone()
+    assert row[0] == 1
 
 
 def test_insert_battles_stores_player_name(db):
