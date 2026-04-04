@@ -58,7 +58,7 @@ CHARA_NAMES = {
     # DLC キャラは 25 以降に追加（未確認スロットあり）
     0: "Paul",
     1: "Law", 2: "King", 3: "Yoshimitsu", 4: "Hwoarang",
-    5: "Xiaoyu", 6: "Jin", 7: "Kazuya", 8: "Bryan", 9: "Steve",
+    5: "Xiaoyu", 6: "Jin", 7: "Bryan", 8: "Kazuya", 9: "Steve",
     10: "Jack-8", 11: "Asuka", 12: "Devil Jin", 13: "Feng", 14: "Lili",
     15: "Dragunov", 16: "Leo", 17: "Lars", 18: "Alisa", 19: "Claudio",
     20: "Shaheen", 21: "Nina", 22: "Lee", 23: "Kuma", 24: "Panda",

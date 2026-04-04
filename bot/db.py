@@ -105,13 +105,13 @@ def init_db() -> None:
 
 
 def insert_battles(battles: list[dict], player_name: str = "default") -> int:
-    """バトルを挿入（既存レコードは上書き）。処理件数を返す。"""
+    """バトルを挿入。既存レコードはキャラ名・未取得フィールドのみ更新する。処理件数を返す。"""
     inserted = 0
     with get_conn() as conn:
         for b in battles:
             try:
                 conn.execute("""
-                    INSERT OR REPLACE INTO battles (
+                    INSERT INTO battles (
                         battle_id, battle_at, battle_type, game_version, stage_id, source,
                         won, my_chara, my_chara_id, my_rounds, my_rank, my_power, my_region,
                         rating_before, rating_change,
@@ -128,6 +128,19 @@ def insert_battles(battles: list[dict], player_name: str = "default") -> int:
                         :opp_rating_before, :opp_rating_change,
                         :player_name
                     )
+                    ON CONFLICT(battle_id) DO UPDATE SET
+                        my_chara    = CASE WHEN my_chara  IS NULL OR my_chara  LIKE 'Chara#%'
+                                          THEN excluded.my_chara  ELSE my_chara  END,
+                        opp_chara   = CASE WHEN opp_chara IS NULL OR opp_chara LIKE 'Chara#%'
+                                          THEN excluded.opp_chara ELSE opp_chara END,
+                        my_chara_id  = COALESCE(my_chara_id,  excluded.my_chara_id),
+                        opp_chara_id = COALESCE(opp_chara_id, excluded.opp_chara_id),
+                        my_rank      = COALESCE(my_rank,  excluded.my_rank),
+                        my_power     = COALESCE(my_power, excluded.my_power),
+                        opp_rank     = COALESCE(opp_rank,  excluded.opp_rank),
+                        opp_power    = COALESCE(opp_power, excluded.opp_power),
+                        opp_rating_before  = COALESCE(opp_rating_before,  excluded.opp_rating_before),
+                        opp_rating_change  = COALESCE(opp_rating_change,  excluded.opp_rating_change)
                 """, {**b, "won": int(b["won"]), "player_name": player_name})
                 inserted += 1
             except sqlite3.IntegrityError:

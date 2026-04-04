@@ -104,16 +104,36 @@ def test_insert_battles_returns_count(db):
 
 
 def test_insert_battles_dedup(db):
-    """同じ battle_id を2回挿入すると2件目は上書き（INSERT OR REPLACE）される。"""
+    """同じ battle_id を2回挿入しても ON CONFLICT DO UPDATE で処理される。レコードは1件。"""
     battle = _make_battle("dup_1")
     count1 = db.insert_battles([battle], player_name="Alice")
     count2 = db.insert_battles([battle], player_name="Alice")
     assert count1 == 1
     assert count2 == 1
-    # レコードは1件のみ存在する
     with db.get_conn() as conn:
         row = conn.execute("SELECT COUNT(*) FROM battles WHERE battle_id='dup_1'").fetchone()
     assert row[0] == 1
+
+
+def test_insert_battles_chara_update(db):
+    """Chara#N のキャラ名は再挿入時に実名で上書きされる。確定済みの名前は保護される。"""
+    unknown = _make_battle("upd_1", my_chara="Chara#99", opp_chara="Chara#7")
+    db.insert_battles([unknown], player_name="Alice")
+
+    # 実名で再挿入 → 上書きされる
+    known = _make_battle("upd_1", my_chara="Lee", opp_chara="Bryan")
+    db.insert_battles([known], player_name="Alice")
+    with db.get_conn() as conn:
+        row = conn.execute("SELECT my_chara, opp_chara FROM battles WHERE battle_id='upd_1'").fetchone()
+    assert row["my_chara"] == "Lee"
+    assert row["opp_chara"] == "Bryan"
+
+    # 未知名で再挿入 → 確定済みは保護される
+    db.insert_battles([unknown], player_name="Alice")
+    with db.get_conn() as conn:
+        row = conn.execute("SELECT my_chara, opp_chara FROM battles WHERE battle_id='upd_1'").fetchone()
+    assert row["my_chara"] == "Lee"
+    assert row["opp_chara"] == "Bryan"
 
 
 def test_insert_battles_stores_player_name(db):
