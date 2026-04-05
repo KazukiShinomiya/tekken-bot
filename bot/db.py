@@ -89,6 +89,15 @@ def init_db() -> None:
             )
         """)
 
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS daily_posts (
+                date_str    TEXT NOT NULL,
+                player_name TEXT NOT NULL DEFAULT 'default',
+                posted_at   INTEGER NOT NULL,
+                PRIMARY KEY (date_str, player_name)
+            )
+        """)
+
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_battle_at ON battles(battle_at)"
         )
@@ -339,6 +348,45 @@ def load_chara_names() -> dict[int, str]:
         except sqlite3.Error as e:
             logger.warning(f"[db] キャラクター名ロード失敗: {e}")
             return {}
+
+
+def has_posted_today(date_str: str, player_name: str = "default") -> bool:
+    """指定日・プレイヤーがすでに投稿済みかを返す。"""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM daily_posts WHERE date_str = ? AND player_name = ?",
+            (date_str, player_name),
+        ).fetchone()
+    return row is not None
+
+
+def mark_posted_today(date_str: str, player_name: str = "default") -> None:
+    """指定日・プレイヤーを投稿済みとしてマーク。"""
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO daily_posts (date_str, player_name, posted_at) VALUES (?, ?, ?)",
+            (date_str, player_name, int(datetime.now(timezone.utc).timestamp())),
+        )
+
+
+def get_my_chara_counts(since_ts: int, player_name: str | None = None) -> list[dict]:
+    """since_ts 以降の自キャラ別使用試合数を返す（Prometheus メトリクス用）。"""
+    with get_conn() as conn:
+        if player_name is not None:
+            rows = conn.execute("""
+                SELECT my_chara, COUNT(*) AS cnt
+                FROM battles
+                WHERE my_chara IS NOT NULL AND battle_at >= ? AND player_name = ?
+                GROUP BY my_chara ORDER BY cnt DESC
+            """, (since_ts, player_name)).fetchall()
+        else:
+            rows = conn.execute("""
+                SELECT my_chara, COUNT(*) AS cnt
+                FROM battles
+                WHERE my_chara IS NOT NULL AND battle_at >= ?
+                GROUP BY my_chara ORDER BY cnt DESC
+            """, (since_ts,)).fetchall()
+    return [dict(r) for r in rows]
 
 
 def backup_db(keep: int = 7) -> Path:

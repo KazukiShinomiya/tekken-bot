@@ -18,7 +18,7 @@ from discord import app_commands
 
 import bot.db as db
 import main as _bot_main
-from bot.config import DISCORD_BOT_TOKEN as BOT_TOKEN, JST
+from bot.config import DISCORD_BOT_TOKEN as BOT_TOKEN, DISCORD_GUILD_ID, JST
 from bot.stats import count_wins, count_losses, get_most_common, detect_winning_streak, detect_losing_streak
 
 logger = logging.getLogger(__name__)
@@ -214,8 +214,14 @@ tree.add_command(tekken_group)
 
 @client.event
 async def on_ready() -> None:
-    await tree.sync()
-    logger.info(f"[slash_commands] Bot ログイン完了: {client.user} | スラッシュコマンド同期済み")
+    if DISCORD_GUILD_ID:
+        guild = discord.Object(id=int(DISCORD_GUILD_ID))
+        tree.copy_global_to(guild=guild)
+        await tree.sync(guild=guild)
+        logger.info(f"[slash_commands] Bot ログイン完了: {client.user} | ギルド同期済み (即時反映)")
+    else:
+        await tree.sync()
+        logger.info(f"[slash_commands] Bot ログイン完了: {client.user} | グローバル同期済み（反映まで最大1時間）")
 
 
 def start_bot() -> None:

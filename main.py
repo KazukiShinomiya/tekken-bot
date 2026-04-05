@@ -159,6 +159,11 @@ def _run_for_player(player_name: str, polaris_id: str, today_str: str, date_str:
         logger.info(f"[{player_name}] 本日の試合なし。投稿をスキップ。")
         return
 
+    # 新規バトルがなく既に投稿済みなら重複投稿しない
+    if inserted == 0 and db.has_posted_today(today_str, player_name=player_name):
+        logger.info(f"[{player_name}] 新規バトルなし・投稿済みのためスキップ。")
+        return
+
     prev_date_str = (datetime.strptime(today_str, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
     prev_battles  = db.get_battles_on_date(prev_date_str, player_name=player_name)
     logger.info(f"[{player_name}] 前日分: {len(prev_battles)} 件")
@@ -230,6 +235,8 @@ def _run_for_player(player_name: str, polaris_id: str, today_str: str, date_str:
             player_name=player_name,
             scout_data=scout_data or None,
         )
+        if post_result:
+            db.mark_posted_today(today_str, player_name=player_name)
         logger.info(f"[{player_name}] 投稿完了。")
     except Exception as e:
         logger.error(f"[{player_name}] Discord 投稿失敗: {e}")

@@ -352,3 +352,33 @@ def test_migration_adds_player_name(tmp_path, monkeypatch):
     with _db.get_conn() as c:
         cols = {row[1] for row in c.execute("PRAGMA table_info(battles)")}
     assert "player_name" in cols
+
+
+# ---------------------------------------------------------------------------
+# has_posted_today / mark_posted_today
+# ---------------------------------------------------------------------------
+
+def test_has_posted_today_false_initially(db):
+    assert db.has_posted_today("2024-01-15", "Alice") is False
+
+
+def test_mark_and_has_posted_today(db):
+    db.mark_posted_today("2024-01-15", "Alice")
+    assert db.has_posted_today("2024-01-15", "Alice") is True
+
+
+def test_has_posted_today_different_player(db):
+    db.mark_posted_today("2024-01-15", "Alice")
+    assert db.has_posted_today("2024-01-15", "Bob") is False
+
+
+def test_has_posted_today_different_date(db):
+    db.mark_posted_today("2024-01-15", "Alice")
+    assert db.has_posted_today("2024-01-16", "Alice") is False
+
+
+def test_mark_posted_today_idempotent(db):
+    """2回呼んでもエラーにならない（INSERT OR REPLACE）。"""
+    db.mark_posted_today("2024-01-15", "Alice")
+    db.mark_posted_today("2024-01-15", "Alice")
+    assert db.has_posted_today("2024-01-15", "Alice") is True

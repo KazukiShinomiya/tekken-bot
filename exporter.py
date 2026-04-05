@@ -135,6 +135,18 @@ class TekkenCollector:
         yield hourly_wr_g
         yield hourly_n_g
 
+        # ── 6. 自キャラ使用試合数 ──────────────────────────────────────────
+        chara_usage_g = GaugeMetricFamily(
+            "tekken_chara_usage_total",
+            "期間内の自キャラ使用試合数",
+            labels=["my_chara", "period"],
+        )
+        for period in ("7d", "30d", "all"):
+            rows = db.get_my_chara_counts(_period_start_ts(period))
+            for r in rows:
+                chara_usage_g.add_metric([r["my_chara"], period], float(r["cnt"]))
+        yield chara_usage_g
+
 
 def main():
     parser = argparse.ArgumentParser(description="Tekken Bot Prometheus Exporter")

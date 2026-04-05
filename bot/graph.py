@@ -106,8 +106,15 @@ def generate_chara_usage_chart(
 
     ax.set_title(f"{player_name} キャラ使用数（週別）", fontsize=14)
     ax.set_ylabel("試合数")
+    def _week_label(week_str: str) -> str:
+        try:
+            dt = datetime.strptime(f"{week_str}-1", "%Y-W%W-%w")
+            return f"{dt.month}/{dt.day}〜"
+        except ValueError:
+            return week_str
+
     ax.set_xticks(x)
-    ax.set_xticklabels([w.replace("-W", "/W") for w in weeks], rotation=30, ha="right")
+    ax.set_xticklabels([_week_label(w) for w in weeks], rotation=30, ha="right")
     ax.legend(loc="upper left", fontsize=8, ncol=2)
     ax.grid(True, axis="y", alpha=0.3)
     fig.tight_layout()

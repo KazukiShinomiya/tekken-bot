@@ -13,6 +13,8 @@ from bot.discord_post import (
     build_message,
     build_weekly_message,
     build_community_weekly,
+    build_embed,
+    build_weekly_embed,
 )
 
 
@@ -476,3 +478,74 @@ def test_build_message_without_scout_data_no_scout_section():
     msg = build_message(battles, "2024/01/01")
     assert msg is not None
     assert "スカウト" not in msg
+
+
+# ---------------------------------------------------------------------------
+# build_embed
+# ---------------------------------------------------------------------------
+
+def test_build_embed_returns_dict():
+    battles = [_battle(True, battle_at=1000)]
+    embed = build_embed(battles, "2024/01/01")
+    assert embed is not None
+    assert isinstance(embed, dict)
+
+
+def test_build_embed_none_on_empty():
+    assert build_embed([], "2024/01/01") is None
+
+
+def test_build_embed_contains_date():
+    battles = [_battle(True, battle_at=1000)]
+    embed = build_embed(battles, "2024/01/01")
+    embed_str = str(embed)
+    assert "2024/01/01" in embed_str
+
+
+def test_build_embed_contains_player_name():
+    battles = [_battle(True, battle_at=1000)]
+    embed = build_embed(battles, "2024/01/01", player_name="TestPlayer")
+    embed_str = str(embed)
+    assert "TestPlayer" in embed_str
+
+
+def test_build_embed_has_color():
+    battles = [_battle(True, battle_at=1000)]
+    embed = build_embed(battles, "2024/01/01")
+    assert "color" in embed
+
+
+def test_build_embed_win_color_vs_loss_color():
+    """勝ち越しと負け越しで color が異なる。"""
+    win_battles  = [_battle(True)]  * 3 + [_battle(False)]
+    lose_battles = [_battle(False)] * 3 + [_battle(True)]
+    embed_win  = build_embed(win_battles,  "2024/01/01")
+    embed_lose = build_embed(lose_battles, "2024/01/01")
+    assert embed_win["color"] != embed_lose["color"]
+
+
+# ---------------------------------------------------------------------------
+# build_weekly_embed
+# ---------------------------------------------------------------------------
+
+def test_build_weekly_embed_returns_dict():
+    battles = [_battle(True)]
+    embed = build_weekly_embed(battles, "2024/01/15")
+    assert embed is not None
+    assert isinstance(embed, dict)
+
+
+def test_build_weekly_embed_none_on_empty():
+    assert build_weekly_embed([], "2024/01/15") is None
+
+
+def test_build_weekly_embed_contains_week():
+    battles = [_battle(True)]
+    embed = build_weekly_embed(battles, "2024/01/15")
+    assert "2024/01/15" in str(embed)
+
+
+def test_build_weekly_embed_contains_player_name():
+    battles = [_battle(True)]
+    embed = build_weekly_embed(battles, "2024/01/15", player_name="Alice")
+    assert "Alice" in str(embed)
