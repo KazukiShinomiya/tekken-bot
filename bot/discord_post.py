@@ -690,6 +690,7 @@ def post(
         try:
             wait_url = url + "?wait=true"
             if chart:
+                chart.seek(0)
                 resp = _webhook_session.post(
                     wait_url,
                     data={"payload_json": json.dumps({"embeds": [embed]})},
