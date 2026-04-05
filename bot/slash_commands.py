@@ -10,6 +10,7 @@ Discord スラッシュコマンド Bot。
 import asyncio
 import logging
 import threading
+from collections import Counter
 from datetime import datetime
 
 import discord
@@ -18,7 +19,7 @@ from discord import app_commands
 import bot.db as db
 import main as _bot_main
 from bot.config import DISCORD_BOT_TOKEN as BOT_TOKEN, JST
-from bot.stats import count_wins, count_losses, get_most_common
+from bot.stats import count_wins, count_losses, get_most_common, detect_winning_streak, detect_losing_streak
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +151,61 @@ async def cmd_top(interaction: discord.Interaction) -> None:
         description="```\n" + "\n".join(lines) + "\n```",
         color=0x5865F2,
     )
+    await interaction.followup.send(embed=embed)
+
+
+@tekken_group.command(name="rival", description="特定の対戦相手との詳細な通算成績・傾向を確認する")
+@app_commands.describe(name="対戦相手の名前（部分一致）")
+async def cmd_rival(interaction: discord.Interaction, name: str) -> None:
+    await interaction.response.defer(thinking=True)
+    battles = db.search_battles_vs_opponent(name)
+    if not battles:
+        await interaction.followup.send(f"❌ `{name}` との対戦記録が見つかりません。")
+        return
+
+    wins   = count_wins(battles)
+    losses = count_losses(battles)
+    total  = wins + losses
+    wr     = wins / total * 100 if total else 0
+
+    # 使用キャラ一覧（多い順）
+    chara_counts = Counter(b.get("opp_chara") or "???" for b in battles)
+    chara_list = " / ".join(f"{c}({n}戦)" for c, n in chara_counts.most_common(5))
+
+    # 累積レーティング変動
+    rated = [b for b in battles if b.get("rating_change") is not None]
+    net_rating = sum(b["rating_change"] for b in rated) if rated else None
+
+    # 現在の対面ストリーク（末尾から）
+    sorted_b = sorted(battles, key=lambda x: x["battle_at"])
+    win_streak  = detect_winning_streak(sorted_b)
+    lose_streak = detect_losing_streak(sorted_b)
+    if win_streak >= 2:
+        streak_str = f"✅ {win_streak} 連勝中"
+    elif lose_streak >= 2:
+        streak_str = f"❌ {lose_streak} 連敗中"
+    else:
+        streak_str = "連続なし"
+
+    # 直近10戦
+    recent_icons = " ".join("✅" if b["won"] else "❌" for b in sorted_b[-10:])
+    last_dt = datetime.fromtimestamp(sorted_b[-1]["battle_at"], JST).strftime("%Y/%m/%d")
+
+    embed = discord.Embed(
+        title=f"⚔️ ライバル分析: {name}",
+        color=0x57F287 if wr >= 50 else 0xED4245,
+    )
+    embed.add_field(name="通算成績",   value=f"{wins}勝{losses}敗 ({wr:.0f}%)", inline=True)
+    embed.add_field(name="対戦回数",   value=f"{total}戦",                       inline=True)
+    embed.add_field(name="最終対戦",   value=last_dt,                            inline=True)
+    embed.add_field(name="使用キャラ", value=chara_list or "-",                  inline=False)
+    if net_rating is not None:
+        sign = "+" if net_rating >= 0 else ""
+        embed.add_field(name="累積レーティング変動", value=f"{sign}{net_rating}", inline=True)
+    embed.add_field(name="現在の流れ", value=streak_str, inline=True)
+    if recent_icons:
+        embed.add_field(name=f"直近{min(total, 10)}戦", value=recent_icons, inline=False)
+
     await interaction.followup.send(embed=embed)
 
 

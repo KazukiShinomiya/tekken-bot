@@ -341,6 +341,58 @@ def load_chara_names() -> dict[int, str]:
             return {}
 
 
+def backup_db(keep: int = 7) -> Path:
+    """
+    SQLite オンラインバックアップを data/backups/ に作成する。
+    keep 件より古いバックアップは自動削除する。
+    """
+    backup_dir = DB_PATH.parent / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+
+    dest = backup_dir / f"battles_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+    with sqlite3.connect(DB_PATH) as src, sqlite3.connect(dest) as dst:
+        src.backup(dst)
+
+    backups = sorted(backup_dir.glob("battles_*.db"))
+    for old in backups[:-keep]:
+        old.unlink(missing_ok=True)
+
+    logger.info(f"[db] バックアップ完了: {dest.name}（保持 {min(len(backups), keep)} 件）")
+    return dest
+
+
+def get_weekly_my_chara_counts(
+    weeks: int = 8,
+    player_name: str | None = None,
+) -> list[dict]:
+    """過去 N 週の JST 週別・自キャラ使用数を返す（週次グラフ用）。"""
+    since_ts = int((datetime.now(timezone.utc) - timedelta(weeks=weeks)).timestamp())
+    with get_conn() as conn:
+        if player_name is not None:
+            rows = conn.execute("""
+                SELECT
+                    strftime('%Y-W%W', datetime(battle_at, 'unixepoch', '+9 hours')) AS week,
+                    my_chara,
+                    COUNT(*) AS cnt
+                FROM battles
+                WHERE my_chara IS NOT NULL AND battle_at >= ? AND player_name = ?
+                GROUP BY week, my_chara
+                ORDER BY week, cnt DESC
+            """, (since_ts, player_name)).fetchall()
+        else:
+            rows = conn.execute("""
+                SELECT
+                    strftime('%Y-W%W', datetime(battle_at, 'unixepoch', '+9 hours')) AS week,
+                    my_chara,
+                    COUNT(*) AS cnt
+                FROM battles
+                WHERE my_chara IS NOT NULL AND battle_at >= ?
+                GROUP BY week, my_chara
+                ORDER BY week, cnt DESC
+            """, (since_ts,)).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_unknown_chara_battles(limit: int = 10) -> list[dict]:
     """Chara#N のままのバトルを返す（未学習キャラの検出・ログ警告用）。"""
     with get_conn() as conn:

@@ -49,6 +49,7 @@ TIMEOUT_WEBHOOK_IMAGE = 15   # Discord Webhook（画像添付）
 # ── 通知設定 ──────────────────────────────────────────────────────────────────
 RATING_GOAL          = int(os.getenv("RATING_GOAL", "0"))          # 0=無効
 LOSS_ALERT_THRESHOLD = int(os.getenv("LOSS_ALERT_THRESHOLD", "5")) # 0=無効
+WIN_ALERT_THRESHOLD  = int(os.getenv("WIN_ALERT_THRESHOLD",  "5")) # 0=無効
 
 def validate_config() -> list[str]:
     """

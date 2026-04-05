@@ -723,12 +723,32 @@ def post_weekly(
         logger.info(f"[discord_post][{player_name}] 今週の試合なし。週次投稿をスキップ。")
         return None
 
+    # キャラ使用率グラフ生成
+    chara_chart = None
+    try:
+        from bot.graph import generate_chara_usage_chart
+        import bot.db as _db
+        weekly_data = _db.get_weekly_my_chara_counts(player_name=player_name)
+        chara_chart = generate_chara_usage_chart(weekly_data, player_name or TEKKEN_ID)
+    except Exception as e:
+        logger.warning(f"[discord_post] キャラグラフ生成失敗（スキップ）: {e}")
+
     results: list[tuple[str, str]] = []
     for url in WEBHOOK_URLS:
         try:
-            resp = _webhook_session.post(
-                url + "?wait=true", json={"embeds": [embed]}, timeout=TIMEOUT_WEBHOOK
-            )
+            wait_url = url + "?wait=true"
+            if chara_chart:
+                chara_chart.seek(0)
+                resp = _webhook_session.post(
+                    wait_url,
+                    data={"payload_json": json.dumps({"embeds": [embed]})},
+                    files={"files[0]": ("chara_usage.png", chara_chart, "image/png")},
+                    timeout=TIMEOUT_WEBHOOK_IMAGE,
+                )
+            else:
+                resp = _webhook_session.post(
+                    wait_url, json={"embeds": [embed]}, timeout=TIMEOUT_WEBHOOK
+                )
             resp.raise_for_status()
             results.append((resp.json()["id"], url))
         except requests.RequestException as e:

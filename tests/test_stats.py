@@ -5,6 +5,7 @@ bot/stats.py の単体テスト。
 from bot.stats import (
     calculate_streak, aggregate_by_character,
     predict_rating_trend, detect_momentum,
+    detect_winning_streak, detect_losing_streak,
 )
 
 
@@ -180,3 +181,35 @@ def test_detect_momentum_too_few():
 
 def test_detect_momentum_empty():
     assert detect_momentum([]) is None
+
+
+# ---------------------------------------------------------------------------
+# detect_winning_streak / detect_losing_streak
+# ---------------------------------------------------------------------------
+
+def test_detect_winning_streak_basic():
+    battles = [{"won": False}, {"won": True}, {"won": True}, {"won": True}]
+    assert detect_winning_streak(battles) == 3
+
+
+def test_detect_winning_streak_broken():
+    battles = [{"won": True}, {"won": True}, {"won": False}, {"won": True}]
+    assert detect_winning_streak(battles) == 1
+
+
+def test_detect_winning_streak_none():
+    battles = [{"won": True}, {"won": False}]
+    assert detect_winning_streak(battles) == 0
+
+
+def test_detect_winning_streak_empty():
+    assert detect_winning_streak([]) == 0
+
+
+def test_detect_losing_streak_basic():
+    battles = [{"won": True}, {"won": False}, {"won": False}]
+    assert detect_losing_streak(battles) == 2
+
+
+def test_detect_losing_streak_empty():
+    assert detect_losing_streak([]) == 0

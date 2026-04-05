@@ -72,6 +72,17 @@ def detect_losing_streak(sorted_battles: list[dict]) -> int:
     return streak
 
 
+def detect_winning_streak(sorted_battles: list[dict]) -> int:
+    """時系列順バトルリストの末尾から連続勝利数を返す。"""
+    streak = 0
+    for b in reversed(sorted_battles):
+        if b["won"]:
+            streak += 1
+        else:
+            break
+    return streak
+
+
 def aggregate_by_hour(battles: list[dict]) -> dict[int, list[bool]]:
     """バトル開始時刻(JST時)別に勝敗をグループ化して返す。"""
     result: dict[int, list[bool]] = {}

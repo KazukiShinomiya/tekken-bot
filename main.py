@@ -22,13 +22,13 @@ load_dotenv()
 from bot.config import (
     PLAYERS as PLAYERS_ENV, POLARIS_ID as POLARIS_ID_ENV, TEKKEN_ID as TEKKEN_ID_ENV,
     LOG_PATH, JST, TIMEOUT_LLM, TIMEOUT_API, RATING_GOAL, LOSS_ALERT_THRESHOLD,
-    validate_config,
+    WIN_ALERT_THRESHOLD, validate_config,
 )
 import bot.db as db
 import bot.fetcher as fetcher
 import bot.discord_post as discord_post
 import bot.analyzer as analyzer
-from bot.stats import count_wins, count_losses, filter_rated_battles, detect_losing_streak
+from bot.stats import count_wins, count_losses, filter_rated_battles, detect_losing_streak, detect_winning_streak
 
 logger = logging.getLogger(__name__)
 
@@ -185,15 +185,22 @@ def _run_for_player(player_name: str, polaris_id: str, today_str: str, date_str:
     if scout_data:
         logger.info(f"[{player_name}] スカウト取得: {len(scout_data)} 人")
 
-    # 連敗アラート（末尾から連続敗北を検出）
+    # 連敗・連勝アラート（末尾から連続結果を検出）
+    sorted_today = sorted(today_battles, key=lambda x: x["battle_at"])
     if LOSS_ALERT_THRESHOLD > 0:
-        sorted_today = sorted(today_battles, key=lambda x: x["battle_at"])
         streak = detect_losing_streak(sorted_today)
         if streak >= LOSS_ALERT_THRESHOLD:
             discord_post.notify(
                 f"⚠️ [{player_name}] 現在 **{streak} 連敗中** です。少し休憩しましょう！"
             )
             logger.info(f"[{player_name}] 連敗アラート送信: {streak} 連敗")
+    if WIN_ALERT_THRESHOLD > 0:
+        win_streak = detect_winning_streak(sorted_today)
+        if win_streak >= WIN_ALERT_THRESHOLD:
+            discord_post.notify(
+                f"🔥 [{player_name}] 現在 **{win_streak} 連勝中**！この勢いで行け！"
+            )
+            logger.info(f"[{player_name}] 連勝アラート送信: {win_streak} 連勝")
 
     # 目標レーティング達成通知（当日初めて閾値を超えた場合のみ）
     if RATING_GOAL > 0:
@@ -289,6 +296,13 @@ async def main(target_date: str | None = None) -> None:
             asyncio.to_thread(_run_for_player, name, pid, today_str, date_str)
             for name, pid in players
         ))
+
+        # 日次バックアップ（全プレイヤー処理後）
+        try:
+            dest = db.backup_db()
+            logger.info(f"[main] DB バックアップ完了: {dest.name}")
+        except Exception as e:
+            logger.warning(f"[main] DB バックアップ失敗: {e}")
     finally:
         _main_lock.release()
 
