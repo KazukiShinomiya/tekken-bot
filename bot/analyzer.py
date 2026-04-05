@@ -5,7 +5,7 @@ Ollama（ローカルLLM）を使ってバトルデータを分析するモジ�
 import logging
 import requests
 
-from bot.config import OLLAMA_URL, OLLAMA_MODEL, TIMEOUT_LLM
+from bot.config import OLLAMA_URL, OLLAMA_MODEL, OLLAMA_FALLBACK_MODEL, TIMEOUT_LLM
 from bot.stats import (
     calculate_streak, aggregate_by_character, count_wins, count_losses,
     filter_rated_battles, aggregate_by_hour,
@@ -217,6 +217,22 @@ def _build_prompt(battles: list[dict], date_str: str, player_name: str = "",
     return "\n".join(lines)
 
 
+def _call_ollama(model: str, prompt: str) -> str | None:
+    """指定モデルで Ollama を呼び出し、レスポンステキストを返す。失敗時は例外を再送出。"""
+    resp = requests.post(
+        f"{OLLAMA_URL}/api/generate",
+        json={
+            "model":   model,
+            "prompt":  prompt,
+            "stream":  False,
+            "options": {"temperature": 0.7, "num_predict": 200},
+        },
+        timeout=TIMEOUT_LLM,
+    )
+    resp.raise_for_status()
+    return resp.json().get("response", "").strip() or None
+
+
 def analyze(battles: list[dict], date_str: str, player_name: str = "",
             prev_battles: list[dict] | None = None,
             rematch_data: dict | None = None) -> str | None:
@@ -225,6 +241,7 @@ def analyze(battles: list[dict], date_str: str, player_name: str = "",
     prev_battles が渡された場合は前日比のコンテキストをプロンプトに含める。
     rematch_data が渡された場合はリピート対戦相手の通算成績をプロンプトに含める。
     失敗時は None を返す（投稿自体は続行）。
+    OLLAMA_FALLBACK_MODEL が設定されている場合、プライマリ失敗時に自動でフォールバック。
     """
     if not battles:
         return None
@@ -241,21 +258,21 @@ def analyze(battles: list[dict], date_str: str, player_name: str = "",
         rematch_data=rematch_data,
     )
 
+    # プライマリモデルを試みる
     try:
-        resp = requests.post(
-            f"{OLLAMA_URL}/api/generate",
-            json={
-                "model":  OLLAMA_MODEL,
-                "prompt": prompt,
-                "stream": False,
-                "options": {"temperature": 0.7, "num_predict": 200},
-            },
-            timeout=TIMEOUT_LLM,
-        )
-        resp.raise_for_status()
-        comment = resp.json().get("response", "").strip()
-        logger.info(f"[analyzer] LLM分析完了: {len(comment)}文字")
-        return comment if comment else None
+        comment = _call_ollama(OLLAMA_MODEL, prompt)
+        logger.info(f"[analyzer] LLM分析完了({OLLAMA_MODEL}): {len(comment or '')}文字")
+        return comment
     except requests.RequestException as e:
-        logger.warning(f"[analyzer] LLM分析失敗（スキップ）: {e}")
-        return None
+        logger.warning(f"[analyzer] プライマリモデル失敗({OLLAMA_MODEL}): {e}")
+
+    # フォールバックモデルがあれば試みる
+    if OLLAMA_FALLBACK_MODEL:
+        try:
+            comment = _call_ollama(OLLAMA_FALLBACK_MODEL, prompt)
+            logger.info(f"[analyzer] フォールバックモデル成功({OLLAMA_FALLBACK_MODEL}): {len(comment or '')}文字")
+            return comment
+        except requests.RequestException as e:
+            logger.warning(f"[analyzer] フォールバックモデルも失敗({OLLAMA_FALLBACK_MODEL}): {e}")
+
+    return None

@@ -104,48 +104,48 @@ def init_db() -> None:
             )
 
 
+_INSERT_SQL = """
+    INSERT INTO battles (
+        battle_id, battle_at, battle_type, game_version, stage_id, source,
+        won, my_chara, my_chara_id, my_rounds, my_rank, my_power, my_region,
+        rating_before, rating_change,
+        opp_name, opp_polaris_id, opp_chara, opp_chara_id,
+        opp_rounds, opp_rank, opp_power, opp_region,
+        opp_rating_before, opp_rating_change,
+        player_name
+    ) VALUES (
+        :battle_id, :battle_at, :battle_type, :game_version, :stage_id, :source,
+        :won, :my_chara, :my_chara_id, :my_rounds, :my_rank, :my_power, :my_region,
+        :rating_before, :rating_change,
+        :opp_name, :opp_polaris_id, :opp_chara, :opp_chara_id,
+        :opp_rounds, :opp_rank, :opp_power, :opp_region,
+        :opp_rating_before, :opp_rating_change,
+        :player_name
+    )
+    ON CONFLICT(battle_id) DO UPDATE SET
+        my_chara    = CASE WHEN my_chara  IS NULL OR my_chara  LIKE 'Chara#%'
+                          THEN excluded.my_chara  ELSE my_chara  END,
+        opp_chara   = CASE WHEN opp_chara IS NULL OR opp_chara LIKE 'Chara#%'
+                          THEN excluded.opp_chara ELSE opp_chara END,
+        my_chara_id  = COALESCE(my_chara_id,  excluded.my_chara_id),
+        opp_chara_id = COALESCE(opp_chara_id, excluded.opp_chara_id),
+        my_rank      = COALESCE(my_rank,  excluded.my_rank),
+        my_power     = COALESCE(my_power, excluded.my_power),
+        opp_rank     = COALESCE(opp_rank,  excluded.opp_rank),
+        opp_power    = COALESCE(opp_power, excluded.opp_power),
+        opp_rating_before  = COALESCE(opp_rating_before,  excluded.opp_rating_before),
+        opp_rating_change  = COALESCE(opp_rating_change,  excluded.opp_rating_change)
+"""
+
+
 def insert_battles(battles: list[dict], player_name: str = "default") -> int:
-    """バトルを挿入。既存レコードはキャラ名・未取得フィールドのみ更新する。処理件数を返す。"""
-    inserted = 0
+    """バトルを一括挿入。既存レコードはキャラ名・未取得フィールドのみ更新する。処理件数を返す。"""
+    if not battles:
+        return 0
+    rows = [{**b, "won": int(b["won"]), "player_name": player_name} for b in battles]
     with get_conn() as conn:
-        for b in battles:
-            try:
-                conn.execute("""
-                    INSERT INTO battles (
-                        battle_id, battle_at, battle_type, game_version, stage_id, source,
-                        won, my_chara, my_chara_id, my_rounds, my_rank, my_power, my_region,
-                        rating_before, rating_change,
-                        opp_name, opp_polaris_id, opp_chara, opp_chara_id,
-                        opp_rounds, opp_rank, opp_power, opp_region,
-                        opp_rating_before, opp_rating_change,
-                        player_name
-                    ) VALUES (
-                        :battle_id, :battle_at, :battle_type, :game_version, :stage_id, :source,
-                        :won, :my_chara, :my_chara_id, :my_rounds, :my_rank, :my_power, :my_region,
-                        :rating_before, :rating_change,
-                        :opp_name, :opp_polaris_id, :opp_chara, :opp_chara_id,
-                        :opp_rounds, :opp_rank, :opp_power, :opp_region,
-                        :opp_rating_before, :opp_rating_change,
-                        :player_name
-                    )
-                    ON CONFLICT(battle_id) DO UPDATE SET
-                        my_chara    = CASE WHEN my_chara  IS NULL OR my_chara  LIKE 'Chara#%'
-                                          THEN excluded.my_chara  ELSE my_chara  END,
-                        opp_chara   = CASE WHEN opp_chara IS NULL OR opp_chara LIKE 'Chara#%'
-                                          THEN excluded.opp_chara ELSE opp_chara END,
-                        my_chara_id  = COALESCE(my_chara_id,  excluded.my_chara_id),
-                        opp_chara_id = COALESCE(opp_chara_id, excluded.opp_chara_id),
-                        my_rank      = COALESCE(my_rank,  excluded.my_rank),
-                        my_power     = COALESCE(my_power, excluded.my_power),
-                        opp_rank     = COALESCE(opp_rank,  excluded.opp_rank),
-                        opp_power    = COALESCE(opp_power, excluded.opp_power),
-                        opp_rating_before  = COALESCE(opp_rating_before,  excluded.opp_rating_before),
-                        opp_rating_change  = COALESCE(opp_rating_change,  excluded.opp_rating_change)
-                """, {**b, "won": int(b["won"]), "player_name": player_name})
-                inserted += 1
-            except sqlite3.IntegrityError:
-                pass
-    return inserted
+        conn.executemany(_INSERT_SQL, rows)
+    return len(rows)
 
 
 def get_latest_battle_at(player_name: str | None = None) -> float:
@@ -339,6 +339,19 @@ def load_chara_names() -> dict[int, str]:
         except sqlite3.Error as e:
             logger.warning(f"[db] キャラクター名ロード失敗: {e}")
             return {}
+
+
+def get_unknown_chara_battles(limit: int = 10) -> list[dict]:
+    """Chara#N のままのバトルを返す（未学習キャラの検出・ログ警告用）。"""
+    with get_conn() as conn:
+        rows = conn.execute("""
+            SELECT battle_id, battle_at, my_chara, my_chara_id, opp_chara, opp_chara_id
+            FROM battles
+            WHERE my_chara LIKE 'Chara#%' OR opp_chara LIKE 'Chara#%'
+            ORDER BY battle_at DESC
+            LIMIT ?
+        """, (limit,)).fetchall()
+    return [dict(r) for r in rows]
 
 
 def get_win_loss_by_hour(since_ts: int) -> list[dict]:

@@ -24,8 +24,11 @@ PLAYERS    = os.getenv("PLAYERS", "").strip()
 EWGF_API_KEY = os.getenv("EWGF_API_KEY")
 
 # ── Ollama ────────────────────────────────────────────────────────────────────
-OLLAMA_URL   = os.getenv("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
+OLLAMA_URL            = os.getenv("OLLAMA_URL", "http://localhost:11434")
+OLLAMA_MODEL          = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
+# プライマリモデルが失敗・タイムアウトした場合に試みるフォールバックモデル（空文字=無効）
+# 例: OLLAMA_FALLBACK_MODEL=gemma3:4b  または  phi4
+OLLAMA_FALLBACK_MODEL = os.getenv("OLLAMA_FALLBACK_MODEL", "")
 
 # ── ストレージ・ログ ──────────────────────────────────────────────────────────
 DB_PATH  = Path(os.getenv("DB_PATH", str(Path(__file__).parent / "battles.db")))

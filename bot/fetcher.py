@@ -304,7 +304,7 @@ def _parse_wank_html_row(row) -> dict | None:
         my_rounds, opp_rounds = int(rm.group(1)), int(rm.group(2))
 
     return {
-        "battle_id":         f"wank_{battle_at}_{opp_polaris_id or opp_name}",
+        "battle_id":         f"wank_{battle_at}_{opp_polaris_id or opp_name}_{my_rounds}-{opp_rounds}",
         "battle_at":         battle_at,
         "battle_type":       None,   # バルクAPIで補完
         "game_version":      None,

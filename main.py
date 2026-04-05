@@ -195,17 +195,25 @@ def _run_for_player(player_name: str, polaris_id: str, today_str: str, date_str:
             )
             logger.info(f"[{player_name}] 連敗アラート送信: {streak} 連敗")
 
-    # 目標レーティング達成通知
+    # 目標レーティング達成通知（当日初めて閾値を超えた場合のみ）
     if RATING_GOAL > 0:
         rated_today = [b for b in today_battles if b.get("rating_before") is not None and b.get("rating_change") is not None]
         if rated_today:
             latest_rated = max(rated_today, key=lambda x: x["battle_at"])
             current_rating = latest_rated["rating_before"] + latest_rated["rating_change"]
             if current_rating >= RATING_GOAL:
-                discord_post.notify(
-                    f"🎉 [{player_name}] 目標レーティング **{RATING_GOAL:,}** 達成！現在: **{current_rating:,}**"
-                )
-                logger.info(f"[{player_name}] 目標レーティング達成通知: {current_rating}")
+                # 前日最終レーティングがすでに目標以上なら重複通知しない
+                prev_rated = [b for b in prev_battles if b.get("rating_before") is not None and b.get("rating_change") is not None]
+                if prev_rated:
+                    prev_latest = max(prev_rated, key=lambda x: x["battle_at"])
+                    prev_rating = prev_latest["rating_before"] + prev_latest["rating_change"]
+                else:
+                    prev_rating = 0
+                if prev_rating < RATING_GOAL:
+                    discord_post.notify(
+                        f"🎉 [{player_name}] 目標レーティング **{RATING_GOAL:,}** 達成！現在: **{current_rating:,}**"
+                    )
+                    logger.info(f"[{player_name}] 目標レーティング達成通知: {current_rating}")
 
     # Discord に即時投稿（LLM コメントなし）
     post_result = None
@@ -252,6 +260,15 @@ async def main(target_date: str | None = None) -> None:
 
         db.init_db()
         fetcher.load_learned_chara_names()
+
+        # 未学習キャラ(Chara#N)の残存チェック
+        unknown_chara = db.get_unknown_chara_battles()
+        if unknown_chara:
+            ids = ", ".join(
+                f"ID={r['my_chara_id'] or r['opp_chara_id']} ({r['my_chara'] or r['opp_chara']})"
+                for r in unknown_chara[:5]
+            )
+            logger.warning(f"[main] 未学習キャラが {len(unknown_chara)} 件存在: {ids}")
 
         players = get_players()
         if not players:
@@ -331,8 +348,13 @@ async def weekly() -> None:
             logger.warning("プレイヤーが設定されていません。週次サマリーをスキップ。")
             return
 
-        since_ts       = (now - timedelta(days=7)).timestamp()
-        week_start_str = (now - timedelta(days=6)).strftime("%Y/%m/%d")
+        # 当週の月曜0時JST起算（月〜日の標準週）
+        days_since_monday = now.weekday()  # 月=0 … 日=6
+        week_start = (now - timedelta(days=days_since_monday)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        since_ts       = week_start.timestamp()
+        week_start_str = week_start.strftime("%Y/%m/%d")
 
         # 複数プレイヤーを並列処理
         results = await asyncio.gather(*(
