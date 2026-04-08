@@ -35,7 +35,7 @@ _discord_mock.Interaction = MagicMock()
 sys.modules.setdefault("discord", _discord_mock)
 sys.modules.setdefault("discord.app_commands", _app_commands_mock)
 
-from bot.slash_commands import cmd_today, cmd_vs, cmd_chara, cmd_top, cmd_status  # noqa: E402
+from bot.slash_commands import cmd_today, cmd_vs, cmd_chara, cmd_top, cmd_status, cmd_rival  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -199,3 +199,72 @@ def test_cmd_status_returns_online():
     call_args = interaction.response.send_message.call_args[0][0]
     assert "✅" in call_args
     assert "Bot" in call_args
+
+
+# ---------------------------------------------------------------------------
+# /tekken rival
+# ---------------------------------------------------------------------------
+
+def test_cmd_rival_no_results():
+    """対戦履歴なし → エラーメッセージを返す。"""
+    interaction = _make_interaction()
+    with patch("bot.db.search_battles_vs_opponent", return_value=[]):
+        asyncio.run(cmd_rival(interaction, name="Unknown"))
+    call_args = interaction.followup.send.call_args[0][0]
+    assert "❌" in call_args
+
+
+def test_cmd_rival_with_results_sends_embed():
+    """対戦履歴あり → Embed を返す。"""
+    interaction = _make_interaction()
+    battles = [
+        _make_battle(battle_id="r1", won=True,  battle_at=1_000_000),
+        _make_battle(battle_id="r2", won=False, battle_at=1_000_100),
+    ]
+    with patch("bot.db.search_battles_vs_opponent", return_value=battles):
+        asyncio.run(cmd_rival(interaction, name="TestOpp"))
+    assert interaction.followup.send.called
+    kwargs = interaction.followup.send.call_args.kwargs
+    assert "embed" in kwargs
+
+
+def test_cmd_rival_win_color_green():
+    """勝率 50% 以上 → Embed カラーが緑 (0x57F287)。"""
+    interaction = _make_interaction()
+    battles = [
+        _make_battle(battle_id=f"r{i}", won=True, battle_at=1_000_000 + i)
+        for i in range(3)
+    ] + [_make_battle(battle_id="r3", won=False, battle_at=1_000_003)]
+    with patch("bot.db.search_battles_vs_opponent", return_value=battles):
+        asyncio.run(cmd_rival(interaction, name="TestOpp"))
+    embed = interaction.followup.send.call_args.kwargs["embed"]
+    assert embed.color == 0x57F287
+
+
+def test_cmd_rival_lose_color_red():
+    """勝率 50% 未満 → Embed カラーが赤 (0xED4245)。"""
+    interaction = _make_interaction()
+    battles = [
+        _make_battle(battle_id="r0", won=False, battle_at=1_000_000),
+        _make_battle(battle_id="r1", won=False, battle_at=1_000_001),
+        _make_battle(battle_id="r2", won=True,  battle_at=1_000_002),
+    ]
+    with patch("bot.db.search_battles_vs_opponent", return_value=battles):
+        asyncio.run(cmd_rival(interaction, name="TestOpp"))
+    embed = interaction.followup.send.call_args.kwargs["embed"]
+    assert embed.color == 0xED4245
+
+
+def test_cmd_rival_shows_win_streak():
+    """末尾から連勝中の場合、連勝ストリーク情報を含む Embed を返す。"""
+    interaction = _make_interaction()
+    battles = [
+        _make_battle(battle_id=f"r{i}", won=True, battle_at=1_000_000 + i)
+        for i in range(3)
+    ]
+    with patch("bot.db.search_battles_vs_opponent", return_value=battles):
+        asyncio.run(cmd_rival(interaction, name="TestOpp"))
+    embed = interaction.followup.send.call_args.kwargs["embed"]
+    # add_field の呼び出し引数に "連勝" が含まれているか確認
+    field_calls = str(embed.add_field.call_args_list)
+    assert "連勝" in field_calls

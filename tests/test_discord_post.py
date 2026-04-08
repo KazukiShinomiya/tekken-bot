@@ -9,6 +9,7 @@ from bot.discord_post import (
     _nemesis,
     _rating_summary,
     _matchup_matrix,
+    _hourly_section,
     _scout_section,
     build_message,
     build_weekly_message,
@@ -549,3 +550,50 @@ def test_build_weekly_embed_contains_player_name():
     battles = [_battle(True)]
     embed = build_weekly_embed(battles, "2024/01/15", player_name="Alice")
     assert "Alice" in str(embed)
+
+
+# ---------------------------------------------------------------------------
+# _hourly_section
+# ---------------------------------------------------------------------------
+# battle_at=1000 は JST で 1970-01-01 09:16:40 → hour=9
+# battle_at=4000 は JST で 1970-01-01 10:06:40 → hour=10
+
+def test_hourly_section_shows_hours_with_2plus_battles():
+    """2試合以上の時間帯のみ表示される。"""
+    battles = [
+        _battle(won=True,  battle_at=1000),
+        _battle(won=False, battle_at=1010),  # 同じ時間帯
+        _battle(won=True,  battle_at=4000),  # 別の時間帯、1試合のみ
+    ]
+    result = _hourly_section(battles)
+    assert result is not None
+    # hour=9 は2試合あるので表示される
+    assert "9" in result
+    # hour=10 は1試合のみなので表示されない
+    assert "10" not in result
+
+
+def test_hourly_section_none_when_all_single():
+    """全時間帯が1試合のみ → None を返す。"""
+    battles = [
+        _battle(won=True,  battle_at=1000),
+        _battle(won=False, battle_at=4000),
+    ]
+    assert _hourly_section(battles) is None
+
+
+def test_hourly_section_none_when_empty():
+    """空リスト → None を返す。"""
+    assert _hourly_section([]) is None
+
+
+def test_hourly_section_shows_win_rate():
+    """勝率が表示される（%が含まれる）。"""
+    battles = [
+        _battle(won=True,  battle_at=1000),
+        _battle(won=True,  battle_at=1010),
+        _battle(won=False, battle_at=1020),
+    ]
+    result = _hourly_section(battles)
+    assert result is not None
+    assert "%" in result

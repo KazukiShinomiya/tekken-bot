@@ -382,3 +382,203 @@ def test_mark_posted_today_idempotent(db):
     db.mark_posted_today("2024-01-15", "Alice")
     db.mark_posted_today("2024-01-15", "Alice")
     assert db.has_posted_today("2024-01-15", "Alice") is True
+
+
+# ---------------------------------------------------------------------------
+# get_battles_vs_opponent
+# ---------------------------------------------------------------------------
+
+def test_get_battles_vs_opponent_basic(db):
+    """指定 polaris_id との対戦履歴を返す。"""
+    b1 = _make_battle(battle_id="a1"); b1["opp_polaris_id"] = "pid_target"
+    b2 = _make_battle(battle_id="a2"); b2["opp_polaris_id"] = "pid_other"
+    db.insert_battles([b1, b2], "Alice")
+    result = db.get_battles_vs_opponent("pid_target")
+    assert len(result) == 1
+    assert result[0]["battle_id"] == "a1"
+
+
+def test_get_battles_vs_opponent_player_filter(db):
+    """player_name フィルタが機能する。"""
+    b1 = _make_battle(battle_id="b1"); b1["opp_polaris_id"] = "pid_x"
+    b2 = _make_battle(battle_id="b2"); b2["opp_polaris_id"] = "pid_x"
+    db.insert_battles([b1], "Alice")
+    db.insert_battles([b2], "Bob")
+    result = db.get_battles_vs_opponent("pid_x", player_name="Alice")
+    assert len(result) == 1
+    assert result[0]["battle_id"] == "b1"
+
+
+def test_get_battles_vs_opponent_empty(db):
+    """該当なし → 空リスト。"""
+    assert db.get_battles_vs_opponent("nonexistent_pid") == []
+
+
+# ---------------------------------------------------------------------------
+# get_battles_by_opp_chara
+# ---------------------------------------------------------------------------
+
+def test_get_battles_by_opp_chara_basic(db):
+    """指定キャラとの対戦履歴を返す。"""
+    db.insert_battles([
+        _make_battle(battle_id="c1", opp_chara="Jin"),
+        _make_battle(battle_id="c2", opp_chara="Bryan"),
+    ], "Alice")
+    result = db.get_battles_by_opp_chara("Jin")
+    assert len(result) == 1
+    assert result[0]["battle_id"] == "c1"
+
+
+def test_get_battles_by_opp_chara_case_insensitive(db):
+    """大文字小文字を無視してマッチする。"""
+    db.insert_battles([_make_battle(battle_id="c3", opp_chara="jin")], "Alice")
+    assert len(db.get_battles_by_opp_chara("JIN")) == 1
+
+
+def test_get_battles_by_opp_chara_empty(db):
+    """該当なし → 空リスト。"""
+    assert db.get_battles_by_opp_chara("Unknown") == []
+
+
+# ---------------------------------------------------------------------------
+# search_battles_vs_opponent (部分一致)
+# ---------------------------------------------------------------------------
+
+def test_search_battles_vs_opponent_partial_match(db):
+    """名前の部分一致で対戦履歴を返す。"""
+    b = _make_battle(battle_id="s1")
+    b["opp_name"] = "SomePlayer123"
+    db.insert_battles([b], "Alice")
+    result = db.search_battles_vs_opponent("SomePlayer")
+    assert len(result) == 1
+    assert result[0]["battle_id"] == "s1"
+
+
+def test_search_battles_vs_opponent_no_match(db):
+    """一致なし → 空リスト。"""
+    assert db.search_battles_vs_opponent("nobody") == []
+
+
+def test_search_battles_vs_opponent_case_insensitive(db):
+    """大文字小文字を無視してマッチする。"""
+    b = _make_battle(battle_id="s2")
+    b["opp_name"] = "TestOpp"
+    db.insert_battles([b], "Alice")
+    assert len(db.search_battles_vs_opponent("testopp")) == 1
+
+
+# ---------------------------------------------------------------------------
+# get_unknown_chara_battles
+# ---------------------------------------------------------------------------
+
+def test_get_unknown_chara_battles_finds_chara_hash(db):
+    """Chara#N のバトルを検出する。"""
+    b1 = _make_battle(battle_id="u1", opp_chara="Chara#99")
+    b2 = _make_battle(battle_id="u2", opp_chara="Jin")
+    db.insert_battles([b1, b2], "Alice")
+    result = db.get_unknown_chara_battles()
+    assert len(result) == 1
+    assert result[0]["battle_id"] == "u1"
+
+
+def test_get_unknown_chara_battles_empty_when_all_known(db):
+    """既知キャラのみなら空リスト。"""
+    db.insert_battles([_make_battle(opp_chara="Jin")], "Alice")
+    assert db.get_unknown_chara_battles() == []
+
+
+def test_get_unknown_chara_battles_respects_limit(db):
+    """limit 引数が機能する。"""
+    for i in range(5):
+        b = _make_battle(battle_id=f"ul{i}", battle_at=1_000_000 + i, opp_chara="Chara#99")
+        db.insert_battles([b], "Alice")
+    result = db.get_unknown_chara_battles(limit=2)
+    assert len(result) == 2
+
+
+# ---------------------------------------------------------------------------
+# get_weekly_my_chara_counts
+# ---------------------------------------------------------------------------
+
+def test_get_weekly_my_chara_counts_returns_data(db):
+    """週別・自キャラ使用数が返る。"""
+    from datetime import datetime, timezone
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    db.insert_battles([
+        _make_battle(battle_id="w1", my_chara="Lee",   battle_at=now_ts - 100),
+        _make_battle(battle_id="w2", my_chara="Lee",   battle_at=now_ts - 50),
+        _make_battle(battle_id="w3", my_chara="Reina", battle_at=now_ts - 10),
+    ], "Alice")
+    result = db.get_weekly_my_chara_counts(weeks=1, player_name="Alice")
+    assert len(result) > 0
+    charas = {r["my_chara"] for r in result}
+    assert "Lee" in charas
+
+
+def test_get_weekly_my_chara_counts_empty(db):
+    """データなし → 空リスト。"""
+    assert db.get_weekly_my_chara_counts() == []
+
+
+# ---------------------------------------------------------------------------
+# get_scout_cache / set_scout_cache
+# ---------------------------------------------------------------------------
+
+def test_get_scout_cache_miss(db):
+    """未登録の polaris_id → None を返す。"""
+    assert db.get_scout_cache("unknown_pid") is None
+
+
+def test_set_and_get_scout_cache(db):
+    """保存したデータをキャッシュヒットで取得できる。"""
+    data = {"win_rate": 55.0, "main_chara": "Jin"}
+    db.set_scout_cache("pid_abc", data)
+    result = db.get_scout_cache("pid_abc")
+    assert result is not None
+    assert result["win_rate"] == 55.0
+    assert result["main_chara"] == "Jin"
+
+
+def test_get_scout_cache_expired(db):
+    """TTL を超えたキャッシュ → None を返す。"""
+    data = {"win_rate": 40.0}
+    db.set_scout_cache("pid_old", data)
+    # ttl_seconds=-1 にすると age(>=0) > -1 が常に True → 期限切れ扱い
+    result = db.get_scout_cache("pid_old", ttl_seconds=-1)
+    assert result is None
+
+
+def test_set_scout_cache_overwrites(db):
+    """同じ polaris_id への上書きが正常に動作する。"""
+    db.set_scout_cache("pid_dup", {"win_rate": 40.0})
+    db.set_scout_cache("pid_dup", {"win_rate": 60.0})
+    result = db.get_scout_cache("pid_dup")
+    assert result is not None
+    assert result["win_rate"] == 60.0
+
+
+# ---------------------------------------------------------------------------
+# backup_db
+# ---------------------------------------------------------------------------
+
+def test_backup_db_creates_file(db, tmp_path, monkeypatch):
+    """バックアップファイルが生成される。"""
+    import bot.db as _db
+    db.insert_battles([_make_battle()], "Alice")
+    dest = db.backup_db()
+    assert dest.exists()
+    assert dest.suffix == ".db"
+
+
+def test_backup_db_keeps_n_copies(db):
+    """keep 件より古いバックアップは削除される。"""
+    import bot.db as _db
+    backup_dir = _db.DB_PATH.parent / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    # 古いバックアップファイルを5件手動作成
+    for i in range(5):
+        (backup_dir / f"battles_20240101_00000{i}.db").touch()
+    # backup_db(keep=3) → 合計6件から古い4件を削除して3件以下になる
+    db.backup_db(keep=3)
+    backups = sorted(backup_dir.glob("battles_*.db"))
+    assert len(backups) <= 3
