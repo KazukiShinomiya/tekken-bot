@@ -209,6 +209,46 @@
       }
     },
     {
+      "id": 9,
+      "title": "使用キャラ別試合数 (7日間)",
+      "type": "barchart",
+      "gridPos": { "x": 0, "y": 16, "w": 12, "h": 6 },
+      "targets": [
+        {
+          "expr": "tekken_chara_usage_total{period=\"7d\"}",
+          "legendFormat": "{{my_chara}}"
+        }
+      ],
+      "options": {
+        "groupWidth": 0.7,
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "fieldConfig": {
+        "defaults": { "unit": "short" }
+      }
+    },
+    {
+      "id": 10,
+      "title": "使用キャラ別試合数 (30日間)",
+      "type": "barchart",
+      "gridPos": { "x": 12, "y": 16, "w": 12, "h": 6 },
+      "targets": [
+        {
+          "expr": "tekken_chara_usage_total{period=\"30d\"}",
+          "legendFormat": "{{my_chara}}"
+        }
+      ],
+      "options": {
+        "groupWidth": 0.7,
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "fieldConfig": {
+        "defaults": { "unit": "short" }
+      }
+    },
+    {
       "id": 8,
       "title": "勝率推移 (ranked・日次)",
       "type": "timeseries",

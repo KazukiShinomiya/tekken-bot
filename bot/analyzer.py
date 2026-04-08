@@ -3,9 +3,11 @@ Ollama（ローカルLLM）を使ってバトルデータを分析するモジ�
 """
 
 import logging
+from datetime import datetime, timedelta
 import requests
 
 from bot.config import OLLAMA_URL, OLLAMA_MODEL, OLLAMA_FALLBACK_MODEL, TIMEOUT_LLM
+from bot.models import Battle
 from bot.stats import (
     calculate_streak, aggregate_by_character, count_wins, count_losses,
     filter_rated_battles, aggregate_by_hour,
@@ -14,7 +16,7 @@ from bot.stats import (
 logger = logging.getLogger(__name__)
 
 
-def _calculate_stats(battles: list[dict]) -> dict:
+def _calculate_stats(battles: list[Battle]) -> dict:
     """バトルリストから集計値を計算して返す。"""
     wins   = count_wins(battles)
     losses = count_losses(battles)
@@ -27,7 +29,7 @@ def _calculate_stats(battles: list[dict]) -> dict:
     round_wr  = f"{total_my / total_r * 100:.0f}%" if total_r else "-"
 
     rated      = filter_rated_battles(ranked)
-    net_rating = sum(b["rating_change"] for b in rated) if rated else None
+    net_rating = sum(b.get("rating_change") or 0 for b in rated) if rated else None
 
     sorted_b              = sorted(battles, key=lambda x: x["battle_at"])
     max_win, max_lose     = calculate_streak(sorted_b)
@@ -74,8 +76,8 @@ def _build_summary_text(stats: dict, date_str: str) -> str:
 
 
 def _compute_coaching_insights(
-    battles: list[dict],
-    prev_battles: list[dict] | None,
+    battles: list[Battle],
+    prev_battles: list[Battle] | None,
 ) -> dict:
     """
     Python 側でパターン分析し、LLM が推論しやすい洞察を返す。
@@ -135,8 +137,8 @@ def _build_rematch_section(rematch_data: dict) -> str:
     return "【繰り返し対戦した相手の通算成績】\n" + "\n".join(lines)
 
 
-def _build_prompt(battles: list[dict], date_str: str, player_name: str = "",
-                  prev_battles: list[dict] | None = None, prev_date_str: str = "",
+def _build_prompt(battles: list[Battle], date_str: str, player_name: str = "",
+                  prev_battles: list[Battle] | None = None, prev_date_str: str = "",
                   rematch_data: dict | None = None) -> str:
     stats    = _calculate_stats(battles)
     insights = _compute_coaching_insights(battles, prev_battles)
@@ -233,8 +235,8 @@ def _call_ollama(model: str, prompt: str) -> str | None:
     return resp.json().get("response", "").strip() or None
 
 
-def analyze(battles: list[dict], date_str: str, player_name: str = "",
-            prev_battles: list[dict] | None = None,
+def analyze(battles: list[Battle], date_str: str, player_name: str = "",
+            prev_battles: list[Battle] | None = None,
             rematch_data: dict | None = None) -> str | None:
     """
     バトルデータをLLMで分析してコメントを返す。
@@ -246,7 +248,6 @@ def analyze(battles: list[dict], date_str: str, player_name: str = "",
     if not battles:
         return None
 
-    from datetime import datetime, timedelta
     try:
         prev_date_str = (datetime.strptime(date_str, "%Y/%m/%d") - timedelta(days=1)).strftime("%Y/%m/%d")
     except ValueError:

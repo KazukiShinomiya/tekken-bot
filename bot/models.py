@@ -6,18 +6,22 @@ TypedDict を使うことで IDE の補完と静的解析（mypy/pyright）が�
 from typing import TypedDict
 
 
-class Battle(TypedDict, total=False):
-    """1バトル分のデータ。全フィールドは Optional（ソースによって欠損あり）。"""
-    # 識別
-    battle_id:    str
-    battle_at:    int
+class _BattleRequired(TypedDict):
+    """常に存在が保証されるフィールド。fetcher がすべてのソースで必ず設定する。"""
+    battle_id: str
+    battle_at: int
+    won: bool
+
+
+class Battle(_BattleRequired, total=False):
+    """1バトル分のデータ。_BattleRequired 以外はソースによって欠損あり。"""
+    # 試合情報
     battle_type:  str | None   # "ranked" / "quick" / "player"
     game_version: str | None
     stage_id:     int | None
     source:       str | None   # "wank_bulk" / "ewgf" / "wank_html"
 
     # 自分側
-    won:           bool
     my_chara:      str | None
     my_chara_id:   int | None
     my_rounds:     int

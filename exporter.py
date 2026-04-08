@@ -10,6 +10,7 @@ import logging
 import time
 import argparse
 from datetime import datetime, timedelta
+from typing import Any, Iterator
 
 from prometheus_client import start_http_server, REGISTRY
 from prometheus_client.core import GaugeMetricFamily
@@ -36,13 +37,13 @@ def _period_start_ts(period: str) -> int:
 
 
 class TekkenCollector:
-    def collect(self):
+    def collect(self) -> Iterator[Any]:
         try:
             yield from self._collect()
         except Exception as e:
             logger.error(f"[exporter] 収集エラー: {e}")
 
-    def _collect(self):
+    def _collect(self) -> Iterator[Any]:
         # ── 1. 現在レーティング ──────────────────────────────────────────
         g = GaugeMetricFamily(
             "tekken_rating_current",
@@ -148,7 +149,7 @@ class TekkenCollector:
         yield chara_usage_g
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Tekken Bot Prometheus Exporter")
     parser.add_argument("--port", type=int, default=EXPORTER_PORT)
     args = parser.parse_args()

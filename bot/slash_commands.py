@@ -174,7 +174,7 @@ async def cmd_rival(interaction: discord.Interaction, name: str) -> None:
 
     # 累積レーティング変動
     rated = [b for b in battles if b.get("rating_change") is not None]
-    net_rating = sum(b["rating_change"] for b in rated) if rated else None
+    net_rating = sum(b.get("rating_change") or 0 for b in rated) if rated else None
 
     # 現在の対面ストリーク（末尾から）
     sorted_b = sorted(battles, key=lambda x: x["battle_at"])

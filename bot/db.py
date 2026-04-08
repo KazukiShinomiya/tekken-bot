@@ -2,12 +2,15 @@
 SQLite によるバトル履歴の永続化モジュール。
 """
 
+import json
 import sqlite3
 import logging
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from typing import cast
 
 from bot.config import DB_PATH
+from bot.models import Battle
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +101,14 @@ def init_db() -> None:
             )
         """)
 
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS scout_cache (
+                polaris_id TEXT PRIMARY KEY,
+                data       TEXT NOT NULL,
+                cached_at  INTEGER NOT NULL
+            )
+        """)
+
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_battle_at ON battles(battle_at)"
         )
@@ -147,7 +158,7 @@ _INSERT_SQL = """
 """
 
 
-def insert_battles(battles: list[dict], player_name: str = "default") -> int:
+def insert_battles(battles: list[Battle], player_name: str = "default") -> int:
     """バトルを一括挿入。既存レコードはキャラ名・未取得フィールドのみ更新する。処理件数を返す。"""
     if not battles:
         return 0
@@ -174,7 +185,7 @@ def get_battles_on_date(
     date_str: str,
     tz_offset_hours: int = 9,
     player_name: str | None = None,
-) -> list[dict]:
+) -> list[Battle]:
     """指定日（JST、'YYYY-MM-DD' 形式）のバトルを返す。"""
     tz = timezone(timedelta(hours=tz_offset_hours))
     day_start = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=tz)
@@ -187,14 +198,14 @@ def get_battles_on_date(
             (int(day_start.timestamp()), int(day_end.timestamp())),
             player_name,
         )
-    return [dict(r) for r in rows]
+    return cast(list[Battle], [dict(r) for r in rows])
 
 
-def get_battles_since(since_ts: float, player_name: str | None = None) -> list[dict]:
+def get_battles_since(since_ts: float, player_name: str | None = None) -> list[Battle]:
     """since_ts 以降の全バトルを返す（週次サマリー用）。"""
     with get_conn() as conn:
         rows = _query_battles(conn, "battle_at >= ?", (int(since_ts),), player_name)
-    return [dict(r) for r in rows]
+    return cast(list[Battle], [dict(r) for r in rows])
 
 
 # ---------------------------------------------------------------------------
@@ -266,7 +277,7 @@ def get_battles_vs_opponent(
     opp_polaris_id: str,
     since_ts: float = 0,
     player_name: str | None = None,
-) -> list[dict]:
+) -> list[Battle]:
     """特定の相手(polaris_id)との過去対戦履歴を返す。"""
     with get_conn() as conn:
         rows = _query_battles(
@@ -275,17 +286,17 @@ def get_battles_vs_opponent(
             (opp_polaris_id, int(since_ts)),
             player_name,
         )
-    return [dict(r) for r in rows]
+    return cast(list[Battle], [dict(r) for r in rows])
 
 
 def get_battles_by_opp_chara(
     opp_chara: str,
     player_name: str | None = None,
-) -> list[dict]:
+) -> list[Battle]:
     """特定キャラとの全期間対戦履歴を返す（大文字小文字無視）。"""
     with get_conn() as conn:
         rows = _query_battles(conn, "LOWER(opp_chara) = LOWER(?)", (opp_chara,), player_name)
-    return [dict(r) for r in rows]
+    return cast(list[Battle], [dict(r) for r in rows])
 
 
 def get_matchup_ranking(
@@ -322,12 +333,12 @@ def get_matchup_ranking(
 def search_battles_vs_opponent(
     opp_name: str,
     player_name: str | None = None,
-) -> list[dict]:
+) -> list[Battle]:
     """相手名（部分一致、大文字小文字無視）との対戦履歴を返す。"""
     pattern = f"%{opp_name}%"
     with get_conn() as conn:
         rows = _query_battles(conn, "LOWER(opp_name) LIKE LOWER(?)", (pattern,), player_name)
-    return [dict(r) for r in rows]
+    return cast(list[Battle], [dict(r) for r in rows])
 
 
 def save_chara_name(chara_id: int, name: str) -> None:
@@ -439,6 +450,38 @@ def get_weekly_my_chara_counts(
                 ORDER BY week, cnt DESC
             """, (since_ts,)).fetchall()
     return [dict(r) for r in rows]
+
+
+def get_scout_cache(polaris_id: str, ttl_seconds: int = 21600) -> dict | None:
+    """スカウトキャッシュを返す（TTL内ならキャッシュデータ、期限切れ・未登録なら None）。
+    テーブル未作成（テスト環境等）は OperationalError を握りつぶして None を返す。
+    """
+    try:
+        with get_conn() as conn:
+            row = conn.execute(
+                "SELECT data, cached_at FROM scout_cache WHERE polaris_id = ?",
+                (polaris_id,),
+            ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    if not row:
+        return None
+    age = int(datetime.now(timezone.utc).timestamp()) - row["cached_at"]
+    if age > ttl_seconds:
+        return None
+    return cast(dict, json.loads(row["data"]))
+
+
+def set_scout_cache(polaris_id: str, data: dict) -> None:
+    """スカウトキャッシュを保存・更新する。テーブル未作成時は静かにスキップ。"""
+    try:
+        with get_conn() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO scout_cache (polaris_id, data, cached_at) VALUES (?, ?, ?)",
+                (polaris_id, json.dumps(data), int(datetime.now(timezone.utc).timestamp())),
+            )
+    except sqlite3.OperationalError as e:
+        logger.warning(f"[db] スカウトキャッシュ保存失敗（テーブル未作成?）: {e}")
 
 
 def get_unknown_chara_battles(limit: int = 10) -> list[dict]:

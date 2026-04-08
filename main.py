@@ -10,7 +10,6 @@ import asyncio
 import logging
 import sys
 import threading
-from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import datetime, timedelta
 from logging.handlers import RotatingFileHandler
@@ -28,6 +27,7 @@ import bot.db as db
 import bot.fetcher as fetcher
 import bot.discord_post as discord_post
 import bot.analyzer as analyzer
+from bot.models import Battle
 from bot.stats import count_wins, count_losses, filter_rated_battles, detect_losing_streak, detect_winning_streak
 
 logger = logging.getLogger(__name__)
@@ -80,14 +80,21 @@ def get_players() -> list[tuple[str, str]]:
     return []
 
 
-def _collect_rematch_data(
-    today_battles: list[dict],
+def _compute_opponent_data(
+    today_battles: list[Battle],
     player_name: str,
-) -> dict:
-    """今日2戦以上した相手の通算成績を DB から収集する。"""
-    pid_count: Counter = Counter(
-        b.get("opp_polaris_id") for b in today_battles if b.get("opp_polaris_id")
+) -> tuple[dict, list[str]]:
+    """
+    今日の対戦相手データを一元計算する。
+    Counter を1回だけ作成し、rematch_data と pids_to_scout を同時に返す。
+    """
+    from collections import Counter
+    pid_count: Counter[str] = Counter(
+        pid
+        for b in today_battles
+        if (pid := b.get("opp_polaris_id")) is not None
     )
+
     rematch_data: dict = {}
     for pid, cnt in pid_count.items():
         if cnt < 2:
@@ -100,31 +107,116 @@ def _collect_rematch_data(
                 "chara":   sample.get("opp_chara") or "???",
                 "history": history,
             }
-    return rematch_data
+
+    pids_to_scout = [
+        pid for pid, cnt in pid_count.most_common(3)
+        if cnt >= 2
+    ]
+    return rematch_data, pids_to_scout
+
+
+def _fetch_scout_data(
+    pids_to_scout: list[str],
+    player_name: str,
+) -> dict:
+    """スカウト対象の対戦相手サマリーを並列取得する。"""
+    if not pids_to_scout:
+        return {}
+
+    scout_data: dict = {}
+    with ThreadPoolExecutor(max_workers=len(pids_to_scout)) as pool:
+        futures = {pid: pool.submit(fetcher.fetch_opponent_summary, pid) for pid in pids_to_scout}
+        for pid, future in futures.items():
+            try:
+                summary = future.result(timeout=TIMEOUT_API)
+                if summary:
+                    scout_data[pid] = summary
+            except Exception as e:
+                logger.warning(f"[{player_name}] スカウト取得失敗 ({pid}): {e}")
+
+    if scout_data:
+        logger.info(f"[{player_name}] スカウト取得: {len(scout_data)} 人")
+    return scout_data
+
+
+def _fire_alerts(
+    sorted_today: list[Battle],
+    today_battles: list[Battle],
+    prev_battles: list[Battle],
+    player_name: str,
+) -> None:
+    """連敗・連勝・目標レーティング通知を送信する。"""
+    if LOSS_ALERT_THRESHOLD > 0:
+        streak = detect_losing_streak(sorted_today)
+        if streak >= LOSS_ALERT_THRESHOLD:
+            discord_post.notify(
+                f"⚠️ [{player_name}] 現在 **{streak} 連敗中** です。少し休憩しましょう！"
+            )
+            logger.info(f"[{player_name}] 連敗アラート送信: {streak} 連敗")
+
+    if WIN_ALERT_THRESHOLD > 0:
+        win_streak = detect_winning_streak(sorted_today)
+        if win_streak >= WIN_ALERT_THRESHOLD:
+            discord_post.notify(
+                f"🔥 [{player_name}] 現在 **{win_streak} 連勝中**！この勢いで行け！"
+            )
+            logger.info(f"[{player_name}] 連勝アラート送信: {win_streak} 連勝")
+
+    if RATING_GOAL > 0:
+        rated_today = [
+            b for b in today_battles
+            if b.get("rating_before") is not None and b.get("rating_change") is not None
+        ]
+        if rated_today:
+            latest_rated = max(rated_today, key=lambda x: x["battle_at"])
+            current_rating = (latest_rated.get("rating_before") or 0) + (latest_rated.get("rating_change") or 0)
+            if current_rating >= RATING_GOAL:
+                prev_rated = [
+                    b for b in prev_battles
+                    if b.get("rating_before") is not None and b.get("rating_change") is not None
+                ]
+                prev_rating = 0
+                if prev_rated:
+                    prev_latest = max(prev_rated, key=lambda x: x["battle_at"])
+                    prev_rating = (prev_latest.get("rating_before") or 0) + (prev_latest.get("rating_change") or 0)
+                if prev_rating < RATING_GOAL:
+                    discord_post.notify(
+                        f"🎉 [{player_name}] 目標レーティング **{RATING_GOAL:,}** 達成！現在: **{current_rating:,}**"
+                    )
+                    logger.info(f"[{player_name}] 目標レーティング達成通知: {current_rating}")
 
 
 def _analyze_with_timeout(
-    battles: list[dict],
+    battles: list[Battle],
     date_str: str,
     player_name: str = "",
-    prev_battles: list[dict] | None = None,
+    prev_battles: list[Battle] | None = None,
     rematch_data: dict | None = None,
 ) -> str | None:
-    """LLM 分析を別スレッドで実行し、TIMEOUT_LLM 秒以内に結果を返す。タイムアウト時は None。"""
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(
-            analyzer.analyze, battles, date_str,
-            player_name, prev_battles, rematch_data,
-        )
-        try:
-            return future.result(timeout=TIMEOUT_LLM)
-        except FutureTimeoutError:
-            logger.warning(f"[{player_name}] LLM分析タイムアウト（{TIMEOUT_LLM}s）、スキップ")
-            discord_post.notify_error(f"[{player_name}] LLM分析タイムアウト（投稿は続行）")
-            return None
-        except Exception as e:
-            logger.warning(f"[{player_name}] LLM分析失敗: {e}")
-            return None
+    """
+    LLM 分析を別スレッドで実行し、TIMEOUT_LLM 秒以内に結果を返す。
+    タイムアウト時は None を返し、スレッドはバックグラウンドで終了させる。
+    （with ブロックの shutdown(wait=True) ではなく明示的に wait=False で解放する）
+    """
+    pool = ThreadPoolExecutor(max_workers=1)
+    future = pool.submit(
+        analyzer.analyze, battles, date_str,
+        player_name, prev_battles, rematch_data,
+    )
+    try:
+        result = future.result(timeout=TIMEOUT_LLM)
+        pool.shutdown(wait=False)
+        return result
+    except FutureTimeoutError:
+        future.cancel()
+        pool.shutdown(wait=False, cancel_futures=True)
+        logger.warning(f"[{player_name}] LLM分析タイムアウト（{TIMEOUT_LLM}s）、スキップ")
+        discord_post.notify_error(f"[{player_name}] LLM分析タイムアウト（投稿は続行）")
+        return None
+    except Exception as e:
+        pool.shutdown(wait=False)
+        logger.warning(f"[{player_name}] LLM分析失敗: {e}")
+        return None
 
 
 def _run_for_player(player_name: str, polaris_id: str, today_str: str, date_str: str) -> None:
@@ -168,64 +260,15 @@ def _run_for_player(player_name: str, polaris_id: str, today_str: str, date_str:
     prev_battles  = db.get_battles_on_date(prev_date_str, player_name=player_name)
     logger.info(f"[{player_name}] 前日分: {len(prev_battles)} 件")
 
-    rematch_data = _collect_rematch_data(today_battles, player_name)
+    # 対戦相手データをまとめて計算（Counter は1回のみ）
+    rematch_data, pids_to_scout = _compute_opponent_data(today_battles, player_name)
     logger.info(f"[{player_name}] リピート対戦相手: {len(rematch_data)} 人")
 
-    # リピート相手（上位3人）のスカウト情報を並列取得
-    pid_count = Counter(
-        b.get("opp_polaris_id") for b in today_battles if b.get("opp_polaris_id")
-    )
-    pids_to_scout = [pid for pid, cnt in pid_count.most_common(3) if cnt >= 2]
-    scout_data: dict = {}
-    if pids_to_scout:
-        with ThreadPoolExecutor(max_workers=len(pids_to_scout)) as pool:
-            futures = {pid: pool.submit(fetcher.fetch_opponent_summary, pid) for pid in pids_to_scout}
-            for pid, future in futures.items():
-                try:
-                    summary = future.result(timeout=TIMEOUT_API)
-                    if summary:
-                        scout_data[pid] = summary
-                except Exception as e:
-                    logger.warning(f"[{player_name}] スカウト取得失敗 ({pid}): {e}")
-    if scout_data:
-        logger.info(f"[{player_name}] スカウト取得: {len(scout_data)} 人")
+    scout_data = _fetch_scout_data(pids_to_scout, player_name)
 
-    # 連敗・連勝アラート（末尾から連続結果を検出）
+    # 連敗・連勝・目標レーティングアラート
     sorted_today = sorted(today_battles, key=lambda x: x["battle_at"])
-    if LOSS_ALERT_THRESHOLD > 0:
-        streak = detect_losing_streak(sorted_today)
-        if streak >= LOSS_ALERT_THRESHOLD:
-            discord_post.notify(
-                f"⚠️ [{player_name}] 現在 **{streak} 連敗中** です。少し休憩しましょう！"
-            )
-            logger.info(f"[{player_name}] 連敗アラート送信: {streak} 連敗")
-    if WIN_ALERT_THRESHOLD > 0:
-        win_streak = detect_winning_streak(sorted_today)
-        if win_streak >= WIN_ALERT_THRESHOLD:
-            discord_post.notify(
-                f"🔥 [{player_name}] 現在 **{win_streak} 連勝中**！この勢いで行け！"
-            )
-            logger.info(f"[{player_name}] 連勝アラート送信: {win_streak} 連勝")
-
-    # 目標レーティング達成通知（当日初めて閾値を超えた場合のみ）
-    if RATING_GOAL > 0:
-        rated_today = [b for b in today_battles if b.get("rating_before") is not None and b.get("rating_change") is not None]
-        if rated_today:
-            latest_rated = max(rated_today, key=lambda x: x["battle_at"])
-            current_rating = latest_rated["rating_before"] + latest_rated["rating_change"]
-            if current_rating >= RATING_GOAL:
-                # 前日最終レーティングがすでに目標以上なら重複通知しない
-                prev_rated = [b for b in prev_battles if b.get("rating_before") is not None and b.get("rating_change") is not None]
-                if prev_rated:
-                    prev_latest = max(prev_rated, key=lambda x: x["battle_at"])
-                    prev_rating = prev_latest["rating_before"] + prev_latest["rating_change"]
-                else:
-                    prev_rating = 0
-                if prev_rating < RATING_GOAL:
-                    discord_post.notify(
-                        f"🎉 [{player_name}] 目標レーティング **{RATING_GOAL:,}** 達成！現在: **{current_rating:,}**"
-                    )
-                    logger.info(f"[{player_name}] 目標レーティング達成通知: {current_rating}")
+    _fire_alerts(sorted_today, today_battles, prev_battles, player_name)
 
     # Discord に即時投稿（LLM コメントなし）
     post_result = None
@@ -348,7 +391,7 @@ def _run_weekly_for_player(
         "name":       player_name,
         "wins":       count_wins(battles),
         "losses":     count_losses(battles),
-        "net_rating": sum(b["rating_change"] for b in rated) if rated else 0,
+        "net_rating": sum(b.get("rating_change") or 0 for b in rated) if rated else 0,
     }
 
 

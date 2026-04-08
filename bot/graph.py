@@ -8,12 +8,13 @@ import logging
 from datetime import datetime
 
 from bot.config import JST
+from bot.models import Battle
 from bot.stats import filter_rated_battles
 
 logger = logging.getLogger(__name__)
 
 
-def generate_rating_chart(battles: list[dict], player_name: str = "Player") -> io.BytesIO | None:
+def generate_rating_chart(battles: list[Battle], player_name: str = "Player") -> io.BytesIO | None:
     """
     過去バトルのレーティング推移グラフを PNG として BytesIO で返す。
     rating_before / rating_change が揃っているバトルのみ使用。
@@ -35,7 +36,7 @@ def generate_rating_chart(battles: list[dict], player_name: str = "Player") -> i
 
     rated_sorted = sorted(rated, key=lambda x: x["battle_at"])
     dates = [datetime.fromtimestamp(b["battle_at"], JST) for b in rated_sorted]
-    ratings = [b["rating_before"] + b["rating_change"] for b in rated_sorted]
+    ratings = [(b.get("rating_before") or 0) + (b.get("rating_change") or 0) for b in rated_sorted]
 
     fig, ax = plt.subplots(figsize=(10, 4))
     ax.plot(dates, ratings, marker="o", linewidth=2, markersize=4, color="#5865F2")
@@ -95,7 +96,7 @@ def generate_chara_usage_chart(
 
     x = np.arange(len(weeks))
     width = 0.65
-    colors = plt.cm.tab10.colors  # type: ignore[attr-defined]
+    colors = plt.cm.tab10.colors
 
     fig, ax = plt.subplots(figsize=(10, 4))
     bottoms = np.zeros(len(weeks))

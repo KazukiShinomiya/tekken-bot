@@ -11,6 +11,7 @@ import logging
 import re
 import sqlite3
 import threading
+from typing import Any, cast
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -21,6 +22,7 @@ from bot.config import (
     RETRY_TOTAL, RETRY_BACKOFF_FACTOR, RETRY_STATUS_CODES,
     WANK_FETCH_LIMIT, UNKNOWN_CHARACTER,
 )
+from bot.models import Battle
 from bot.stats import get_most_common
 
 logger = logging.getLogger(__name__)
@@ -162,16 +164,21 @@ EWGF_BATTLE_TYPES = {
 }
 
 
-def _fetch_from_ewgf(polaris_id: str) -> list[dict]:
+def _fetch_from_ewgf(polaris_id: str) -> list[Battle]:
     url = f"{EWGF_API}/battles/{polaris_id}"
     resp = _session.get(url, headers={"Authorization": f"Bearer {API_KEY}"}, timeout=TIMEOUT_API)
     resp.raise_for_status()
+    # レート制限の残量をログ（ewgf.gg は 100リクエスト/日）
+    remaining = resp.headers.get("X-RateLimit-Remaining")
+    reset_at   = resp.headers.get("X-RateLimit-Reset")
+    if remaining is not None:
+        logger.info(f"[fetcher] ewgf.gg レート制限残: {remaining} / リセット: {reset_at}")
     data = resp.json()
     raw_list = data.get("data", data.get("battles", []))
     return [_normalize_ewgf(raw, polaris_id) for raw in raw_list]
 
 
-def _normalize_ewgf(raw: dict, polaris_id: str) -> dict:
+def _normalize_ewgf(raw: dict, polaris_id: str) -> Battle:
     from datetime import datetime
 
     me  = "p1" if raw.get("p1_tekken_id") == polaris_id else "p2"
@@ -227,7 +234,7 @@ def _normalize_ewgf(raw: dict, polaris_id: str) -> dict:
 # wank HTML スクレイパー
 # ---------------------------------------------------------------------------
 
-def _fetch_from_wank_html(since_ts: float, polaris_id: str, limit: int = WANK_FETCH_LIMIT) -> list[dict]:
+def _fetch_from_wank_html(since_ts: float, polaris_id: str, limit: int = WANK_FETCH_LIMIT) -> list[Battle]:
     resp = _session.get(f"{WANK_PLAYER}/{polaris_id}", timeout=TIMEOUT_API)
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "html.parser")
@@ -242,7 +249,7 @@ def _fetch_from_wank_html(since_ts: float, polaris_id: str, limit: int = WANK_FE
     return results
 
 
-def _parse_wank_html_row(row) -> dict | None:
+def _parse_wank_html_row(row: Any) -> Battle | None:
     td_at     = row.select_one("td.battle-at")
     td_left   = row.select_one("td.left")
     td_result = row.select_one("td.result")
@@ -336,7 +343,7 @@ def _parse_wank_html_row(row) -> dict | None:
 # wank バルクAPI（ピンポイントenrichment用）
 # ---------------------------------------------------------------------------
 
-def _fetch_bulk_batch(before: int) -> list[dict]:
+def _fetch_bulk_batch(before: int) -> list[dict[str, Any]]:
     resp = _session.get(
         WANK_BULK,
         params={"before": before},
@@ -344,17 +351,20 @@ def _fetch_bulk_batch(before: int) -> list[dict]:
         timeout=TIMEOUT_API,
     )
     resp.raise_for_status()
-    return resp.json()
+    return cast(list[dict[str, Any]], resp.json())
 
 
-def _merge_bulk(battle: dict, bulk: dict, polaris_id: str) -> dict:
+def _merge_bulk(battle: Battle, bulk: dict[str, Any], polaris_id: str) -> Battle:
     """バルクAPIレコードをHTMLバトルにマージして返す。"""
     me  = "p1" if bulk.get("p1_polaris_id") == polaris_id else "p2"
     opp = "p2" if me == "p1" else "p1"
 
     bt_raw = bulk.get("battle_type")
-    battle["battle_id"]         = str(bulk.get("battle_id", battle["battle_id"]))
-    battle["battle_type"]       = BATTLE_TYPES.get(bt_raw, str(bt_raw) if bt_raw else None)
+    battle["battle_id"] = str(bulk.get("battle_id", battle["battle_id"]))
+    if isinstance(bt_raw, int):
+        battle["battle_type"] = BATTLE_TYPES.get(bt_raw, str(bt_raw))
+    else:
+        battle["battle_type"] = str(bt_raw) if bt_raw else None
     battle["game_version"]      = bulk.get("game_version")
     battle["stage_id"]          = bulk.get("stage_id")
     battle["source"]            = "wank_bulk"
@@ -389,7 +399,7 @@ def _merge_bulk(battle: dict, bulk: dict, polaris_id: str) -> dict:
     return battle
 
 
-def _build_bulk_index(sorted_battles: list[dict], polaris_id: str) -> tuple[dict[int, dict], int]:
+def _build_bulk_index(sorted_battles: list[Battle], polaris_id: str) -> tuple[dict[int, dict[str, Any]], int]:
     """
     新しい順にソートされたバトルリストを最小 API リクエスト数でカバーし、
     タイムスタンプ → バルクレコードの辞書と総リクエスト数を返す。
@@ -424,7 +434,7 @@ def _build_bulk_index(sorted_battles: list[dict], polaris_id: str) -> tuple[dict
     return bulk_by_ts, requests_made
 
 
-def _enrich_from_bulk(battles: list[dict], polaris_id: str) -> list[dict]:
+def _enrich_from_bulk(battles: list[Battle], polaris_id: str) -> list[Battle]:
     """
     HTMLバトルリストをバルクAPIでenrichする。
 
@@ -451,8 +461,16 @@ def _enrich_from_bulk(battles: list[dict], polaris_id: str) -> list[dict]:
 def fetch_opponent_summary(polaris_id: str, limit: int = 20) -> dict | None:
     """
     対戦相手の直近バトル履歴（wank HTML）を取得してサマリーを返す。
+    6時間以内のキャッシュがあればそちらを優先する。
     失敗時は None を返す（投稿は続行）。
     """
+    from bot.db import get_scout_cache, set_scout_cache
+
+    cached = get_scout_cache(polaris_id)
+    if cached is not None:
+        logger.info(f"[fetcher] スカウトキャッシュヒット: {polaris_id}")
+        return cached
+
     try:
         battles = _fetch_from_wank_html(since_ts=0, polaris_id=polaris_id, limit=limit)
         if not battles:
@@ -469,25 +487,29 @@ def fetch_opponent_summary(polaris_id: str, limit: int = 20) -> dict | None:
         recent_wins  = sum(1 for b in recent if b["won"])
         recent_total = len(recent)
 
-        return {
-            "total":            total,
-            "win_rate":         wins / total * 100,
-            "main_chara":       main_chara,
-            "recent_wins":      recent_wins,
-            "recent_total":     recent_total,
-            "recent_win_rate":  recent_wins / recent_total * 100 if recent_total else 0,
+        result = {
+            "total":           total,
+            "win_rate":        wins / total * 100,
+            "main_chara":      main_chara,
+            "recent_wins":     recent_wins,
+            "recent_total":    recent_total,
+            "recent_win_rate": recent_wins / recent_total * 100 if recent_total else 0,
         }
+        set_scout_cache(polaris_id, result)
+        return result
     except requests.RequestException as e:
         logger.warning(f"[fetcher] 対戦相手スカウト失敗 ({polaris_id}): {e}")
         return None
 
 
-def fetch_quick_battles_from_ewgf(since_ts: float, polaris_id: str | None = None) -> list[dict]:
+def fetch_quick_battles_from_ewgf(since_ts: float, polaris_id: str | None = None) -> list[Battle]:
     """
     ewgf.gg からクイックマッチのみを取得する（週次サマリー補完用）。
     24時間遅延があるため日次投稿には使わず、DBへの保存のみを目的とする。
     """
     pid = polaris_id or POLARIS_ID
+    if not pid:
+        return []
     try:
         battles = _fetch_from_ewgf(pid)
         result = [b for b in battles if b["battle_at"] > since_ts and b.get("battle_type") == "quick"]
@@ -498,16 +520,18 @@ def fetch_quick_battles_from_ewgf(since_ts: float, polaris_id: str | None = None
         return []
 
 
-def fetch_battles_since(since_ts: float, polaris_id: str | None = None) -> list[dict]:
+def fetch_battles_since(since_ts: float, polaris_id: str | None = None) -> list[Battle]:
     """
     since_ts より新しいバトルを返す。
     wank HTML + バルクenrichment → ewgf.gg（wank 失敗時）→ wank HTML のみ の順で試みる。
     """
     pid = polaris_id or POLARIS_ID
+    if not pid:
+        return []
 
     # 1. wank HTML + バルクAPI enrichment（メイン・リアルタイム）
     wank_ok = False
-    html_battles: list[dict] = []
+    html_battles: list[Battle] = []
     try:
         html_battles = _fetch_from_wank_html(since_ts, pid)
         wank_ok = True

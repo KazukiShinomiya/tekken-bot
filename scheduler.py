@@ -20,7 +20,7 @@ start_bot_thread()
 import logging
 logger = logging.getLogger(__name__)
 
-def job():
+def job() -> None:
     logger.info(f"[scheduler] 定時実行開始 {datetime.now(JST).isoformat()}")
     try:
         bot.run_main_sync()
@@ -31,7 +31,7 @@ def job():
         logger.error(f"[scheduler] main() で予期しないエラー: {e}")
 
 
-def weekly_job():
+def weekly_job() -> None:
     logger.info(f"[scheduler] 週次サマリー実行開始 {datetime.now(JST).isoformat()}")
     try:
         bot.run_weekly_sync()

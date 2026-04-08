@@ -3,26 +3,31 @@
 analyzer.py と discord_post.py で共有する純粋関数。
 """
 
+import logging
 from datetime import datetime
+from typing import cast
 from bot.config import JST, UNKNOWN_CHARACTER, RATING_STAGNATION_THRESHOLD
+from bot.models import Battle
+
+logger = logging.getLogger(__name__)
 
 
-def count_wins(battles: list[dict]) -> int:
+def count_wins(battles: list[Battle]) -> int:
     """バトルリストから勝利数を返す。"""
     return sum(1 for b in battles if b["won"])
 
 
-def count_losses(battles: list[dict]) -> int:
+def count_losses(battles: list[Battle]) -> int:
     """バトルリストから敗北数を返す。"""
     return len(battles) - count_wins(battles)
 
 
-def filter_rated_battles(battles: list[dict]) -> list[dict]:
+def filter_rated_battles(battles: list[Battle]) -> list[Battle]:
     """rating_change が存在するバトルのみを返す。"""
     return [b for b in battles if b.get("rating_change") is not None]
 
 
-def calculate_streak(battles: list[dict]) -> tuple[int, int]:
+def calculate_streak(battles: list[Battle]) -> tuple[int, int]:
     """時系列順バトルリストから (最長連勝, 最長連敗) を返す。"""
     max_win = max_lose = cur_win = cur_lose = 0
     for b in battles:
@@ -37,7 +42,7 @@ def calculate_streak(battles: list[dict]) -> tuple[int, int]:
     return max_win, max_lose
 
 
-def aggregate_by_character(battles: list[dict]) -> dict[str, list[bool]]:
+def aggregate_by_character(battles: list[Battle]) -> dict[str, list[bool]]:
     """対戦相手キャラ別に勝敗をグループ化して返す。"""
     result: dict[str, list[bool]] = {}
     for b in battles:
@@ -46,14 +51,16 @@ def aggregate_by_character(battles: list[dict]) -> dict[str, list[bool]]:
     return result
 
 
-def get_most_common(battles: list[dict], key: str) -> tuple[str, int]:
+def get_most_common(battles: list[Battle], key: str) -> tuple[str, int]:
     """
     バトルリストから指定キーの最多値と出現回数を返す。
     空の場合は (UNKNOWN_CHARACTER, 0) を返す。
+    key は Battle の任意フィールド名を文字列で指定する。
     """
     counts: dict[str, int] = {}
     for b in battles:
-        c = b.get(key) or UNKNOWN_CHARACTER
+        raw: str | None = cast(dict[str, str | None], b).get(key)
+        c = raw or UNKNOWN_CHARACTER
         counts[c] = counts.get(c, 0) + 1
     if not counts:
         return UNKNOWN_CHARACTER, 0
@@ -61,7 +68,7 @@ def get_most_common(battles: list[dict], key: str) -> tuple[str, int]:
     return top, counts[top]
 
 
-def detect_losing_streak(sorted_battles: list[dict]) -> int:
+def detect_losing_streak(sorted_battles: list[Battle]) -> int:
     """時系列順バトルリストの末尾から連続敗北数を返す。"""
     streak = 0
     for b in reversed(sorted_battles):
@@ -72,7 +79,7 @@ def detect_losing_streak(sorted_battles: list[dict]) -> int:
     return streak
 
 
-def detect_winning_streak(sorted_battles: list[dict]) -> int:
+def detect_winning_streak(sorted_battles: list[Battle]) -> int:
     """時系列順バトルリストの末尾から連続勝利数を返す。"""
     streak = 0
     for b in reversed(sorted_battles):
@@ -83,7 +90,7 @@ def detect_winning_streak(sorted_battles: list[dict]) -> int:
     return streak
 
 
-def aggregate_by_hour(battles: list[dict]) -> dict[int, list[bool]]:
+def aggregate_by_hour(battles: list[Battle]) -> dict[int, list[bool]]:
     """バトル開始時刻(JST時)別に勝敗をグループ化して返す。"""
     result: dict[int, list[bool]] = {}
     for b in battles:
@@ -95,7 +102,7 @@ def aggregate_by_hour(battles: list[dict]) -> dict[int, list[bool]]:
     return result
 
 
-def predict_rating_trend(battles: list[dict]) -> dict:
+def predict_rating_trend(battles: list[Battle]) -> dict[str, float]:
     """
     レーティングの推移を線形回帰で分析する。
     numpy が必要（不在の場合は空 dict を返す）。
@@ -115,7 +122,7 @@ def predict_rating_trend(battles: list[dict]) -> dict:
         cumulative = 0.0
         xs, ys = [], []
         for b in sorted_rated:
-            cumulative += b["rating_change"]
+            cumulative += b.get("rating_change") or 0
             xs.append(b["battle_at"])
             ys.append(cumulative)
 
@@ -124,19 +131,23 @@ def predict_rating_trend(battles: list[dict]) -> dict:
 
         stagnation_days = _count_stagnation_days(sorted_rated)
 
-        return {"slope_per_day": slope_per_day, "stagnation_days": stagnation_days}
-    except Exception:
+        return {"slope_per_day": slope_per_day, "stagnation_days": float(stagnation_days)}
+    except ImportError:
+        logger.warning("[stats] numpy が見つからないため predict_rating_trend をスキップ（pip install numpy で解決）")
+        return {}
+    except Exception as e:
+        logger.warning(f"[stats] レーティングトレンド計算失敗: {e}")
         return {}
 
 
-def _count_stagnation_days(sorted_rated: list[dict]) -> int:
+def _count_stagnation_days(sorted_rated: list[Battle]) -> int:
     """末尾から連続して1日の変動が ±RATING_STAGNATION_THRESHOLD 以内の日数を返す。"""
     from collections import defaultdict
 
     daily: dict[str, int] = defaultdict(int)
     for b in sorted_rated:
         day = datetime.fromtimestamp(b["battle_at"], JST).strftime("%Y-%m-%d")
-        daily[day] += b["rating_change"]
+        daily[day] += b.get("rating_change") or 0
 
     stagnation = 0
     for delta in reversed(list(daily.values())):
@@ -147,7 +158,7 @@ def _count_stagnation_days(sorted_rated: list[dict]) -> int:
     return stagnation
 
 
-def detect_momentum(sorted_battles: list[dict]) -> str | None:
+def detect_momentum(sorted_battles: list[Battle]) -> str | None:
     """
     時系列順バトルリストの前半・後半を比較し、調子の波を文字列で返す。
     バトル数が4未満、または変化が小さい場合は None を返す。

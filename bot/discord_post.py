@@ -54,19 +54,19 @@ def _parse_webhook_id_token(url: str) -> tuple[str, str] | None:
 # スタッツ計算
 # ---------------------------------------------------------------------------
 
-def _win_rate(battles: list[dict]) -> str:
+def _win_rate(battles: list[Battle]) -> str:
     if not battles:
         return "-"
     pct = count_wins(battles) / len(battles) * 100
     return f"{pct:.0f}%"
 
 
-def _streak(sorted_battles: list[dict]) -> tuple[int, int]:
+def _streak(sorted_battles: list[Battle]) -> tuple[int, int]:
     """時系列順バトルリストから (最長連勝, 最長連敗) を返す。"""
     return calculate_streak(sorted_battles)
 
 
-def _nemesis(battles: list[dict]) -> str | None:
+def _nemesis(battles: list[Battle]) -> str | None:
     """2戦以上対戦したキャラの中で、最も勝率が低いキャラを返す。"""
     stats = aggregate_by_character(battles)
 
@@ -86,13 +86,13 @@ def _nemesis(battles: list[dict]) -> str | None:
     return f"{worst_chara} ({wins}勝{losses}敗, {wr:.0f}%)"
 
 
-def _rating_summary(battles: list[dict]) -> str:
+def _rating_summary(battles: list[Battle]) -> str:
     """当日の合計レーティング変動と最終レーティングを返す。"""
     rated = filter_rated_battles(battles)
     if not rated:
         return ""
 
-    net_change = sum(b["rating_change"] for b in rated)
+    net_change = sum(b.get("rating_change") or 0 for b in rated)
     latest     = max(rated, key=lambda x: x["battle_at"])
     final_rating = (latest.get("rating_before") or 0) + (latest.get("rating_change") or 0)
 
@@ -100,7 +100,7 @@ def _rating_summary(battles: list[dict]) -> str:
     return f"{final_rating} ({sign}{net_change})"
 
 
-def _matchup_matrix(battles: list[dict]) -> str | None:
+def _matchup_matrix(battles: list[Battle]) -> str | None:
     """
     対戦キャラを勝率降順でリスト表示する。
     勝率 > 50% → ✅、= 50% → ➖、< 50% → ❌
@@ -130,7 +130,7 @@ def _matchup_matrix(battles: list[dict]) -> str | None:
     return "\n".join(lines)
 
 
-def _hourly_section(battles: list[dict]) -> str | None:
+def _hourly_section(battles: list[Battle]) -> str | None:
     """JST 時間帯別勝率セクションを返す。2試合以上の時間帯のみ表示。"""
     hourly = aggregate_by_hour(battles)
     rows = [(h, results) for h, results in hourly.items() if len(results) >= 2]
@@ -147,7 +147,7 @@ def _hourly_section(battles: list[dict]) -> str | None:
     return "\n".join(lines)
 
 
-def _scout_section(battles: list[dict], scout_data: dict[str, dict]) -> str | None:
+def _scout_section(battles: list[Battle], scout_data: dict[str, dict]) -> str | None:
     """
     リピート対戦相手のスカウトレポートを返す。
     scout_data: {polaris_id: {win_rate, main_chara, recent_wins, recent_total, recent_win_rate}}
@@ -174,7 +174,7 @@ def _scout_section(battles: list[dict], scout_data: dict[str, dict]) -> str | No
     return "\n".join(lines)
 
 
-def _rematch_section(battles: list[dict]) -> str | None:
+def _rematch_section(battles: list[Battle]) -> str | None:
     """同一対戦相手と2戦以上した場合に今日の対面成績をまとめて返す。"""
     pid_count: Counter = Counter(
         b.get("opp_polaris_id") for b in battles if b.get("opp_polaris_id")
@@ -200,7 +200,7 @@ def _rematch_section(battles: list[dict]) -> str | None:
 # ---------------------------------------------------------------------------
 
 def build_message(
-    battles: list[dict],
+    battles: list[Battle],
     date_str: str,
     player_name: str | None = None,
     scout_data: dict[str, dict] | None = None,
@@ -230,7 +230,7 @@ def build_message(
     lines.append("━━━━━━━━━━━━━━━")
 
     # --- タイプ別スタッツ ---
-    def _type_line(icon: str, label: str, subset: list[dict]) -> str | None:
+    def _type_line(icon: str, label: str, subset: list[Battle]) -> str | None:
         if not subset:
             return None
         w = count_wins(subset)
@@ -283,7 +283,7 @@ def build_message(
     # 鉄拳力（ある場合）
     latest = max(battles, key=lambda x: x["battle_at"])
     if latest.get("my_power"):
-        rank_name = RANK_NAMES.get(latest.get("my_rank"), "")
+        rank_name = RANK_NAMES.get(latest.get("my_rank") or -1, "")
         power_str = f"{latest['my_power']:,}"
         if rank_name:
             lines.append(f"💥 {rank_name} ({power_str})")
@@ -319,7 +319,7 @@ def build_message(
 
 
 def build_weekly_message(
-    battles: list[dict],
+    battles: list[Battle],
     week_start_str: str,
     player_name: str | None = None,
 ) -> str | None:
@@ -333,7 +333,7 @@ def build_weekly_message(
 
     # レーティング変動
     rated = filter_rated_battles(ranked)
-    net_rating = sum(b["rating_change"] for b in rated) if rated else None
+    net_rating = sum(b.get("rating_change") or 0 for b in rated) if rated else None
 
     top_chara, top_chara_count = get_most_common(battles, "my_chara")
     top_opp,   top_opp_count   = get_most_common(battles, "opp_chara")
@@ -384,7 +384,7 @@ def build_weekly_message(
 # Discord Embed ビルダー
 # ---------------------------------------------------------------------------
 
-def _embed_color(battles: list[dict]) -> int:
+def _embed_color(battles: list[Battle]) -> int:
     """勝率に基づいて Embed カラーコード（int）を返す。"""
     if not battles:
         return 0x5865F2  # Blurple
@@ -397,7 +397,7 @@ def _embed_color(battles: list[dict]) -> int:
 
 
 def build_embed(
-    battles: list[dict],
+    battles: list[Battle],
     date_str: str,
     player_name: str | None = None,
     scout_data: dict[str, dict] | None = None,
@@ -426,7 +426,7 @@ def build_embed(
 
     fields: list[dict] = []
 
-    def _add_type_field(icon: str, label: str, subset: list[dict]) -> None:
+    def _add_type_field(icon: str, label: str, subset: list[Battle]) -> None:
         if not subset:
             return
         w   = count_wins(subset)
@@ -471,7 +471,7 @@ def build_embed(
     # 鉄拳力
     latest = max(battles, key=lambda x: x["battle_at"])
     if latest.get("my_power"):
-        rank_name = RANK_NAMES.get(latest.get("my_rank"), "")
+        rank_name = RANK_NAMES.get(latest.get("my_rank") or -1, "")
         power_str = f"{latest['my_power']:,}"
         field_name = f"💥 {rank_name}" if rank_name else "💥 鉄拳力"
         fields.append({"name": field_name, "value": power_str, "inline": True})
@@ -514,7 +514,7 @@ def build_embed(
 
 
 def build_weekly_embed(
-    battles: list[dict],
+    battles: list[Battle],
     week_start_str: str,
     player_name: str | None = None,
 ) -> dict | None:
@@ -527,7 +527,7 @@ def build_weekly_embed(
     quick  = [b for b in battles if b.get("battle_type") == "quick"]
 
     rated      = filter_rated_battles(ranked)
-    net_rating = sum(b["rating_change"] for b in rated) if rated else None
+    net_rating = sum(b.get("rating_change") or 0 for b in rated) if rated else None
 
     top_chara, top_chara_count = get_most_common(battles, "my_chara")
     top_opp,   top_opp_count   = get_most_common(battles, "opp_chara")
