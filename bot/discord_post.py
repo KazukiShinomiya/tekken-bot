@@ -195,6 +195,30 @@ def _rematch_section(battles: list[Battle]) -> str | None:
     return "\n".join(lines)
 
 
+def _opp_rank_label(battle: Battle) -> str:
+    """クイックマッチの場合のみ相手段位名を返す。ランク戦・段位不明は空文字。"""
+    if battle.get("battle_type") != "quick":
+        return ""
+    rank_id = battle.get("opp_rank")
+    if rank_id is None:
+        return ""
+    name = RANK_NAMES.get(rank_id, "")
+    return f"({name})" if name else ""
+
+
+def _quick_rank_distribution(quick_battles: list[Battle]) -> str:
+    """クイックマッチの相手段位分布を `God×4 / Kishin×3` 形式で返す。データなしは空文字。"""
+    counts: Counter = Counter()
+    for b in quick_battles:
+        rank_id = b.get("opp_rank")
+        if rank_id is not None:
+            name = RANK_NAMES.get(rank_id, f"Rank{rank_id}")
+            counts[name] += 1
+    if not counts:
+        return ""
+    return " / ".join(f"{name}×{cnt}" for name, cnt in counts.most_common())
+
+
 # ---------------------------------------------------------------------------
 # メッセージ構築
 # ---------------------------------------------------------------------------
@@ -221,11 +245,13 @@ def build_message(
 
     # --- 試合一覧 ---
     for b in sorted_b:
-        icon  = "✅" if b["won"] else "❌"
-        score = f"{b['my_rounds']}-{b['opp_rounds']}"
-        chara = b.get("my_chara") or "???"
-        opp   = b.get("opp_chara") or "???"
-        lines.append(f"⚔️  {chara} vs {opp:<12} {icon} {score}")
+        icon      = "✅" if b["won"] else "❌"
+        score     = f"{b['my_rounds']}-{b['opp_rounds']}"
+        chara     = b.get("my_chara") or "???"
+        opp       = b.get("opp_chara") or "???"
+        rank_part = _opp_rank_label(b)
+        opp_field = f"{opp} {rank_part}".rstrip() if rank_part else opp
+        lines.append(f"⚔️  {chara} vs {opp_field:<12} {icon} {score}")
 
     lines.append("━━━━━━━━━━━━━━━")
 
@@ -241,6 +267,10 @@ def build_message(
             rating = _rating_summary(subset)
             if rating:
                 base += f" | {rating}"
+        if label == "クイック":
+            dist = _quick_rank_distribution(subset)
+            if dist:
+                base += f"\n        相手段位: {dist}"
         return base
 
     for line in filter(None, [
@@ -417,11 +447,13 @@ def build_embed(
     # 試合一覧（description）
     battle_lines = []
     for b in sorted_b:
-        icon  = "✅" if b["won"] else "❌"
-        score = f"{b['my_rounds']}-{b['opp_rounds']}"
-        chara = b.get("my_chara") or "???"
-        opp   = b.get("opp_chara") or "???"
-        battle_lines.append(f"⚔️ {chara} vs {opp:<12} {icon} {score}")
+        icon      = "✅" if b["won"] else "❌"
+        score     = f"{b['my_rounds']}-{b['opp_rounds']}"
+        chara     = b.get("my_chara") or "???"
+        opp       = b.get("opp_chara") or "???"
+        rank_part = _opp_rank_label(b)
+        opp_field = f"{opp} {rank_part}".rstrip() if rank_part else opp
+        battle_lines.append(f"⚔️ {chara} vs {opp_field:<12} {icon} {score}")
     description = "\n".join(battle_lines)[:4096]
 
     fields: list[dict] = []
@@ -436,6 +468,10 @@ def build_embed(
             rating = _rating_summary(subset)
             if rating:
                 val += f"\n{rating}"
+        if label == "クイック":
+            dist = _quick_rank_distribution(subset)
+            if dist:
+                val += f"\n相手段位: {dist}"
         fields.append({"name": f"{icon} {label}", "value": val, "inline": True})
 
     _add_type_field("🏆", "ランク",   ranked)

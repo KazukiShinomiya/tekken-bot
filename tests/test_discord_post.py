@@ -11,6 +11,8 @@ from bot.discord_post import (
     _matchup_matrix,
     _hourly_section,
     _scout_section,
+    _opp_rank_label,
+    _quick_rank_distribution,
     build_message,
     build_weekly_message,
     build_community_weekly,
@@ -597,3 +599,152 @@ def test_hourly_section_shows_win_rate():
     result = _hourly_section(battles)
     assert result is not None
     assert "%" in result
+
+
+# ---------------------------------------------------------------------------
+# _opp_rank_label / _quick_rank_distribution
+# ---------------------------------------------------------------------------
+
+def _quick_battle(won: bool, opp_rank: int | None = None, opp_chara: str = "Jin") -> dict:
+    """クイックマッチ用バトルデータを生成するヘルパー。"""
+    b = _battle(won=won, opp_chara=opp_chara, battle_type="quick")
+    b["opp_rank"] = opp_rank
+    return b
+
+
+def test_opp_rank_label_quick_with_rank():
+    """クイックマッチで opp_rank あり → 段位名を括弧付きで返す。"""
+    b = _quick_battle(won=False, opp_rank=25)  # 25 = God of Destruction
+    label = _opp_rank_label(b)
+    assert label.startswith("(")
+    assert label.endswith(")")
+    assert len(label) > 2  # 括弧の中身が空でない
+
+
+def test_opp_rank_label_quick_no_rank():
+    """クイックマッチで opp_rank なし → 空文字。"""
+    b = _quick_battle(won=False, opp_rank=None)
+    assert _opp_rank_label(b) == ""
+
+
+def test_opp_rank_label_ranked_battle():
+    """ランク戦では段位を持っていても空文字を返す。"""
+    b = _battle(won=True, battle_type="ranked")
+    b["opp_rank"] = 20
+    assert _opp_rank_label(b) == ""
+
+
+def test_opp_rank_label_unknown_rank_id():
+    """存在しない rank_id → 空文字（RANK_NAMES に登録なし）。"""
+    b = _quick_battle(won=True, opp_rank=9999)
+    assert _opp_rank_label(b) == ""
+
+
+def test_quick_rank_distribution_single():
+    """単一段位 → `<名前>×N` 形式を返す。"""
+    battles = [_quick_battle(won=True, opp_rank=20)] * 3
+    result = _quick_rank_distribution(battles)
+    assert "×3" in result
+
+
+def test_quick_rank_distribution_multiple():
+    """複数段位 → 多い順にスラッシュ区切りで返す。"""
+    battles = (
+        [_quick_battle(won=True,  opp_rank=20)] * 4 +
+        [_quick_battle(won=False, opp_rank=15)] * 2
+    )
+    result = _quick_rank_distribution(battles)
+    assert "/" in result
+    # 多い段位が先頭に来る
+    first, second = result.split(" / ", 1)
+    assert "×4" in first
+    assert "×2" in second
+
+
+def test_quick_rank_distribution_no_rank_data():
+    """全バトルで opp_rank が None → 空文字を返す。"""
+    battles = [_quick_battle(won=True, opp_rank=None)] * 3
+    assert _quick_rank_distribution(battles) == ""
+
+
+def test_quick_rank_distribution_empty():
+    """空リスト → 空文字。"""
+    assert _quick_rank_distribution([]) == ""
+
+
+def test_build_message_shows_rank_for_quick():
+    """build_message: クイックマッチの試合一覧に相手段位が表示される。"""
+    b = _quick_battle(won=False, opp_rank=20, opp_chara="Bryan")
+    b["my_chara"] = "Lee"
+    b["my_rounds"] = 1
+    b["opp_rounds"] = 2
+    b["battle_at"] = 1000
+    b["opp_polaris_id"] = "pid"
+    b["opp_name"] = "Opp"
+    b["my_power"] = None
+    msg = build_message([b], "2026-04-10")
+    assert msg is not None
+    # 段位名が括弧付きで含まれているか
+    assert "(" in msg
+
+
+def test_build_message_no_rank_for_ranked():
+    """build_message: ランク戦の試合一覧には相手段位が付かない。"""
+    b = _battle(won=True, opp_chara="Jin", battle_type="ranked")
+    b["opp_rank"] = 20
+    b["opp_polaris_id"] = "pid"
+    b["opp_name"] = "Opp"
+    msg = build_message([b], "2026-04-10")
+    assert msg is not None
+    # ランク戦の対面行に括弧は付かない
+    battle_lines = [line for line in msg.splitlines() if "⚔️" in line]
+    assert all("(" not in line for line in battle_lines)
+
+
+def test_build_message_quick_summary_includes_rank_dist():
+    """build_message: クイック集計行に相手段位分布が含まれる。"""
+    battles = [_quick_battle(won=True, opp_rank=20), _quick_battle(won=False, opp_rank=20)]
+    for i, b in enumerate(battles):
+        b["my_chara"] = "Lee"
+        b["my_rounds"] = 2
+        b["opp_rounds"] = 1
+        b["battle_at"] = 1000 + i
+        b["opp_polaris_id"] = f"pid{i}"
+        b["opp_name"] = "Opp"
+        b["my_power"] = None
+    msg = build_message(battles, "2026-04-10")
+    assert msg is not None
+    assert "相手段位" in msg
+
+
+def test_build_embed_shows_rank_for_quick():
+    """build_embed: クイックマッチの試合一覧に相手段位が表示される。"""
+    b = _quick_battle(won=False, opp_rank=20, opp_chara="Bryan")
+    b["my_chara"] = "Lee"
+    b["my_rounds"] = 1
+    b["opp_rounds"] = 2
+    b["battle_at"] = 1000
+    b["opp_polaris_id"] = "pid"
+    b["opp_name"] = "Opp"
+    b["my_power"] = None
+    result = build_embed([b], "2026-04-10")
+    assert result is not None
+    assert "(" in result["description"]
+
+
+def test_build_embed_quick_field_includes_rank_dist():
+    """build_embed: クイック欄に相手段位分布が含まれる。"""
+    battles = [_quick_battle(won=True, opp_rank=20), _quick_battle(won=False, opp_rank=20)]
+    for i, b in enumerate(battles):
+        b["my_chara"] = "Lee"
+        b["my_rounds"] = 2
+        b["opp_rounds"] = 1
+        b["battle_at"] = 1000 + i
+        b["opp_polaris_id"] = f"pid{i}"
+        b["opp_name"] = "Opp"
+        b["my_power"] = None
+    result = build_embed(battles, "2026-04-10")
+    assert result is not None
+    quick_fields = [f for f in result["fields"] if "クイック" in f["name"]]
+    assert quick_fields
+    assert "相手段位" in quick_fields[0]["value"]
