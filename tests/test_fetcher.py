@@ -16,6 +16,12 @@ from bot.fetcher import (
     fetch_battles_since,
     fetch_quick_battles_from_ewgf,
     fetch_opponent_summary,
+    _learn_chara_name,
+    _verify_and_learn_chara_name,
+    load_learned_chara_names,
+    _fetch_bulk_batch,
+    _build_bulk_index,
+    _enrich_from_bulk,
     CHARA_NAMES,
     _learned_chara_names,
 )
@@ -584,3 +590,343 @@ def test_fetch_opponent_summary_main_chara_most_common(mock_wank):
 
     assert result is not None
     assert result["main_chara"] == "Reina"
+
+
+# ---------------------------------------------------------------------------
+# _learn_chara_name
+# ---------------------------------------------------------------------------
+
+def test_learn_chara_name_new_chara(monkeypatch):
+    """未知IDは学習してDBに保存する。"""
+    monkeypatch.setattr(_fetcher_module, "_learned_chara_names", {})
+    with patch("bot.db.save_chara_name") as mock_save:
+        _learn_chara_name(997, "FutureChar")
+    assert _fetcher_module._learned_chara_names.get(997) == "FutureChar"
+    mock_save.assert_called_once_with(997, "FutureChar")
+
+
+def test_learn_chara_name_skips_known_static(monkeypatch):
+    """CHARA_NAMES に既存のIDは保存しない。"""
+    monkeypatch.setattr(_fetcher_module, "_learned_chara_names", {})
+    with patch("bot.db.save_chara_name") as mock_save:
+        _learn_chara_name(6, "Jin")  # 6 は CHARA_NAMES に存在
+    mock_save.assert_not_called()
+
+
+def test_learn_chara_name_skips_already_learned(monkeypatch):
+    """既に学習済みIDは再保存しない。"""
+    monkeypatch.setattr(_fetcher_module, "_learned_chara_names", {997: "FutureChar"})
+    with patch("bot.db.save_chara_name") as mock_save:
+        _learn_chara_name(997, "FutureChar")
+    mock_save.assert_not_called()
+
+
+def test_learn_chara_name_db_error_does_not_raise(monkeypatch):
+    """DB 保存失敗時も例外を出さない。"""
+    monkeypatch.setattr(_fetcher_module, "_learned_chara_names", {})
+    import sqlite3
+    with patch("bot.db.save_chara_name", side_effect=sqlite3.Error("DB error")):
+        _learn_chara_name(996, "ErrorChar")  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# _verify_and_learn_chara_name
+# ---------------------------------------------------------------------------
+
+def test_verify_static_match_no_save(monkeypatch):
+    """静的マッピングと HTML名が一致 → 何もしない。"""
+    monkeypatch.setattr(_fetcher_module, "_learned_chara_names", {})
+    with patch("bot.db.save_chara_name") as mock_save:
+        _verify_and_learn_chara_name(6, "Jin")  # 6=Jin, 一致
+    mock_save.assert_not_called()
+
+
+def test_verify_already_learned_same_no_save(monkeypatch):
+    """既に同名で学習済み → 何もしない。"""
+    monkeypatch.setattr(_fetcher_module, "_learned_chara_names", {997: "LearnedChar"})
+    with patch("bot.db.save_chara_name") as mock_save:
+        _verify_and_learn_chara_name(997, "LearnedChar")
+    mock_save.assert_not_called()
+
+
+def test_verify_new_chara_learns_and_saves(monkeypatch):
+    """未知IDの新キャラ → 学習してDBに保存。"""
+    monkeypatch.setattr(_fetcher_module, "_learned_chara_names", {})
+    with patch("bot.db.save_chara_name") as mock_save:
+        _verify_and_learn_chara_name(995, "BrandNewChar")
+    assert _fetcher_module._learned_chara_names.get(995) == "BrandNewChar"
+    mock_save.assert_called_once_with(995, "BrandNewChar")
+
+
+def test_verify_mismatch_html_takes_priority(monkeypatch):
+    """静的マッピングと不一致 → HTML名を優先して学習。"""
+    monkeypatch.setattr(_fetcher_module, "_learned_chara_names", {})
+    with patch("bot.db.save_chara_name") as mock_save:
+        _verify_and_learn_chara_name(6, "Jin_v2")  # 6=Jin but HTML says "Jin_v2"
+    assert _fetcher_module._learned_chara_names.get(6) == "Jin_v2"
+    mock_save.assert_called_once_with(6, "Jin_v2")
+
+
+# ---------------------------------------------------------------------------
+# load_learned_chara_names
+# ---------------------------------------------------------------------------
+
+def test_load_learned_chara_names_success(monkeypatch):
+    """DB からキャラ名をロードして _learned_chara_names に格納する。"""
+    monkeypatch.setattr(_fetcher_module, "_learned_chara_names", {})
+    with patch("bot.db.load_chara_names", return_value={999: "TestChar", 998: "AnotherChar"}):
+        load_learned_chara_names()
+    assert _fetcher_module._learned_chara_names.get(999) == "TestChar"
+    assert _fetcher_module._learned_chara_names.get(998) == "AnotherChar"
+
+
+def test_load_learned_chara_names_failure_graceful(monkeypatch):
+    """DB 読み込み失敗時は例外を出さない。"""
+    monkeypatch.setattr(_fetcher_module, "_learned_chara_names", {})
+    with patch("bot.db.load_chara_names", side_effect=Exception("DB error")):
+        load_learned_chara_names()  # should not raise
+
+
+def test_load_learned_chara_names_empty_db(monkeypatch):
+    """DB が空の場合、_learned_chara_names は変わらない（空）。"""
+    monkeypatch.setattr(_fetcher_module, "_learned_chara_names", {})
+    with patch("bot.db.load_chara_names", return_value={}):
+        load_learned_chara_names()
+    assert _fetcher_module._learned_chara_names == {}
+
+
+# ---------------------------------------------------------------------------
+# _fetch_from_ewgf（内部関数）
+# ---------------------------------------------------------------------------
+
+def test_fetch_from_ewgf_success():
+    """正常系: API レスポンスをパースしてバトルリストを返す。"""
+    from bot.fetcher import _fetch_from_ewgf
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"data": [
+        {
+            "p1_tekken_id": "me", "p2_tekken_id": "opp",
+            "winner": 1,
+            "battle_at": "2024-01-15T12:00:00Z",
+            "battle_type": "RANKED_BATTLE",
+            "p1_char": "Jin", "p2_char": "Reina",
+            "p1_rounds_won": 2, "p2_rounds_won": 1,
+            "p1_dan_rank": 15, "p1_tekken_power": 10000,
+            "p2_dan_rank": 12, "p2_tekken_power": 8000,
+        }
+    ]}
+    mock_resp.raise_for_status.return_value = None
+    mock_resp.headers = {}
+    with patch.object(_fetcher_module._session, "get", return_value=mock_resp):
+        result = _fetch_from_ewgf("me")
+    assert len(result) == 1
+    assert result[0]["won"] is True
+    assert result[0]["my_chara"] == "Jin"
+
+
+def test_fetch_from_ewgf_with_rate_limit_headers():
+    """レート制限ヘッダーがあっても正常動作する。"""
+    from bot.fetcher import _fetch_from_ewgf
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"data": []}
+    mock_resp.raise_for_status.return_value = None
+    mock_resp.headers = {
+        "X-RateLimit-Remaining": "95",
+        "X-RateLimit-Reset": "1234567890",
+    }
+    with patch.object(_fetcher_module._session, "get", return_value=mock_resp):
+        result = _fetch_from_ewgf("me")
+    assert result == []
+
+
+def test_fetch_from_ewgf_uses_battles_fallback_key():
+    """data キーがなく battles キーがある場合も動作する。"""
+    from bot.fetcher import _fetch_from_ewgf
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"battles": []}
+    mock_resp.raise_for_status.return_value = None
+    mock_resp.headers = {}
+    with patch.object(_fetcher_module._session, "get", return_value=mock_resp):
+        result = _fetch_from_ewgf("me")
+    assert result == []
+
+
+# ---------------------------------------------------------------------------
+# _fetch_from_wank_html（内部関数）
+# ---------------------------------------------------------------------------
+
+def _make_wank_html(ts: int, won: bool = True) -> str:
+    rc_class = "win" if won else "lose"
+    rc_sign  = "+" if won else ""
+    rc_val   = 50 if won else -30
+    return f"""
+    <table><tbody><tr>
+      <td class="battle-at"><script>printDateTime({ts})</script></td>
+      <td class="left">
+        <span class="char">Jin</span>
+        <span class="rating">10000</span>
+        <span class="{rc_class}">{rc_sign}{rc_val}</span>
+      </td>
+      <td class="result">2-1</td>
+      <td class="right">
+        <span class="char">Reina</span>
+        <span class="player"><a href="/player/opp123">TestOpp</a></span>
+      </td>
+    </tr></tbody></table>
+    """
+
+
+def test_fetch_from_wank_html_returns_new_battles():
+    """since_ts より新しいバトルを返す。"""
+    from bot.fetcher import _fetch_from_wank_html
+    ts = 1705320000
+    mock_resp = MagicMock()
+    mock_resp.text = _make_wank_html(ts + 100)
+    mock_resp.raise_for_status.return_value = None
+    with patch.object(_fetcher_module._session, "get", return_value=mock_resp):
+        result = _fetch_from_wank_html(ts, "me")
+    assert len(result) == 1
+    assert result[0]["my_chara"] == "Jin"
+    assert result[0]["won"] is True
+
+
+def test_fetch_from_wank_html_filters_old():
+    """since_ts 以前のバトルは含まない。"""
+    from bot.fetcher import _fetch_from_wank_html
+    ts = 1705320000
+    mock_resp = MagicMock()
+    mock_resp.text = _make_wank_html(ts - 100)
+    mock_resp.raise_for_status.return_value = None
+    with patch.object(_fetcher_module._session, "get", return_value=mock_resp):
+        result = _fetch_from_wank_html(ts, "me")
+    assert result == []
+
+
+# ---------------------------------------------------------------------------
+# _fetch_bulk_batch（内部関数）
+# ---------------------------------------------------------------------------
+
+def test_fetch_bulk_batch_returns_list():
+    """正常系: バルクAPIのレスポンスを返す。"""
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = [
+        {"battle_id": 123, "battle_at": 1000, "p1_polaris_id": "me"},
+    ]
+    mock_resp.raise_for_status.return_value = None
+    with patch.object(_fetcher_module._session, "get", return_value=mock_resp):
+        result = _fetch_bulk_batch(1010)
+    assert len(result) == 1
+    assert result[0]["battle_id"] == 123
+
+
+def test_fetch_bulk_batch_raises_on_error():
+    """HTTP エラー時は例外を再送出する。"""
+    with patch.object(_fetcher_module._session, "get", side_effect=requests.RequestException("down")):
+        with pytest.raises(requests.RequestException):
+            _fetch_bulk_batch(1010)
+
+
+# ---------------------------------------------------------------------------
+# _build_bulk_index（内部関数）
+# ---------------------------------------------------------------------------
+
+def _simple_battle(battle_at: int) -> dict:
+    return {
+        "battle_id": f"wank_{battle_at}_opp",
+        "battle_at": battle_at,
+        "battle_type": None, "game_version": None, "stage_id": None,
+        "source": "wank_html", "won": True,
+        "my_chara": "Jin", "my_chara_id": None, "my_rounds": 2,
+        "my_rank": None, "my_power": None, "my_region": None,
+        "rating_before": 10000, "rating_change": 50,
+        "opp_name": "Opp", "opp_polaris_id": "opp_pid",
+        "opp_chara": "Reina", "opp_chara_id": None, "opp_rounds": 1,
+        "opp_rank": None, "opp_power": None, "opp_region": None,
+        "opp_rating_before": None, "opp_rating_change": None,
+    }
+
+
+def test_build_bulk_index_matches_battle():
+    """バルクAPIにマッチするバトルがインデックスに登録される。"""
+    battle = _simple_battle(1000)
+    bulk_record = {
+        "battle_id": 99, "battle_at": 1000,
+        "p1_polaris_id": "me", "p2_polaris_id": "opp_pid",
+    }
+    with patch.object(_fetcher_module, "_fetch_bulk_batch", return_value=[bulk_record]):
+        bulk_index, requests_made = _build_bulk_index([battle], "me")
+    assert 1000 in bulk_index
+    assert requests_made == 1
+
+
+def test_build_bulk_index_empty_batch():
+    """バルクAPIが空を返す → インデックスは空。"""
+    battle = _simple_battle(1000)
+    with patch.object(_fetcher_module, "_fetch_bulk_batch", return_value=[]):
+        bulk_index, _ = _build_bulk_index([battle], "me")
+    assert bulk_index == {}
+
+
+def test_build_bulk_index_api_error_skips():
+    """API エラー → そのバトルをスキップして続行。"""
+    battle = _simple_battle(1000)
+    with patch.object(_fetcher_module, "_fetch_bulk_batch",
+                      side_effect=requests.RequestException("error")):
+        bulk_index, _ = _build_bulk_index([battle], "me")
+    assert bulk_index == {}
+
+
+def test_build_bulk_index_skips_unrelated_records():
+    """自分の polaris_id を含まないレコードはインデックスに入らない。"""
+    battle = _simple_battle(1000)
+    bulk_record = {
+        "battle_id": 99, "battle_at": 1000,
+        "p1_polaris_id": "other1", "p2_polaris_id": "other2",
+    }
+    with patch.object(_fetcher_module, "_fetch_bulk_batch", return_value=[bulk_record]):
+        bulk_index, _ = _build_bulk_index([battle], "me")
+    assert bulk_index == {}
+
+
+# ---------------------------------------------------------------------------
+# _enrich_from_bulk（内部関数）
+# ---------------------------------------------------------------------------
+
+def test_enrich_from_bulk_empty():
+    """空のバトルリストは空のまま返す。"""
+    result = _enrich_from_bulk([], "me")
+    assert result == []
+
+
+def test_enrich_from_bulk_enriches_matched_battle():
+    """バルクAPIにマッチするバトルが ranked に変換される。"""
+    battle = _simple_battle(1000)
+    bulk_record = {
+        "battle_id": 99, "battle_at": 1000,
+        "battle_type": 2, "game_version": "1.0", "stage_id": 3,
+        "p1_polaris_id": "me", "p2_polaris_id": "opp_pid",
+        "p1_chara_id": 6, "p1_rank": 15, "p1_power": 10000, "p1_region_id": "JP",
+        "p2_chara_id": 33, "p2_rank": 12, "p2_power": 8000, "p2_region_id": "US",
+    }
+    with patch.object(_fetcher_module, "_build_bulk_index",
+                      return_value=({1000: bulk_record}, 1)):
+        result = _enrich_from_bulk([battle], "me")
+    assert len(result) == 1
+    assert result[0]["battle_type"] == "ranked"
+    assert result[0]["source"] == "wank_bulk"
+
+
+def test_enrich_from_bulk_unmatched_battle_returns_as_is():
+    """バルクAPIにマッチしないバトルはそのまま返す。"""
+    battle = _simple_battle(9999)
+    bulk_record = {
+        "battle_id": 99, "battle_at": 1000,
+        "battle_type": 2, "game_version": "1.0", "stage_id": 3,
+        "p1_polaris_id": "me", "p2_polaris_id": "opp_pid",
+        "p1_chara_id": 6, "p1_rank": 15, "p1_power": 10000, "p1_region_id": "JP",
+        "p2_chara_id": 33, "p2_rank": 12, "p2_power": 8000, "p2_region_id": "US",
+    }
+    with patch.object(_fetcher_module, "_build_bulk_index",
+                      return_value=({1000: bulk_record}, 1)):
+        result = _enrich_from_bulk([battle], "me")
+    assert result[0]["source"] == "wank_html"  # unchanged

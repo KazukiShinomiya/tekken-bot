@@ -5,13 +5,14 @@ Discord スラッシュコマンド Bot。
   /tekken today  — 今日の戦績を即時取得・投稿
   /tekken weekly — 週次サマリーを即時投稿
   /tekken status — Bot 稼働状況を確認
+  /tekken trend  — レーティング推移グラフを表示
 """
 
 import asyncio
 import logging
 import threading
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import discord
 from discord import app_commands
@@ -19,6 +20,7 @@ from discord import app_commands
 import bot.db as db
 import main as _bot_main
 from bot.config import DISCORD_BOT_TOKEN as BOT_TOKEN, DISCORD_GUILD_ID, JST
+from bot.graph import generate_rating_chart
 from bot.stats import count_wins, count_losses, get_most_common, detect_winning_streak, detect_losing_streak
 
 logger = logging.getLogger(__name__)
@@ -64,6 +66,39 @@ async def cmd_weekly(interaction: discord.Interaction) -> None:
 async def cmd_status(interaction: discord.Interaction) -> None:
     now = datetime.now(JST).strftime("%Y/%m/%d %H:%M:%S")
     await interaction.response.send_message(f"✅ Bot 稼働中 | {now} JST")
+
+
+@tekken_group.command(name="trend", description="レーティング推移グラフを表示する")
+@app_commands.describe(days="期間（日数、デフォルト30日）")
+async def cmd_trend(interaction: discord.Interaction, days: int = 30) -> None:
+    await interaction.response.defer(thinking=True)
+    try:
+        since_ts = (datetime.now(JST) - timedelta(days=days)).timestamp()
+        players  = _bot_main.get_players()
+        if not players:
+            await interaction.followup.send("❌ プレイヤーが設定されていません。")
+            return
+
+        player_name, _ = players[0]
+        battles = db.get_battles_since(since_ts, player_name=player_name)
+        chart   = generate_rating_chart(battles, player_name=player_name)
+
+        if chart is None:
+            await interaction.followup.send(
+                "❌ グラフを生成できませんでした（データ不足またはライブラリ未インストール）。"
+            )
+            return
+
+        file  = discord.File(chart, filename="rating_trend.png")
+        embed = discord.Embed(
+            title=f"📈 {player_name} レーティング推移（直近{days}日）",
+            color=0x5865F2,
+        )
+        embed.set_image(url="attachment://rating_trend.png")
+        await interaction.followup.send(embed=embed, file=file)
+    except Exception as e:
+        logger.error(f"[slash_commands] /tekken trend エラー: {e}")
+        await interaction.followup.send(f"❌ エラーが発生しました: {e}")
 
 
 @tekken_group.command(name="vs", description="特定の対戦相手との通算成績を確認する")

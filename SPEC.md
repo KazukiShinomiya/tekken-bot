@@ -71,12 +71,23 @@ Prometheus Exporter で監視基盤（Grafana）にメトリクスを公開す�
 - `tests/test_discord_post.py`, `tests/test_db.py`, `tests/test_analyzer.py`
 
 ### F-9. Discord スラッシュコマンド
-**What**: `/tekken today/weekly/status` コマンドを Discord サーバーに追加
+**What**: `/tekken today/weekly/status/vs/chara/top/rival/trend` コマンドを Discord サーバーに追加
 **Why**: スケジューラを待たずに任意のタイミングで戦績を投稿・確認できるようにする
 **Who**: 格ゲー部メンバー
 - `bot/slash_commands.py` 新規作成
 - `DISCORD_BOT_TOKEN` を設定することで有効化
 - `scheduler.py` で Bot スレッドとスケジューラスレッドを並行起動
+
+| コマンド | 説明 |
+|---------|-----|
+| `/tekken today [date]` | 今日（または指定日）の戦績を取得・投稿 |
+| `/tekken weekly` | 週次サマリーを投稿 |
+| `/tekken status` | Bot 稼働状況を確認 |
+| `/tekken vs <name>` | 特定の対戦相手との通算成績（名前部分一致） |
+| `/tekken chara <name>` | 特定キャラクターとの対戦成績 |
+| `/tekken top` | キャラ別対戦成績ランキング（2戦以上） |
+| `/tekken rival <name>` | ライバル詳細分析（使用キャラ・レーティング変動・流れ） |
+| `/tekken trend [days]` | レーティング推移グラフを表示（デフォルト30日） |
 
 ### B. 対戦相手スカウティング
 **What**: リピート対戦相手（当日2戦以上）の wank プロフィールを自動取得し投稿に追記
@@ -149,7 +160,8 @@ bot/discord_post.py
 | `requirements.txt` | バージョンピン留め・matplotlib 追加 |
 | `requirements-dev.txt` | **新規**: pytest 分離 |
 | `.env.example` | PLAYERS 追加 |
-| `tests/` | **新規**: pytest テストスイート（163テスト）|
+| `tests/` | **新規**: pytest テストスイート（315テスト、カバレッジ76%）|
+| `bot/slash_commands.py` | `/tekken trend` コマンド追加 |
 
 ---
 
@@ -164,6 +176,8 @@ bot/discord_post.py
 - [x] F-7: レーティンググラフ（bot/graph.py, bot/discord_post.py, requirements.txt）
 - [x] F-8: pytest テスト（tests/）
 - [x] F-9: スラッシュコマンド（bot/slash_commands.py）
+  - [x] `/tekken trend` — レーティング推移グラフ（直近N日、デフォルト30日）
+- [x] 段位アップ通知: 前日比でランク増加時に Discord 通知（main.py `_fire_alerts`）
 - [x] B: 対戦相手スカウティング（bot/fetcher.py, bot/discord_post.py, main.py）
 - [x] C: レーティングトレンド予測・停滞検知（bot/stats.py, bot/discord_post.py）
 - [x] D: LLM コーチングモード強化（bot/analyzer.py）
@@ -173,7 +187,7 @@ bot/discord_post.py
 
 ## 5. 検証方法（Checklist）
 
-- [x] `pytest tests/` が全通過（163テスト）
+- [x] `pytest tests/` が全通過（315テスト、カバレッジ76%、mypy 0エラー）
 - [x] `python main.py` が成功し `data/tekken_bot.log` に出力される
 - [x] `docker compose up --build` でコンテナが HEALTHY になる
 - [x] Discord Webhook に当日バトルが投稿される（マトリクス・スカウト付き）

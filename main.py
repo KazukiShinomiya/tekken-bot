@@ -21,7 +21,7 @@ load_dotenv()
 from bot.config import (
     PLAYERS as PLAYERS_ENV, POLARIS_ID as POLARIS_ID_ENV, TEKKEN_ID as TEKKEN_ID_ENV,
     LOG_PATH, JST, TIMEOUT_LLM, TIMEOUT_API, RATING_GOAL, LOSS_ALERT_THRESHOLD,
-    WIN_ALERT_THRESHOLD, validate_config,
+    WIN_ALERT_THRESHOLD, RANK_NAMES, validate_config,
 )
 import bot.db as db
 import bot.fetcher as fetcher
@@ -184,6 +184,20 @@ def _fire_alerts(
                         f"🎉 [{player_name}] 目標レーティング **{RATING_GOAL:,}** 達成！現在: **{current_rating:,}**"
                     )
                     logger.info(f"[{player_name}] 目標レーティング達成通知: {current_rating}")
+
+    # 段位アップ検知（my_rank が記録されているバトルのみ対象）
+    ranked_today = [b for b in today_battles if b.get("my_rank") is not None]
+    ranked_prev  = [b for b in prev_battles  if b.get("my_rank") is not None]
+    if ranked_today and ranked_prev:
+        today_rank = max(ranked_today, key=lambda x: x["battle_at"]).get("my_rank")
+        prev_rank  = max(ranked_prev,  key=lambda x: x["battle_at"]).get("my_rank")
+        if today_rank is not None and prev_rank is not None and today_rank > prev_rank:
+            today_name = RANK_NAMES.get(today_rank, f"Rank {today_rank}")
+            prev_name  = RANK_NAMES.get(prev_rank,  f"Rank {prev_rank}")
+            discord_post.notify(
+                f"🏆 [{player_name}] 段位アップ！ **{prev_name}** → **{today_name}** 🎉"
+            )
+            logger.info(f"[{player_name}] 段位アップ通知: {prev_name} → {today_name}")
 
 
 def _analyze_with_timeout(

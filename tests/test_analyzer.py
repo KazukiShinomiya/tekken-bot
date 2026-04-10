@@ -3,7 +3,13 @@ bot/analyzer.py の純粋関数テスト。
 """
 
 import pytest
-from bot.analyzer import _build_prompt, _compute_coaching_insights
+import requests
+from unittest.mock import MagicMock, patch
+
+from bot.analyzer import (
+    _build_prompt, _compute_coaching_insights,
+    _build_summary_text, _build_rematch_section, _call_ollama, analyze,
+)
 
 
 def _battle(won: bool, opp_chara: str = "Jin", battle_type: str = "ranked",
@@ -219,3 +225,216 @@ def test_build_prompt_includes_rematch_data():
     prompt = _build_prompt(battles, "2024/01/15", rematch_data=rematch)
     assert "繰り返し対戦" in prompt
     assert "RivalPlayer" in prompt
+
+
+# ---------------------------------------------------------------------------
+# _build_summary_text
+# ---------------------------------------------------------------------------
+
+def _make_stats(
+    wins: int = 3,
+    losses: int = 2,
+    net_rating: int | None = None,
+    max_win: int = 1,
+    max_lose: int = 1,
+    matchups: list[str] | None = None,
+) -> dict:
+    return {
+        "wins": wins, "losses": losses,
+        "ranked": [], "quick": [],
+        "round_wr": "60%",
+        "net_rating": net_rating,
+        "max_win": max_win, "max_lose": max_lose,
+        "matchups": matchups or [],
+    }
+
+
+def test_build_summary_text_contains_date():
+    text = _build_summary_text(_make_stats(), "2024/01/15")
+    assert "2024/01/15" in text
+
+
+def test_build_summary_text_contains_win_loss():
+    text = _build_summary_text(_make_stats(wins=4, losses=1), "2024/01/15")
+    assert "4勝1敗" in text
+
+
+def test_build_summary_text_with_positive_rating():
+    text = _build_summary_text(_make_stats(net_rating=200), "2024/01/15")
+    assert "+200" in text
+
+
+def test_build_summary_text_with_negative_rating():
+    text = _build_summary_text(_make_stats(net_rating=-50), "2024/01/15")
+    assert "-50" in text
+
+
+def test_build_summary_text_no_rating_when_none():
+    text = _build_summary_text(_make_stats(net_rating=None), "2024/01/15")
+    assert "レーティング変動" not in text
+
+
+def test_build_summary_text_shows_win_streak():
+    text = _build_summary_text(_make_stats(max_win=3), "2024/01/15")
+    assert "最長連勝: 3" in text
+
+
+def test_build_summary_text_shows_lose_streak():
+    text = _build_summary_text(_make_stats(max_lose=4), "2024/01/15")
+    assert "最長連敗: 4" in text
+
+
+def test_build_summary_text_omits_streak_below_2():
+    text = _build_summary_text(_make_stats(max_win=1, max_lose=1), "2024/01/15")
+    assert "最長連勝" not in text
+    assert "最長連敗" not in text
+
+
+def test_build_summary_text_includes_matchups():
+    text = _build_summary_text(_make_stats(matchups=["  Jin: 2勝1敗"]), "2024/01/15")
+    assert "Jin" in text
+
+
+# ---------------------------------------------------------------------------
+# _build_rematch_section
+# ---------------------------------------------------------------------------
+
+def test_build_rematch_section_empty():
+    result = _build_rematch_section({})
+    assert result == ""
+
+
+def test_build_rematch_section_with_data():
+    data = {
+        "pid_a": {
+            "name": "Rival",
+            "chara": "Jin",
+            "history": [{"won": True}, {"won": False}, {"won": True}],
+        }
+    }
+    result = _build_rematch_section(data)
+    assert "Rival(Jin)" in result
+    assert "2勝1敗" in result
+    assert "繰り返し対戦" in result
+
+
+def test_build_rematch_section_multiple_opponents():
+    data = {
+        "pid_a": {"name": "Alpha", "chara": "Jin",  "history": [{"won": True}]},
+        "pid_b": {"name": "Beta",  "chara": "Paul", "history": [{"won": False}]},
+    }
+    result = _build_rematch_section(data)
+    assert "Alpha" in result
+    assert "Beta" in result
+
+
+# ---------------------------------------------------------------------------
+# _call_ollama
+# ---------------------------------------------------------------------------
+
+def test_call_ollama_returns_response():
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"response": "良い調子です"}
+    mock_resp.raise_for_status.return_value = None
+    with patch("requests.post", return_value=mock_resp):
+        result = _call_ollama("testmodel", "test prompt")
+    assert result == "良い調子です"
+
+
+def test_call_ollama_returns_none_for_empty_response():
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"response": ""}
+    mock_resp.raise_for_status.return_value = None
+    with patch("requests.post", return_value=mock_resp):
+        result = _call_ollama("testmodel", "test prompt")
+    assert result is None
+
+
+def test_call_ollama_raises_on_http_error():
+    with patch("requests.post", side_effect=requests.RequestException("connection error")):
+        with pytest.raises(requests.RequestException):
+            _call_ollama("testmodel", "test prompt")
+
+
+# ---------------------------------------------------------------------------
+# analyze
+# ---------------------------------------------------------------------------
+
+def _ranked_battle(won: bool = True, battle_at: int = 0) -> dict:
+    return {
+        "won": won, "opp_chara": "Jin", "battle_type": "ranked",
+        "my_rounds": 2, "opp_rounds": 1, "battle_at": battle_at,
+    }
+
+
+def test_analyze_empty_battles_returns_none():
+    assert analyze([], "2024/01/15") is None
+
+
+def test_analyze_calls_primary_model_and_returns_comment():
+    battles = [_ranked_battle()]
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"response": "今日は好調"}
+    mock_resp.raise_for_status.return_value = None
+    with patch("requests.post", return_value=mock_resp):
+        result = analyze(battles, "2024/01/15", "TestPlayer")
+    assert result == "今日は好調"
+
+
+def test_analyze_fallback_on_primary_failure():
+    """プライマリモデル失敗 → フォールバックモデルで成功。"""
+    battles = [_ranked_battle()]
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"response": "フォールバック結果"}
+    mock_resp.raise_for_status.return_value = None
+    with (
+        patch("bot.analyzer.OLLAMA_FALLBACK_MODEL", "fallback_model"),
+        patch("requests.post", side_effect=[requests.RequestException("primary fail"), mock_resp]),
+    ):
+        result = analyze(battles, "2024/01/15", "TestPlayer")
+    assert result == "フォールバック結果"
+
+
+def test_analyze_both_models_fail_returns_none():
+    """両モデルとも失敗 → None。"""
+    battles = [_ranked_battle()]
+    with (
+        patch("bot.analyzer.OLLAMA_FALLBACK_MODEL", "fallback_model"),
+        patch("requests.post", side_effect=requests.RequestException("all fail")),
+    ):
+        result = analyze(battles, "2024/01/15", "TestPlayer")
+    assert result is None
+
+
+def test_analyze_no_fallback_configured_returns_none():
+    """フォールバックモデル未設定でプライマリ失敗 → None。"""
+    battles = [_ranked_battle()]
+    with (
+        patch("bot.analyzer.OLLAMA_FALLBACK_MODEL", ""),
+        patch("requests.post", side_effect=requests.RequestException("primary fail")),
+    ):
+        result = analyze(battles, "2024/01/15", "TestPlayer")
+    assert result is None
+
+
+def test_analyze_with_prev_battles():
+    """prev_battles を渡しても例外なく動作する。"""
+    battles  = [_ranked_battle(won=True,  battle_at=200)]
+    prev     = [_ranked_battle(won=False, battle_at=100)]
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"response": "前日比コメント"}
+    mock_resp.raise_for_status.return_value = None
+    with patch("requests.post", return_value=mock_resp):
+        result = analyze(battles, "2024/01/15", "TestPlayer", prev_battles=prev)
+    assert result == "前日比コメント"
+
+
+def test_analyze_invalid_date_format():
+    """日付フォーマットが不正でも例外を出さない。"""
+    battles = [_ranked_battle()]
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"response": "OK"}
+    mock_resp.raise_for_status.return_value = None
+    with patch("requests.post", return_value=mock_resp):
+        result = analyze(battles, "invalid-date", "TestPlayer")
+    assert result is not None  # date parse error is caught internally

@@ -30,12 +30,14 @@ _discord_mock.Intents = MagicMock()
 _discord_mock.Intents.default = MagicMock(return_value=MagicMock())
 _discord_mock.Client = MagicMock()
 _discord_mock.Embed = MagicMock(side_effect=lambda **kwargs: MagicMock(**kwargs))
+_discord_mock.File = MagicMock(return_value=MagicMock())
 _discord_mock.app_commands = _app_commands_mock
 _discord_mock.Interaction = MagicMock()
+_discord_mock.Object = MagicMock()
 sys.modules.setdefault("discord", _discord_mock)
 sys.modules.setdefault("discord.app_commands", _app_commands_mock)
 
-from bot.slash_commands import cmd_today, cmd_vs, cmd_chara, cmd_top, cmd_status, cmd_rival  # noqa: E402
+from bot.slash_commands import cmd_today, cmd_vs, cmd_chara, cmd_top, cmd_status, cmd_rival, cmd_trend  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -268,3 +270,66 @@ def test_cmd_rival_shows_win_streak():
     # add_field の呼び出し引数に "連勝" が含まれているか確認
     field_calls = str(embed.add_field.call_args_list)
     assert "連勝" in field_calls
+
+
+# ---------------------------------------------------------------------------
+# /tekken trend
+# ---------------------------------------------------------------------------
+
+def _make_rated_battle(battle_at: int, rating_before: int = 10000, rating_change: int = 50) -> dict:
+    b = _make_battle(battle_id=f"rated_{battle_at}", battle_at=battle_at)
+    b["rating_before"]  = rating_before
+    b["rating_change"]  = rating_change
+    b["battle_type"]    = "ranked"
+    return b
+
+
+def test_cmd_trend_returns_chart():
+    """/tekken trend: グラフ生成成功 → ファイル添付の followup.send が呼ばれる。"""
+    import io
+    interaction = _make_interaction()
+    battles = [_make_rated_battle(1_000_000 + i * 100, rating_change=50) for i in range(5)]
+    fake_chart = io.BytesIO(b"fake_png")
+
+    with (
+        patch("bot.db.get_battles_since", return_value=battles),
+        patch("main.get_players", return_value=[("Alice", "pid_a")]),
+        patch("bot.slash_commands.generate_rating_chart", return_value=fake_chart),
+    ):
+        asyncio.run(cmd_trend(interaction, days=30))
+
+    assert interaction.followup.send.called
+    kwargs = interaction.followup.send.call_args.kwargs
+    assert "embed" in kwargs
+    assert "file" in kwargs
+
+
+def test_cmd_trend_no_players():
+    """/tekken trend: プレイヤー未設定 → エラーメッセージを返す。"""
+    interaction = _make_interaction()
+    with patch("main.get_players", return_value=[]):
+        asyncio.run(cmd_trend(interaction, days=30))
+    msg = interaction.followup.send.call_args[0][0]
+    assert "❌" in msg
+
+
+def test_cmd_trend_chart_generation_fails():
+    """/tekken trend: グラフ生成失敗 → エラーメッセージを返す。"""
+    interaction = _make_interaction()
+    with (
+        patch("bot.db.get_battles_since", return_value=[]),
+        patch("main.get_players", return_value=[("Alice", "pid_a")]),
+        patch("bot.slash_commands.generate_rating_chart", return_value=None),
+    ):
+        asyncio.run(cmd_trend(interaction, days=30))
+    msg = interaction.followup.send.call_args[0][0]
+    assert "❌" in msg
+
+
+def test_cmd_trend_exception_handling():
+    """/tekken trend: 例外発生 → エラーメッセージを返す（クラッシュしない）。"""
+    interaction = _make_interaction()
+    with patch("main.get_players", side_effect=RuntimeError("unexpected")):
+        asyncio.run(cmd_trend(interaction, days=30))
+    msg = interaction.followup.send.call_args[0][0]
+    assert "❌" in msg
