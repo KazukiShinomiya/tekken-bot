@@ -244,6 +244,101 @@ async def cmd_rival(interaction: discord.Interaction, name: str) -> None:
     await interaction.followup.send(embed=embed)
 
 
+@tekken_group.command(name="filter", description="キャラ名・日付でバトルログを絞り込んで表示する")
+@app_commands.describe(
+    chara="対戦相手キャラ名（例: Bryan, Jin）",
+    date="対象日 YYYY-MM-DD（例: 2026-04-10）",
+    days="直近N日間に絞り込む（chara 指定時のみ有効、省略で全期間）",
+)
+async def cmd_filter(
+    interaction: discord.Interaction,
+    chara: str | None = None,
+    date: str | None = None,
+    days: int | None = None,
+) -> None:
+    await interaction.response.defer(thinking=True)
+
+    if chara is None and date is None:
+        await interaction.followup.send("❌ `chara` または `date` のどちらか一方は指定してください。")
+        return
+
+    players = _bot_main.get_players()
+    player_name = players[0][0] if players else None
+
+    # date 単独: 指定日の全バトルを表示
+    if date is not None and chara is None:
+        try:
+            datetime.strptime(date, "%Y-%m-%d")
+        except ValueError:
+            await interaction.followup.send("❌ 日付形式が正しくありません（YYYY-MM-DD）。")
+            return
+        battles = db.get_battles_on_date(date, player_name=player_name)
+        if not battles:
+            await interaction.followup.send(f"❌ `{date}` の対戦データが見つかりません。")
+            return
+        wins   = count_wins(battles)
+        losses = count_losses(battles)
+        total  = wins + losses
+        wr     = wins / total * 100 if total else 0
+        lines  = []
+        for b in sorted(battles, key=lambda x: x["battle_at"]):
+            icon = "✅" if b["won"] else "❌"
+            dt   = datetime.fromtimestamp(b["battle_at"], JST).strftime("%H:%M")
+            btype = "🏆" if b.get("battle_type") == "ranked" else "⚡"
+            lines.append(f"{btype} {icon} {b.get('my_chara','???')} vs {b.get('opp_chara','???')}  {b['my_rounds']}-{b['opp_rounds']}  {dt}")
+        embed = discord.Embed(
+            title=f"📅 {date} の対戦ログ",
+            description="\n".join(lines)[:4096],
+            color=0x57F287 if wr >= 50 else 0xED4245,
+        )
+        embed.add_field(name="通算", value=f"{wins}勝{losses}敗 ({wr:.0f}%)", inline=True)
+        await interaction.followup.send(embed=embed)
+        return
+
+    # chara あり: キャラ + 期間フィルタ
+    since_ts = 0
+    period_label = "全期間"
+    if date is not None:
+        try:
+            since_dt = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=JST)
+        except ValueError:
+            await interaction.followup.send("❌ 日付形式が正しくありません（YYYY-MM-DD）。")
+            return
+        since_ts    = int(since_dt.timestamp())
+        period_label = f"{date} 以降"
+    elif days is not None:
+        since_ts    = int((datetime.now(JST) - timedelta(days=days)).timestamp())
+        period_label = f"直近{days}日間"
+
+    assert chara is not None  # 関数先頭の検証で保証済み
+    battles = db.get_battles_by_opp_chara(chara, player_name=player_name, since_ts=since_ts)
+    if not battles:
+        await interaction.followup.send(f"❌ `{chara}` との対戦記録が見つかりません（{period_label}）。")
+        return
+
+    wins   = count_wins(battles)
+    losses = count_losses(battles)
+    total  = wins + losses
+    wr     = wins / total * 100 if total else 0
+
+    recent = sorted(battles, key=lambda x: x["battle_at"], reverse=True)[:10]
+    recent_lines = []
+    for b in recent:
+        icon = "✅" if b["won"] else "❌"
+        dt   = datetime.fromtimestamp(b["battle_at"], JST).strftime("%m/%d %H:%M")
+        recent_lines.append(f"{icon} {b.get('my_chara','???')} vs {b.get('opp_chara','???')}  {b['my_rounds']}-{b['opp_rounds']}  {dt}")
+
+    embed = discord.Embed(
+        title=f"🔍 vs {chara} フィルタ結果（{period_label}）",
+        color=0x57F287 if wr >= 50 else 0xED4245,
+    )
+    embed.add_field(name="通算", value=f"{wins}勝{losses}敗 ({wr:.0f}%)", inline=True)
+    embed.add_field(name="対戦数", value=f"{total}戦", inline=True)
+    if recent_lines:
+        embed.add_field(name=f"直近{len(recent_lines)}試合", value="\n".join(recent_lines), inline=False)
+    await interaction.followup.send(embed=embed)
+
+
 tree.add_command(tekken_group)
 
 

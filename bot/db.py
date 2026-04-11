@@ -292,10 +292,16 @@ def get_battles_vs_opponent(
 def get_battles_by_opp_chara(
     opp_chara: str,
     player_name: str | None = None,
+    since_ts: int = 0,
 ) -> list[Battle]:
-    """特定キャラとの全期間対戦履歴を返す（大文字小文字無視）。"""
+    """特定キャラとの対戦履歴を返す（大文字小文字無視）。since_ts > 0 の場合は期間絞り込みあり。"""
+    where = "LOWER(opp_chara) = LOWER(?)"
+    params: tuple = (opp_chara,)
+    if since_ts > 0:
+        where += " AND battle_at >= ?"
+        params += (since_ts,)
     with get_conn() as conn:
-        rows = _query_battles(conn, "LOWER(opp_chara) = LOWER(?)", (opp_chara,), player_name)
+        rows = _query_battles(conn, where, params, player_name)
     return cast(list[Battle], [dict(r) for r in rows])
 
 

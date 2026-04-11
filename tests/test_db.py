@@ -440,6 +440,36 @@ def test_get_battles_by_opp_chara_empty(db):
     assert db.get_battles_by_opp_chara("Unknown") == []
 
 
+def test_get_battles_by_opp_chara_since_ts_filters_old(db):
+    """since_ts より古いバトルは除外される。"""
+    db.insert_battles([
+        _make_battle(battle_id="old", battle_at=1000, opp_chara="Bryan"),
+        _make_battle(battle_id="new", battle_at=2000, opp_chara="Bryan"),
+    ], "Alice")
+    result = db.get_battles_by_opp_chara("Bryan", since_ts=1500)
+    assert len(result) == 1
+    assert result[0]["battle_id"] == "new"
+
+
+def test_get_battles_by_opp_chara_since_ts_zero_returns_all(db):
+    """since_ts=0（デフォルト）では全件返す。"""
+    db.insert_battles([
+        _make_battle(battle_id="a1", battle_at=100, opp_chara="Jin"),
+        _make_battle(battle_id="a2", battle_at=200, opp_chara="Jin"),
+    ], "Alice")
+    result = db.get_battles_by_opp_chara("Jin", since_ts=0)
+    assert len(result) == 2
+
+
+def test_get_battles_by_opp_chara_since_ts_player_filter(db):
+    """since_ts と player_name を組み合わせたフィルタ。"""
+    db.insert_battles([_make_battle(battle_id="p1", battle_at=2000, opp_chara="Jin")], "Alice")
+    db.insert_battles([_make_battle(battle_id="p2", battle_at=2000, opp_chara="Jin")], "Bob")
+    result = db.get_battles_by_opp_chara("Jin", player_name="Alice", since_ts=1000)
+    assert len(result) == 1
+    assert result[0]["battle_id"] == "p1"
+
+
 # ---------------------------------------------------------------------------
 # search_battles_vs_opponent (部分一致)
 # ---------------------------------------------------------------------------

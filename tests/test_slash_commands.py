@@ -37,7 +37,7 @@ _discord_mock.Object = MagicMock()
 sys.modules.setdefault("discord", _discord_mock)
 sys.modules.setdefault("discord.app_commands", _app_commands_mock)
 
-from bot.slash_commands import cmd_today, cmd_vs, cmd_chara, cmd_top, cmd_status, cmd_rival, cmd_trend  # noqa: E402
+from bot.slash_commands import cmd_today, cmd_vs, cmd_chara, cmd_top, cmd_status, cmd_rival, cmd_trend, cmd_filter  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -331,5 +331,110 @@ def test_cmd_trend_exception_handling():
     interaction = _make_interaction()
     with patch("main.get_players", side_effect=RuntimeError("unexpected")):
         asyncio.run(cmd_trend(interaction, days=30))
+    msg = interaction.followup.send.call_args[0][0]
+    assert "❌" in msg
+
+
+# ---------------------------------------------------------------------------
+# /tekken filter
+# ---------------------------------------------------------------------------
+
+def test_cmd_filter_no_args():
+    """/tekken filter: chara も date も未指定 → エラーメッセージ。"""
+    interaction = _make_interaction()
+    asyncio.run(cmd_filter(interaction, chara=None, date=None, days=None))
+    msg = interaction.followup.send.call_args[0][0]
+    assert "❌" in msg
+
+
+def test_cmd_filter_invalid_date_only():
+    """/tekken filter date=invalid → 日付フォーマットエラー。"""
+    interaction = _make_interaction()
+    asyncio.run(cmd_filter(interaction, chara=None, date="not-a-date", days=None))
+    msg = interaction.followup.send.call_args[0][0]
+    assert "❌" in msg
+
+
+def test_cmd_filter_date_no_results():
+    """/tekken filter date=2026-01-01: 該当なし → エラーメッセージ。"""
+    interaction = _make_interaction()
+    with (
+        patch("main.get_players", return_value=[("Alice", "pid_a")]),
+        patch("bot.db.get_battles_on_date", return_value=[]),
+    ):
+        asyncio.run(cmd_filter(interaction, chara=None, date="2026-01-01", days=None))
+    msg = interaction.followup.send.call_args[0][0]
+    assert "❌" in msg
+
+
+def test_cmd_filter_date_returns_embed():
+    """/tekken filter date=2026-04-10: 該当あり → Embed を送信する。"""
+    interaction = _make_interaction()
+    battles = [_make_battle(won=True), _make_battle(battle_id="t2", won=False)]
+    with (
+        patch("main.get_players", return_value=[("Alice", "pid_a")]),
+        patch("bot.db.get_battles_on_date", return_value=battles),
+    ):
+        asyncio.run(cmd_filter(interaction, chara=None, date="2026-04-10", days=None))
+    kwargs = interaction.followup.send.call_args.kwargs
+    assert "embed" in kwargs
+
+
+def test_cmd_filter_chara_no_results():
+    """/tekken filter chara=Unknown: 該当なし → エラーメッセージ。"""
+    interaction = _make_interaction()
+    with (
+        patch("main.get_players", return_value=[("Alice", "pid_a")]),
+        patch("bot.db.get_battles_by_opp_chara", return_value=[]),
+    ):
+        asyncio.run(cmd_filter(interaction, chara="Unknown", date=None, days=None))
+    msg = interaction.followup.send.call_args[0][0]
+    assert "❌" in msg
+
+
+def test_cmd_filter_chara_returns_embed():
+    """/tekken filter chara=Jin: 該当あり → Embed を送信する。"""
+    interaction = _make_interaction()
+    battles = [_make_battle(won=True, opp_chara="Jin"), _make_battle(battle_id="t2", won=False, opp_chara="Jin")]
+    with (
+        patch("main.get_players", return_value=[("Alice", "pid_a")]),
+        patch("bot.db.get_battles_by_opp_chara", return_value=battles),
+    ):
+        asyncio.run(cmd_filter(interaction, chara="Jin", date=None, days=None))
+    kwargs = interaction.followup.send.call_args.kwargs
+    assert "embed" in kwargs
+
+
+def test_cmd_filter_chara_with_days():
+    """/tekken filter chara=Bryan days=7: since_ts が計算されて get_battles_by_opp_chara に渡る。"""
+    interaction = _make_interaction()
+    battles = [_make_battle(opp_chara="Bryan")]
+    with (
+        patch("main.get_players", return_value=[("Alice", "pid_a")]),
+        patch("bot.db.get_battles_by_opp_chara", return_value=battles) as mock_db,
+    ):
+        asyncio.run(cmd_filter(interaction, chara="Bryan", date=None, days=7))
+    _kwargs = mock_db.call_args.kwargs
+    assert _kwargs.get("since_ts", 0) > 0
+
+
+def test_cmd_filter_chara_with_date():
+    """/tekken filter chara=Jin date=2026-04-01: since_ts が日付から計算される。"""
+    interaction = _make_interaction()
+    battles = [_make_battle(opp_chara="Jin")]
+    with (
+        patch("main.get_players", return_value=[("Alice", "pid_a")]),
+        patch("bot.db.get_battles_by_opp_chara", return_value=battles) as mock_db,
+    ):
+        asyncio.run(cmd_filter(interaction, chara="Jin", date="2026-04-01", days=None))
+    _kwargs = mock_db.call_args.kwargs
+    assert _kwargs.get("since_ts", 0) > 0
+
+
+def test_cmd_filter_chara_invalid_date():
+    """/tekken filter chara=Jin date=bad: 日付フォーマットエラー。"""
+    interaction = _make_interaction()
+    with patch("main.get_players", return_value=[("Alice", "pid_a")]):
+        asyncio.run(cmd_filter(interaction, chara="Jin", date="bad-date", days=None))
     msg = interaction.followup.send.call_args[0][0]
     assert "❌" in msg
