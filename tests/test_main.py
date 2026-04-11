@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from main import (
     _analyze_with_timeout, _compute_opponent_data, _fire_alerts,
     get_players, setup_logging, _fetch_scout_data,
+    _run_for_player, run_main_sync, run_weekly_sync,
 )
 
 
@@ -434,3 +435,232 @@ def test_fire_alerts_no_rank_up_when_rank_missing():
     ):
         _fire_alerts(today_battles, today_battles, prev_battles, "Alice")
     mock_notify.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# _run_for_player
+# ---------------------------------------------------------------------------
+
+def _make_battle(battle_id: str = "t1", battle_at: int = 1_000_000, won: bool = True) -> dict:
+    return {
+        "battle_id": battle_id, "battle_at": battle_at, "won": won,
+        "battle_type": "ranked", "opp_chara": "Jin", "my_chara": "Lee",
+        "my_rounds": 2, "opp_rounds": 1,
+        "rating_before": 10000, "rating_change": 100,
+        "my_power": None, "my_rank": None,
+        "opp_polaris_id": "pid_opp", "opp_name": "Opp",
+    }
+
+
+def test_run_for_player_happy_path():
+    """新規バトルあり → post が呼ばれて mark_posted_today が実行される。"""
+    today_battles = [_make_battle()]
+    mock_post_result = ([("msg1", "https://discord.com/api/webhooks/1/tok")], {"title": "t"})
+    with (
+        patch("bot.db.get_latest_battle_at", return_value=None),
+        patch("main.fetcher.fetch_battles_since", return_value=today_battles),
+        patch("bot.db.insert_battles", return_value=1),
+        patch("main.fetcher.fetch_quick_battles_from_ewgf", return_value=[]),
+        patch("bot.db.get_battles_on_date", return_value=today_battles),
+        patch("bot.db.has_posted_today", return_value=False),
+        patch("bot.db.mark_posted_today"),
+        patch("main._compute_opponent_data", return_value=({}, [])),
+        patch("main._fetch_scout_data", return_value={}),
+        patch("main._fire_alerts"),
+        patch("main.discord_post.post", return_value=mock_post_result) as mock_post,
+        patch("main._analyze_with_timeout", return_value=None),
+        patch("main.discord_post.edit_llm_comment"),
+        patch("main.discord_post.notify_error"),
+    ):
+        _run_for_player("Alice", "pid_alice", "2026-04-10", "2026/04/10")
+
+    mock_post.assert_called_once()
+
+
+def test_run_for_player_no_today_battles():
+    """今日の試合なし → post が呼ばれない。"""
+    with (
+        patch("bot.db.get_latest_battle_at", return_value=None),
+        patch("main.fetcher.fetch_battles_since", return_value=[]),
+        patch("bot.db.insert_battles", return_value=0),
+        patch("main.fetcher.fetch_quick_battles_from_ewgf", return_value=[]),
+        patch("bot.db.get_battles_on_date", return_value=[]),
+        patch("main.discord_post.post") as mock_post,
+        patch("main.discord_post.notify_error"),
+    ):
+        _run_for_player("Alice", "pid_alice", "2026-04-10", "2026/04/10")
+
+    mock_post.assert_not_called()
+
+
+def test_run_for_player_skips_if_already_posted():
+    """新規なし・投稿済み → post が呼ばれない。"""
+    today_battles = [_make_battle()]
+    with (
+        patch("bot.db.get_latest_battle_at", return_value=None),
+        patch("main.fetcher.fetch_battles_since", return_value=[]),
+        patch("bot.db.insert_battles", return_value=0),
+        patch("main.fetcher.fetch_quick_battles_from_ewgf", return_value=[]),
+        patch("bot.db.get_battles_on_date", return_value=today_battles),
+        patch("bot.db.has_posted_today", return_value=True),
+        patch("main.discord_post.post") as mock_post,
+        patch("main.discord_post.notify_error"),
+    ):
+        _run_for_player("Alice", "pid_alice", "2026-04-10", "2026/04/10")
+
+    mock_post.assert_not_called()
+
+
+def test_run_for_player_with_llm_comment():
+    """LLM コメントあり → edit_llm_comment が呼ばれる。"""
+    today_battles = [_make_battle()]
+    mock_post_result = ([("msg1", "https://discord.com/api/webhooks/1/tok")], {"title": "t"})
+    with (
+        patch("bot.db.get_latest_battle_at", return_value=None),
+        patch("main.fetcher.fetch_battles_since", return_value=today_battles),
+        patch("bot.db.insert_battles", return_value=1),
+        patch("main.fetcher.fetch_quick_battles_from_ewgf", return_value=[]),
+        patch("bot.db.get_battles_on_date", return_value=today_battles),
+        patch("bot.db.has_posted_today", return_value=False),
+        patch("bot.db.mark_posted_today"),
+        patch("main._compute_opponent_data", return_value=({}, [])),
+        patch("main._fetch_scout_data", return_value={}),
+        patch("main._fire_alerts"),
+        patch("main.discord_post.post", return_value=mock_post_result),
+        patch("main._analyze_with_timeout", return_value="素晴らしい"),
+        patch("main.discord_post.edit_llm_comment") as mock_edit,
+        patch("main.discord_post.notify_error"),
+    ):
+        _run_for_player("Alice", "pid_alice", "2026-04-10", "2026/04/10")
+
+    mock_edit.assert_called_once()
+
+
+def test_run_for_player_fetch_error_posts_error():
+    """fetcher が例外を送出 → notify_error が呼ばれて処理を中断。"""
+    with (
+        patch("bot.db.get_latest_battle_at", return_value=None),
+        patch("main.fetcher.fetch_battles_since", side_effect=RuntimeError("network error")),
+        patch("main.discord_post.notify_error") as mock_notify_error,
+        patch("main.discord_post.post") as mock_post,
+    ):
+        _run_for_player("Alice", "pid_alice", "2026-04-10", "2026/04/10")
+
+    mock_notify_error.assert_called_once()
+    mock_post.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# run_main_sync / run_weekly_sync
+# ---------------------------------------------------------------------------
+
+def test_run_main_sync_runs_without_error():
+    """run_main_sync() が asyncio.run(main()) を呼ぶ（モック）。"""
+    with patch("main.main", new=AsyncMock()):
+        run_main_sync()  # should not raise
+
+
+def test_run_weekly_sync_runs_without_error():
+    """run_weekly_sync() が asyncio.run(weekly()) を呼ぶ（モック）。"""
+    with patch("main.weekly", new=AsyncMock()):
+        run_weekly_sync()  # should not raise
+
+
+def test_run_for_player_with_quick_battles():
+    """クイックマッチデータあり → クイック件数がログに記録される。"""
+    today_battles = [_make_battle()]
+    quick = [_make_battle(battle_id="q1")]
+    mock_post_result = ([("msg1", "https://discord.com/api/webhooks/1/tok")], {"title": "t"})
+    with (
+        patch("bot.db.get_latest_battle_at", return_value=None),
+        patch("main.fetcher.fetch_battles_since", return_value=today_battles),
+        patch("bot.db.insert_battles", return_value=1),
+        patch("main.fetcher.fetch_quick_battles_from_ewgf", return_value=quick),
+        patch("bot.db.get_battles_on_date", return_value=today_battles),
+        patch("bot.db.has_posted_today", return_value=False),
+        patch("bot.db.mark_posted_today"),
+        patch("main._compute_opponent_data", return_value=({}, [])),
+        patch("main._fetch_scout_data", return_value={}),
+        patch("main._fire_alerts"),
+        patch("main.discord_post.post", return_value=mock_post_result),
+        patch("main._analyze_with_timeout", return_value=None),
+        patch("main.discord_post.edit_llm_comment"),
+        patch("main.discord_post.notify_error"),
+    ):
+        _run_for_player("Alice", "pid_alice", "2026-04-10", "2026/04/10")  # should not raise
+
+
+def test_run_for_player_post_discord_exception():
+    """Discord 投稿が例外 → エラーログが記録されるが処理は継続。"""
+    today_battles = [_make_battle()]
+    with (
+        patch("bot.db.get_latest_battle_at", return_value=None),
+        patch("main.fetcher.fetch_battles_since", return_value=today_battles),
+        patch("bot.db.insert_battles", return_value=1),
+        patch("main.fetcher.fetch_quick_battles_from_ewgf", return_value=[]),
+        patch("bot.db.get_battles_on_date", return_value=today_battles),
+        patch("bot.db.has_posted_today", return_value=False),
+        patch("bot.db.mark_posted_today"),
+        patch("main._compute_opponent_data", return_value=({}, [])),
+        patch("main._fetch_scout_data", return_value={}),
+        patch("main._fire_alerts"),
+        patch("main.discord_post.post", side_effect=RuntimeError("webhook error")),
+        patch("main._analyze_with_timeout", return_value=None),
+        patch("main.discord_post.edit_llm_comment"),
+        patch("main.discord_post.notify_error"),
+    ):
+        _run_for_player("Alice", "pid_alice", "2026-04-10", "2026/04/10")  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# _run_weekly_for_player
+# ---------------------------------------------------------------------------
+
+from main import _run_weekly_for_player
+
+
+def test_run_weekly_for_player_returns_community_stats():
+    """正常実行 → community_stats エントリを返す。"""
+    battles = [_make_battle()]
+    mock_post_result = ([("msg1", "https://discord.com/api/webhooks/1/tok")], {"title": "t"})
+    with (
+        patch("bot.db.get_battles_since", return_value=battles),
+        patch("main.discord_post.post_weekly", return_value=mock_post_result),
+        patch("main._analyze_with_timeout", return_value=None),
+        patch("main.discord_post.edit_llm_comment"),
+        patch("main.discord_post.notify_error"),
+    ):
+        result = _run_weekly_for_player("Alice", 1000000.0, "2026/04/07")
+
+    assert result["name"] == "Alice"
+    assert "wins" in result
+    assert "losses" in result
+    assert "net_rating" in result
+
+
+def test_run_weekly_for_player_no_battles():
+    """試合なし → wins/losses 0 を返す。"""
+    mock_post_result = None
+    with (
+        patch("bot.db.get_battles_since", return_value=[]),
+        patch("main.discord_post.post_weekly", return_value=mock_post_result),
+        patch("main._analyze_with_timeout", return_value=None),
+        patch("main.discord_post.notify_error"),
+    ):
+        result = _run_weekly_for_player("Bob", 1000000.0, "2026/04/07")
+
+    assert result["wins"] == 0
+    assert result["losses"] == 0
+
+
+def test_run_weekly_for_player_post_exception():
+    """weekly 投稿が例外 → notify_error が呼ばれる。"""
+    with (
+        patch("bot.db.get_battles_since", return_value=[_make_battle()]),
+        patch("main.discord_post.post_weekly", side_effect=RuntimeError("webhook error")),
+        patch("main.discord_post.notify_error") as mock_err,
+        patch("main._analyze_with_timeout", return_value=None),
+    ):
+        _run_weekly_for_player("Alice", 1000000.0, "2026/04/07")
+
+    mock_err.assert_called_once()

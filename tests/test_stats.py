@@ -213,3 +213,77 @@ def test_detect_losing_streak_basic():
 
 def test_detect_losing_streak_empty():
     assert detect_losing_streak([]) == 0
+
+
+# ---------------------------------------------------------------------------
+# get_most_common (bot/stats.py line 66)
+# ---------------------------------------------------------------------------
+
+from bot.stats import get_most_common, aggregate_by_hour
+from bot.config import UNKNOWN_CHARACTER
+
+
+def test_get_most_common_empty_returns_unknown():
+    """バトルなし → UNKNOWN_CHARACTER と 0 を返す。"""
+    result = get_most_common([], "my_chara")
+    assert result == (UNKNOWN_CHARACTER, 0)
+
+
+def test_get_most_common_basic():
+    """最多キャラを正しく返す。"""
+    battles = [
+        {"my_chara": "Lee"},
+        {"my_chara": "Lee"},
+        {"my_chara": "Jin"},
+    ]
+    name, cnt = get_most_common(battles, "my_chara")
+    assert name == "Lee"
+    assert cnt == 2
+
+
+# ---------------------------------------------------------------------------
+# aggregate_by_hour (bot/stats.py line 99)
+# ---------------------------------------------------------------------------
+
+def test_aggregate_by_hour_skips_none_battle_at():
+    """battle_at が None のバトルはスキップされる。"""
+    battles = [
+        {"battle_at": None, "won": True},
+        {"battle_at": 1000, "won": True},
+    ]
+    result = aggregate_by_hour(battles)
+    # None のバトルはスキップ → キーが1つだけ
+    assert len(result) == 1
+
+
+# ---------------------------------------------------------------------------
+# predict_rating_trend exception branches (lines 135-140)
+# ---------------------------------------------------------------------------
+
+from unittest.mock import patch
+
+
+def test_predict_rating_trend_returns_empty_on_import_error():
+    """numpy が見つからない場合は空 dict を返す。"""
+    import sys
+    battles = [
+        {"battle_at": 1000, "won": True,  "battle_type": "ranked", "rating_before": 10000, "rating_change": 100},
+        {"battle_at": 2000, "won": True,  "battle_type": "ranked", "rating_before": 10100, "rating_change": 80},
+        {"battle_at": 3000, "won": False, "battle_type": "ranked", "rating_before": 10180, "rating_change": -50},
+    ]
+    # numpy を一時的に見つからなくする
+    with patch.dict(sys.modules, {"numpy": None}):
+        result = predict_rating_trend(battles)
+    assert result == {}
+
+
+def test_predict_rating_trend_returns_empty_on_exception():
+    """計算中に例外が発生した場合は空 dict を返す��"""
+    battles = [
+        {"battle_at": 1000, "won": True,  "battle_type": "ranked", "rating_before": 10000, "rating_change": 100},
+        {"battle_at": 2000, "won": True,  "battle_type": "ranked", "rating_before": 10100, "rating_change": 80},
+        {"battle_at": 3000, "won": False, "battle_type": "ranked", "rating_before": 10180, "rating_change": -50},
+    ]
+    with patch("numpy.polyfit", side_effect=ValueError("bad fit")):
+        result = predict_rating_trend(battles)
+    assert result == {}
