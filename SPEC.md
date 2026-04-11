@@ -1,5 +1,14 @@
 # Tekken Bot 機能拡張仕様書
 
+> **[2026-04-11 以降]** このファイルは歴史的記録として保持する。
+> 今後の仕様管理・機能追加は **[aidlc-docs/](aidlc-docs/)** を正とする。
+> - 原則: [aidlc-docs/constitution.md](aidlc-docs/constitution.md)
+> - 要件: [aidlc-docs/requirements/core_features.md](aidlc-docs/requirements/core_features.md)
+> - 設計: [aidlc-docs/design-artifacts/architecture.md](aidlc-docs/design-artifacts/architecture.md)
+> - 実装計画: [aidlc-docs/plans/](aidlc-docs/plans/)
+
+---
+
 ## 1. プロジェクト概要（Constitution）
 
 会社の格ゲー部向け Tekken 8 Discord Bot。
