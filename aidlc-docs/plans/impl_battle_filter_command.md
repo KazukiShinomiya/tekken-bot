@@ -16,28 +16,27 @@
 
 ## ステップ
 
-- [ ] **Step 1: DB クエリ追加** (`bot/db.py`)
-  - `get_battles_by_opp_chara(chara_name: str, since_ts: int = 0, player_name: str | None = None) -> list[Battle]`
-  - `get_battles_on_date_and_chara(date_str: str, chara_name: str, player_name: str | None = None) -> list[Battle]`
+- [x] **Step 1: DB クエリ追加** (`bot/db.py`)
+  - `get_battles_by_opp_chara` に `since_ts: int = 0` パラメータを追加（既存関数を拡張）
+  - `get_battles_on_date` は既存実装をそのまま流用
 
-- [ ] **Step 2: スラッシュコマンド追加** (`bot/slash_commands.py`)
-  - `/tekken filter chara <name>` → `cmd_filter_chara`
-  - `/tekken filter date <YYYY-MM-DD>` → `cmd_filter_date`
-  - 組み合わせは `chara` + `date` 両方のオプションで1コマンドに統合
-  - 結果は `build_embed()` を流用して Embed 表示
+- [x] **Step 2: スラッシュコマンド追加** (`bot/slash_commands.py`)
+  - `/tekken filter` を `chara` / `date` / `days` の3オプションで1コマンドに統合
+  - date 単独: `get_battles_on_date` → 時刻・試合種別・スコア付き一覧 Embed
+  - chara + 期間: `get_battles_by_opp_chara(since_ts=...)` → 勝率・直近10試合 Embed
 
-- [ ] **Step 3: テスト追加** (`tests/test_db.py`, `tests/test_slash_commands.py`)
-  - DB クエリのユニットテスト（キャラ名部分一致・日付フィルタ）
-  - コマンドハンドラの mock テスト
+- [x] **Step 3: テスト追加** (`tests/test_db.py`, `tests/test_slash_commands.py`)
+  - DB: `since_ts` フィルタ・ゼロ値全件返し・player_name 複合フィルタ (+3件)
+  - コマンドハンドラ: 引数なし/invalid-date/no-results/embed返却/days/chara+date (+9件)
 
 ---
 
 ## 完了条件
 
-- [ ] `python -m pytest tests/` 全通過
-- [ ] mypy 0 エラー
-- [ ] `/tekken filter` コマンドが Discord で正常動作
-- [ ] NAS デプロイ完了
+- [x] `python -m pytest tests/` 全通過（427 passed）
+- [x] mypy 0 エラー（bot/db.py, bot/slash_commands.py）
+- [x] `/tekken filter` コマンドが Discord で正常動作
+- [x] NAS デプロイ完了（2026-04-11, commit ef54786）
 
 ---
 

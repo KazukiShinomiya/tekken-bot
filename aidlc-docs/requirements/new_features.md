@@ -18,7 +18,7 @@
 - `/tekken filter chara <名前> date <YYYY-MM-DD>` — 組み合わせフィルタ
 - 結果は Embed 形式（勝率・試合一覧）で返す
 
-**Status:** ⬜ Not started
+**Status:** ✅ Done（2026-04-11, commit ef54786）
 
 ---
 
