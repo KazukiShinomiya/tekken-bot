@@ -1,10 +1,13 @@
 """
 bot/graph.py のテスト。
 matplotlib を使って PNG 生成を検証する。matplotlib 未インストール時はスキップ。
+ImportError パスのテストのみ sys.modules パッチで matplotlib を隠す。
 """
 
 import io
+import sys
 import pytest
+from unittest.mock import patch
 
 pytest.importorskip("matplotlib")
 
@@ -146,5 +149,44 @@ def test_chara_chart_handles_many_charas():
     for w in ["2026-W13", "2026-W14"]:
         for i, c in enumerate(charas):
             data.append(_week_row(w, c, i + 1))
+    result = generate_chara_usage_chart(data)
+    assert isinstance(result, io.BytesIO)
+
+
+# ---------------------------------------------------------------------------
+# matplotlib ImportError パス（sys.modules パッチで再現）
+# ---------------------------------------------------------------------------
+
+_MOCKED_ABSENT = {k: None for k in [
+    "matplotlib", "matplotlib.pyplot", "matplotlib.dates",
+    "matplotlib.rcParams", "numpy",
+]}
+
+
+def test_rating_chart_returns_none_when_matplotlib_missing():
+    """matplotlib 未インストール環境では None を返す。"""
+    with patch.dict(sys.modules, _MOCKED_ABSENT):
+        result = generate_rating_chart([_battle()], player_name="Test")
+    assert result is None
+
+
+def test_chara_chart_returns_none_when_matplotlib_missing():
+    """matplotlib 未インストール環境では None を返す。"""
+    data = [_week_row("2026-W13", "Lee", 5), _week_row("2026-W14", "Lee", 4)]
+    with patch.dict(sys.modules, _MOCKED_ABSENT):
+        result = generate_chara_usage_chart(data, player_name="Test")
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# _week_label の ValueError パス
+# ---------------------------------------------------------------------------
+
+def test_chara_chart_handles_invalid_week_format():
+    """無効な週文字列（strptime が ValueError）でも例外なくグラフを生成する。"""
+    data = [
+        _week_row("bad-week",  "Lee", 5),
+        _week_row("bad-week2", "Lee", 4),
+    ]
     result = generate_chara_usage_chart(data)
     assert isinstance(result, io.BytesIO)

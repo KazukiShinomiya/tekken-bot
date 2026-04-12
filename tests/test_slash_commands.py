@@ -52,6 +52,7 @@ sys.modules.setdefault("discord.app_commands", _app_commands_mock)
 from bot.slash_commands import (  # noqa: E402
     cmd_today, cmd_vs, cmd_chara, cmd_top, cmd_status, cmd_rival,
     cmd_trend, cmd_filter, cmd_help, _chara_autocomplete,
+    cmd_weekly, on_ready, start_bot, start_bot_thread,
 )
 
 
@@ -507,3 +508,167 @@ def test_chara_autocomplete_case_insensitive():
         results = asyncio.run(_chara_autocomplete(interaction, current="JIN"))
     assert len(results) == 1
     assert results[0].name == "Jin"
+
+
+# ---------------------------------------------------------------------------
+# /tekken today（例外パス）
+# ---------------------------------------------------------------------------
+
+def test_cmd_today_exception_path():
+    """/tekken today で予期しない例外 → ❌ メッセージを返す。"""
+    interaction = _make_interaction()
+    with patch("main.main", new_callable=AsyncMock, side_effect=RuntimeError("unexpected")):
+        asyncio.run(cmd_today(interaction, date="2026-04-12"))
+    msg = interaction.followup.send.call_args[0][0]
+    assert "❌" in msg
+
+
+# ---------------------------------------------------------------------------
+# /tekken weekly
+# ---------------------------------------------------------------------------
+
+def test_cmd_weekly_happy_path():
+    """/tekken weekly: weekly() を呼び出して ✅ メッセージを返す。"""
+    interaction = _make_interaction()
+    with patch("main.weekly", new_callable=AsyncMock):
+        asyncio.run(cmd_weekly(interaction))
+    msg = interaction.followup.send.call_args[0][0]
+    assert "✅" in msg
+
+
+def test_cmd_weekly_exception_path():
+    """/tekken weekly で予期しない例外 → ❌ メッセージを返す。"""
+    interaction = _make_interaction()
+    with patch("main.weekly", new_callable=AsyncMock, side_effect=RuntimeError("err")):
+        asyncio.run(cmd_weekly(interaction))
+    msg = interaction.followup.send.call_args[0][0]
+    assert "❌" in msg
+
+
+# ---------------------------------------------------------------------------
+# /tekken rival（追加パス）
+# ---------------------------------------------------------------------------
+
+def _make_rival_battles() -> list[dict]:
+    """rival コマンド用バトルリスト。"""
+    return [
+        {**_make_battle(battle_id=f"r{i}", battle_at=1700000000 + i, won=(i % 2 == 0)),
+         "rating_change": 100, "rating_before": 10000}
+        for i in range(4)
+    ]
+
+
+def test_cmd_rival_lose_streak_branch():
+    """/tekken rival で連敗中 → ❌ ストリーク表示を含む Embed を返す。"""
+    interaction = _make_interaction()
+    # 最後3戦を負けにして lose_streak >= 2 になるよう設定
+    battles = [
+        _make_battle("r0", battle_at=1700000000, won=True),
+        _make_battle("r1", battle_at=1700000001, won=False),
+        _make_battle("r2", battle_at=1700000002, won=False),
+        _make_battle("r3", battle_at=1700000003, won=False),
+    ]
+    with patch("bot.db.search_battles_vs_opponent", return_value=battles):
+        asyncio.run(cmd_rival(interaction, name="Opp"))
+    interaction.followup.send.assert_called_once()
+
+
+def test_cmd_rival_net_rating_branch():
+    """/tekken rival でレーティング変動あり → 累積レーティング変動フィールドが追加される。"""
+    interaction = _make_interaction()
+    battles = [
+        {**_make_battle(battle_id=f"r{i}", battle_at=1700000000 + i),
+         "rating_change": 100, "rating_before": 10000}
+        for i in range(3)
+    ]
+    with patch("bot.db.search_battles_vs_opponent", return_value=battles):
+        asyncio.run(cmd_rival(interaction, name="Opp"))
+    # embed が渡されれば add_field が呼ばれたはず
+    sent_kwargs = interaction.followup.send.call_args.kwargs
+    assert "embed" in sent_kwargs
+
+
+# ---------------------------------------------------------------------------
+# on_ready
+# ---------------------------------------------------------------------------
+
+def _get_original_on_ready():
+    """
+    @client.event デコレーターはモック化されており on_ready を MagicMock に変換する。
+    元のコルーチン関数は client.event の call_args から取り出す。
+    """
+    import bot.slash_commands as _sc
+    return _sc.client.event.call_args[0][0]
+
+
+def test_on_ready_with_guild_id():
+    """DISCORD_GUILD_ID が設定されている場合、ギルド同期が実行される。"""
+    import bot.slash_commands as _sc
+    original_on_ready = _get_original_on_ready()
+    mock_tree = MagicMock()
+    mock_tree.sync = AsyncMock()
+    mock_tree.copy_global_to = MagicMock()
+    mock_client = MagicMock()
+    mock_client.user = "TestBot"
+    with (
+        patch.object(_sc, "DISCORD_GUILD_ID", "12345"),
+        patch.object(_sc, "tree", mock_tree),
+        patch.object(_sc, "client", mock_client),
+    ):
+        asyncio.run(original_on_ready())
+    mock_tree.sync.assert_called_once()
+
+
+def test_on_ready_without_guild_id():
+    """DISCORD_GUILD_ID が未設定の場合、グローバル同期が実行される。"""
+    import bot.slash_commands as _sc
+    original_on_ready = _get_original_on_ready()
+    mock_tree = MagicMock()
+    mock_tree.sync = AsyncMock()
+    mock_client = MagicMock()
+    mock_client.user = "TestBot"
+    with (
+        patch.object(_sc, "DISCORD_GUILD_ID", None),
+        patch.object(_sc, "tree", mock_tree),
+        patch.object(_sc, "client", mock_client),
+    ):
+        asyncio.run(original_on_ready())
+    mock_tree.sync.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# start_bot / start_bot_thread
+# ---------------------------------------------------------------------------
+
+def test_start_bot_no_token():
+    """BOT_TOKEN 未設定 → client.run は呼ばれない。"""
+    import bot.slash_commands as _sc
+    mock_client = MagicMock()
+    with (
+        patch.object(_sc, "BOT_TOKEN", None),
+        patch.object(_sc, "client", mock_client),
+    ):
+        start_bot()
+    mock_client.run.assert_not_called()
+
+
+def test_start_bot_exception_is_caught():
+    """client.run が例外を送出しても start_bot は例外を伝播させない。"""
+    import bot.slash_commands as _sc
+    mock_client = MagicMock()
+    mock_client.run.side_effect = RuntimeError("bot error")
+    with (
+        patch.object(_sc, "BOT_TOKEN", "dummy-token"),
+        patch.object(_sc, "client", mock_client),
+    ):
+        start_bot()  # should not raise
+
+
+def test_start_bot_thread_returns_thread():
+    """start_bot_thread() はデーモンスレッドを返す。"""
+    import threading
+    import bot.slash_commands as _sc
+    with patch.object(_sc, "start_bot", return_value=None):
+        t = start_bot_thread()
+    assert isinstance(t, threading.Thread)
+    assert t.daemon is True

@@ -535,3 +535,174 @@ def test_run_weekly_for_player_post_exception():
         _run_weekly_for_player("Alice", 1000000.0, "2026/04/07")
 
     mock_err.assert_called_once()
+
+
+def test_run_weekly_for_player_edits_llm_comment():
+    """LLM コメントあり & 投稿成功 → edit_llm_comment が呼ばれる。"""
+    battles = [_make_battle()]
+    mock_post_result = ([("msg1", "https://discord.com/api/webhooks/1/tok")], {"title": "t"})
+    with (
+        patch("bot.db.get_battles_since", return_value=battles),
+        patch("main.discord_post.post_weekly", return_value=mock_post_result),
+        patch("main._analyze_with_timeout", return_value="LLMコメント"),
+        patch("main.discord_post.edit_llm_comment") as mock_edit,
+        patch("main.discord_post.notify_error"),
+    ):
+        _run_weekly_for_player("Alice", 1000000.0, "2026/04/07")
+
+    mock_edit.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# main() / weekly() 非同期関数
+# ---------------------------------------------------------------------------
+
+import main as _main_module
+
+
+def test_main_skips_if_lock_held():
+    """_main_lock 取得済みの場合 main() は即座に return する。"""
+    mock_lock = MagicMock()
+    mock_lock.acquire.return_value = False
+    with (
+        patch.object(_main_module, "_main_lock", mock_lock),
+        patch("bot.db.init_db") as mock_init,
+    ):
+        asyncio.run(_main_module.main())
+    mock_init.assert_not_called()
+
+
+def test_main_config_errors_exit():
+    """設定エラーがある場合 sys.exit(1) → SystemExit(1) を送出する。"""
+    import pytest
+    mock_lock = MagicMock()
+    mock_lock.acquire.return_value = True
+    with (
+        patch.object(_main_module, "_main_lock", mock_lock),
+        patch("main.validate_config", return_value=["ERROR: 設定値が不正"]),
+        patch("bot.db.init_db"),
+        patch("main.fetcher.load_learned_chara_names"),
+    ):
+        with pytest.raises(SystemExit) as exc_info:
+            asyncio.run(_main_module.main())
+    assert exc_info.value.code == 1
+
+
+def test_main_no_players_exits():
+    """プレイヤー未設定時は sys.exit(1) を呼ぶ。"""
+    mock_lock = MagicMock()
+    mock_lock.acquire.return_value = True
+    with (
+        patch.object(_main_module, "_main_lock", mock_lock),
+        patch("main.validate_config", return_value=[]),
+        patch("bot.db.init_db"),
+        patch("main.fetcher.load_learned_chara_names"),
+        patch("bot.db.get_unknown_chara_battles", return_value=[]),
+        patch("main.get_players", return_value=[]),
+        patch("main.sys.exit") as mock_exit,
+    ):
+        asyncio.run(_main_module.main())
+    mock_exit.assert_called_once_with(1)
+
+
+def test_main_happy_path():
+    """正常実行 → _run_for_player と backup_db が呼ばれる。"""
+    mock_lock = MagicMock()
+    mock_lock.acquire.return_value = True
+    backup_mock = MagicMock()
+    backup_mock.name = "battles_20260412.db"
+    with (
+        patch.object(_main_module, "_main_lock", mock_lock),
+        patch("main.validate_config", return_value=[]),
+        patch("bot.db.init_db"),
+        patch("main.fetcher.load_learned_chara_names"),
+        patch("bot.db.get_unknown_chara_battles", return_value=[]),
+        patch("main.get_players", return_value=[("Alice", "pid_a")]),
+        patch("main._run_for_player") as mock_run,
+        patch("bot.db.backup_db", return_value=backup_mock),
+    ):
+        asyncio.run(_main_module.main(target_date="2026-04-12"))
+    mock_run.assert_called_once_with("Alice", "pid_a", "2026-04-12", "2026/04/12")
+
+
+def test_main_unknown_chara_logs_warning():
+    """未学習キャラが存在する場合、警告ログを出力して処理を続行する。"""
+    mock_lock = MagicMock()
+    mock_lock.acquire.return_value = True
+    backup_mock = MagicMock()
+    backup_mock.name = "battles_20260412.db"
+    unknown = [
+        {"my_chara_id": 99, "opp_chara_id": None, "my_chara": "Chara#99", "opp_chara": None},
+    ]
+    with (
+        patch.object(_main_module, "_main_lock", mock_lock),
+        patch("main.validate_config", return_value=[]),
+        patch("bot.db.init_db"),
+        patch("main.fetcher.load_learned_chara_names"),
+        patch("bot.db.get_unknown_chara_battles", return_value=unknown),
+        patch("main.get_players", return_value=[("Alice", "pid_a")]),
+        patch("main._run_for_player"),
+        patch("bot.db.backup_db", return_value=backup_mock),
+    ):
+        asyncio.run(_main_module.main(target_date="2026-04-12"))  # should not raise
+
+
+def test_main_backup_failure_does_not_raise():
+    """DB バックアップ失敗時も例外を伝播させない。"""
+    mock_lock = MagicMock()
+    mock_lock.acquire.return_value = True
+    with (
+        patch.object(_main_module, "_main_lock", mock_lock),
+        patch("main.validate_config", return_value=[]),
+        patch("bot.db.init_db"),
+        patch("main.fetcher.load_learned_chara_names"),
+        patch("bot.db.get_unknown_chara_battles", return_value=[]),
+        patch("main.get_players", return_value=[("Alice", "pid_a")]),
+        patch("main._run_for_player"),
+        patch("bot.db.backup_db", side_effect=OSError("disk full")),
+    ):
+        asyncio.run(_main_module.main(target_date="2026-04-12"))  # should not raise
+
+
+def test_weekly_skips_if_lock_held():
+    """_weekly_lock 取得済みの場合 weekly() は即座に return する。"""
+    mock_lock = MagicMock()
+    mock_lock.acquire.return_value = False
+    with (
+        patch.object(_main_module, "_weekly_lock", mock_lock),
+        patch("bot.db.init_db") as mock_init,
+    ):
+        asyncio.run(_main_module.weekly())
+    mock_init.assert_not_called()
+
+
+def test_weekly_no_players_returns_early():
+    """プレイヤー未設定時は post_community_weekly を呼ばない。"""
+    mock_lock = MagicMock()
+    mock_lock.acquire.return_value = True
+    with (
+        patch.object(_main_module, "_weekly_lock", mock_lock),
+        patch("bot.db.init_db"),
+        patch("main.fetcher.load_learned_chara_names"),
+        patch("main.get_players", return_value=[]),
+        patch("main.discord_post.post_community_weekly") as mock_community,
+    ):
+        asyncio.run(_main_module.weekly())
+    mock_community.assert_not_called()
+
+
+def test_weekly_happy_path():
+    """正常実行 → _run_weekly_for_player と post_community_weekly が呼ばれる。"""
+    mock_lock = MagicMock()
+    mock_lock.acquire.return_value = True
+    weekly_result = {"name": "Alice", "wins": 5, "losses": 3, "net_rating": 200}
+    with (
+        patch.object(_main_module, "_weekly_lock", mock_lock),
+        patch("bot.db.init_db"),
+        patch("main.fetcher.load_learned_chara_names"),
+        patch("main.get_players", return_value=[("Alice", "pid_a")]),
+        patch("main._run_weekly_for_player", return_value=weekly_result),
+        patch("main.discord_post.post_community_weekly") as mock_community,
+    ):
+        asyncio.run(_main_module.weekly())
+    mock_community.assert_called_once()

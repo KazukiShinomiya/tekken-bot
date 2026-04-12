@@ -645,3 +645,120 @@ def test_backup_db_keeps_n_copies(db):
     db.backup_db(keep=3)
     backups = sorted(backup_dir.glob("battles_*.db"))
     assert len(backups) <= 3
+
+
+# ---------------------------------------------------------------------------
+# insert_battles（空リスト ガード）
+# ---------------------------------------------------------------------------
+
+def test_insert_battles_empty_returns_zero(db):
+    """空リストを渡すと即座に 0 を返す。"""
+    assert db.insert_battles([]) == 0
+
+
+# ---------------------------------------------------------------------------
+# get_matchup_ranking
+# ---------------------------------------------------------------------------
+
+def test_get_matchup_ranking_with_player_name(db):
+    """player_name 指定時は該当プレイヤーの対面キャラ別集計を返す。"""
+    db.insert_battles([
+        _make_battle("r1", won=True,  opp_chara="Jin"),
+        _make_battle("r2", battle_at=1700000001, won=False, opp_chara="Jin"),
+        _make_battle("r3", battle_at=1700000002, won=True,  opp_chara="Bryan"),
+    ], player_name="Alice")
+    rows = db.get_matchup_ranking(player_name="Alice", min_battles=2)
+    assert len(rows) == 1
+    assert rows[0]["opp_chara"] == "Jin"
+    assert rows[0]["wins"] == 1
+    assert rows[0]["total"] == 2
+
+
+def test_get_matchup_ranking_without_player_name(db):
+    """player_name 未指定 → 全プレイヤーの集計。"""
+    db.insert_battles([
+        _make_battle("r4", battle_at=1700000003, won=True,  opp_chara="Law"),
+        _make_battle("r5", battle_at=1700000004, won=True,  opp_chara="Law"),
+    ], player_name="Alice")
+    db.insert_battles([
+        _make_battle("r6", battle_at=1700000005, won=False, opp_chara="Law"),
+        _make_battle("r7", battle_at=1700000006, won=False, opp_chara="Law"),
+    ], player_name="Bob")
+    rows = db.get_matchup_ranking(min_battles=2)
+    assert any(r["opp_chara"] == "Law" for r in rows)
+    law_row = next(r for r in rows if r["opp_chara"] == "Law")
+    assert law_row["total"] == 4
+
+
+def test_get_matchup_ranking_excludes_below_min(db):
+    """min_battles 未満のキャラは結果に含まれない。"""
+    db.insert_battles([_make_battle("r8", opp_chara="Reina")], player_name="Alice")
+    rows = db.get_matchup_ranking(min_battles=2)
+    assert all(r["opp_chara"] != "Reina" for r in rows)
+
+
+# ---------------------------------------------------------------------------
+# load_chara_names（SQLite エラーパス）
+# ---------------------------------------------------------------------------
+
+def test_load_chara_names_returns_empty_on_sqlite_error(db, monkeypatch):
+    """sqlite3.Error 発生時は空 dict を返す（ログ警告のみ）。"""
+    import sqlite3
+    import contextlib
+
+    @contextlib.contextmanager
+    def _broken_conn():
+        class _C:
+            def execute(self, *a, **kw):
+                raise sqlite3.Error("テストエラー")
+        yield _C()
+
+    monkeypatch.setattr(db, "get_conn", _broken_conn)
+    result = db.load_chara_names()
+    assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# get_my_chara_counts
+# ---------------------------------------------------------------------------
+
+def test_get_my_chara_counts_with_player_name(db):
+    """player_name 指定時は該当プレイヤーの my_chara 別カウントを返す。"""
+    db.insert_battles([
+        _make_battle("m1", my_chara="Lee"),
+        _make_battle("m2", battle_at=1700000001, my_chara="Lee"),
+        _make_battle("m3", battle_at=1700000002, my_chara="Jin"),
+    ], player_name="Alice")
+    rows = db.get_my_chara_counts(since_ts=0, player_name="Alice")
+    assert any(r["my_chara"] == "Lee" and r["cnt"] == 2 for r in rows)
+
+
+def test_get_my_chara_counts_without_player_name(db):
+    """player_name 未指定 → 全プレイヤー集計。"""
+    db.insert_battles([
+        _make_battle("m4", my_chara="Lee"),
+        _make_battle("m5", battle_at=1700000001, my_chara="Lee"),
+    ], player_name="Alice")
+    rows = db.get_my_chara_counts(since_ts=0)
+    assert any(r["my_chara"] == "Lee" for r in rows)
+
+
+# ---------------------------------------------------------------------------
+# get_win_loss_by_hour
+# ---------------------------------------------------------------------------
+
+def test_get_win_loss_by_hour_returns_rows(db):
+    """since_ts 以降の JST 時間帯別勝敗行を返す。"""
+    db.insert_battles([
+        _make_battle("h1", battle_at=1700000000, won=True),
+        _make_battle("h2", battle_at=1700000100, won=False),
+    ], player_name="Alice")
+    rows = db.get_win_loss_by_hour(since_ts=0)
+    assert len(rows) >= 1
+    assert all("hour" in r and "wins" in r and "losses" in r for r in rows)
+
+
+def test_get_win_loss_by_hour_empty(db):
+    """バトルなし → 空リスト。"""
+    rows = db.get_win_loss_by_hour(since_ts=0)
+    assert rows == []
