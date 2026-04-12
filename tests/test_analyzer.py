@@ -7,7 +7,8 @@ import requests
 from unittest.mock import MagicMock, patch
 
 from bot.analyzer import (
-    _build_prompt, _compute_coaching_insights,
+    _build_messages, _build_system_prompt, _build_user_message,
+    _compute_coaching_insights,
     _build_summary_text, _build_rematch_section, _call_ollama, analyze,
 )
 
@@ -24,90 +25,90 @@ def _battle(won: bool, opp_chara: str = "Jin", battle_type: str = "ranked",
     }
 
 
-def test_build_prompt_contains_date():
+def test_build_user_message_contains_date():
     battles = [_battle(True)]
-    prompt = _build_prompt(battles, "2024/01/15")
-    assert "2024/01/15" in prompt
+    msg = _build_user_message(battles, "2024/01/15")
+    assert "2024/01/15" in msg
 
 
-def test_build_prompt_contains_player_name():
+def test_build_user_message_contains_player_name():
     battles = [_battle(True)]
-    prompt = _build_prompt(battles, "2024/01/15", player_name="TestPlayer")
-    assert "TestPlayer" in prompt
+    msg = _build_user_message(battles, "2024/01/15", player_name="TestPlayer")
+    assert "TestPlayer" in msg
 
 
-def test_build_prompt_default_player_name():
-    """player_name 未指定時でも例外を出さず、有効な文字列を返す。"""
+def test_build_user_message_default_player_name():
+    """player_name 未指定時でも例外なく有効な文字列を返す。"""
     battles = [_battle(True)]
-    prompt = _build_prompt(battles, "2024/01/15")
-    assert isinstance(prompt, str)
-    assert len(prompt) > 0
-    assert "ExodusOverseer" not in prompt
+    msg = _build_user_message(battles, "2024/01/15")
+    assert isinstance(msg, str)
+    assert len(msg) > 0
+    assert "ExodusOverseer" not in msg
 
 
-def test_build_prompt_contains_win_loss():
+def test_build_user_message_contains_win_loss():
     battles = [_battle(True), _battle(True), _battle(False)]
-    prompt = _build_prompt(battles, "2024/01/15")
-    assert "2勝1敗" in prompt
+    msg = _build_user_message(battles, "2024/01/15")
+    assert "2勝1敗" in msg
 
 
-def test_build_prompt_contains_opp_chara():
+def test_build_user_message_contains_opp_chara():
     battles = [_battle(True, "Dragunov"), _battle(False, "Dragunov")]
-    prompt = _build_prompt(battles, "2024/01/15")
-    assert "Dragunov" in prompt
+    msg = _build_user_message(battles, "2024/01/15")
+    assert "Dragunov" in msg
 
 
-def test_build_prompt_ranked_quick_split():
+def test_build_user_message_ranked_quick_split():
     battles = [
         _battle(True, battle_type="ranked"),
         _battle(False, battle_type="quick"),
     ]
-    prompt = _build_prompt(battles, "2024/01/15")
-    assert "ランク戦" in prompt
-    assert "クイック" in prompt
+    msg = _build_user_message(battles, "2024/01/15")
+    assert "ランク戦" in msg
+    assert "クイック" in msg
 
 
-def test_build_prompt_empty_battles():
+def test_build_user_message_empty_battles():
     """空のバトルリストでも例外を出さない。"""
-    prompt = _build_prompt([], "2024/01/15")
-    assert isinstance(prompt, str)
-    assert len(prompt) > 0
+    msg = _build_user_message([], "2024/01/15")
+    assert isinstance(msg, str)
+    assert len(msg) > 0
 
 
-def test_build_prompt_round_win_rate():
+def test_build_user_message_round_win_rate():
     battles = [_battle(True)]  # my_rounds=2, opp_rounds=1
-    prompt = _build_prompt(battles, "2024/01/15")
-    assert "ラウンド勝率" in prompt
+    msg = _build_user_message(battles, "2024/01/15")
+    assert "ラウンド勝率" in msg
 
 
-def test_build_prompt_150_chars_instruction():
-    battles = [_battle(True)]
-    prompt = _build_prompt(battles, "2024/01/15")
+def test_build_system_prompt_150_chars_instruction():
+    """システムプロンプトに 150文字以内 の制約が含まれる。"""
+    prompt = _build_system_prompt()
     assert "150文字以内" in prompt
 
 
-def test_build_prompt_shows_streak():
-    """3連勝の場合、最長連勝がプロンプトに含まれる。"""
+def test_build_user_message_shows_streak():
+    """3連勝の場合、最長連勝がユーザーメッセージに含まれる。"""
     battles = [_battle(True, battle_at=i) for i in range(3)]
-    prompt = _build_prompt(battles, "2024/01/15")
-    assert "最長連勝: 3" in prompt
+    msg = _build_user_message(battles, "2024/01/15")
+    assert "最長連勝: 3" in msg
 
 
-def test_build_prompt_omits_streak_when_less_than_2():
+def test_build_user_message_omits_streak_when_less_than_2():
     """1連勝は表示されない。"""
     battles = [_battle(True, battle_at=1), _battle(False, battle_at=2)]
-    prompt = _build_prompt(battles, "2024/01/15")
-    assert "最長連勝" not in prompt
-    assert "最長連敗" not in prompt
+    msg = _build_user_message(battles, "2024/01/15")
+    assert "最長連勝" not in msg
+    assert "最長連敗" not in msg
 
 
-def test_build_prompt_with_rating_change():
-    """ランク戦にレーティング変動がある場合、プロンプトに含まれる。"""
+def test_build_user_message_with_rating_change():
+    """ランク戦にレーティング変動がある場合、ユーザーメッセージに含まれる。"""
     battle = _battle(True, battle_type="ranked")
     battle["rating_change"] = 50
-    prompt = _build_prompt([battle], "2024/01/15")
-    assert "レーティング変動" in prompt
-    assert "+50" in prompt
+    msg = _build_user_message([battle], "2024/01/15")
+    assert "レーティング変動" in msg
+    assert "+50" in msg
 
 
 # ---------------------------------------------------------------------------
@@ -196,24 +197,24 @@ def test_coaching_insights_no_trend_without_prev():
     assert insights["trend"] is None
 
 
-def test_build_prompt_includes_weak_chara():
-    """苦手キャラがあればプロンプトに '苦手キャラ' が含まれる。"""
+def test_build_user_message_includes_weak_chara():
+    """苦手キャラがあればユーザーメッセージに '苦手キャラ' が含まれる。"""
     battles = [_battle(False, "Dragunov", battle_at=i) for i in range(3)]
-    prompt = _build_prompt(battles, "2024/01/15")
-    assert "苦手キャラ" in prompt
-    assert "Dragunov" in prompt
+    msg = _build_user_message(battles, "2024/01/15")
+    assert "苦手キャラ" in msg
+    assert "Dragunov" in msg
 
 
-def test_build_prompt_includes_strong_chara():
-    """得意キャラがあればプロンプトに '得意キャラ' が含まれる。"""
+def test_build_user_message_includes_strong_chara():
+    """得意キャラがあればユーザーメッセージに '得意キャラ' が含まれる。"""
     battles = [_battle(True, "Jin", battle_at=i) for i in range(3)]
-    prompt = _build_prompt(battles, "2024/01/15")
-    assert "得意キャラ" in prompt
-    assert "Jin" in prompt
+    msg = _build_user_message(battles, "2024/01/15")
+    assert "得意キャラ" in msg
+    assert "Jin" in msg
 
 
-def test_build_prompt_includes_rematch_data():
-    """rematch_data があれば通算成績がプロンプトに含まれる。"""
+def test_build_user_message_includes_rematch_data():
+    """rematch_data があれば通算成績がユーザーメッセージに含まれる。"""
     battles = [_battle(True)]
     rematch = {
         "pid1": {
@@ -222,9 +223,9 @@ def test_build_prompt_includes_rematch_data():
             "history": [{"won": True}, {"won": False}, {"won": True}],
         }
     }
-    prompt = _build_prompt(battles, "2024/01/15", rematch_data=rematch)
-    assert "繰り返し対戦" in prompt
-    assert "RivalPlayer" in prompt
+    msg = _build_user_message(battles, "2024/01/15", rematch_data=rematch)
+    assert "繰り返し対戦" in msg
+    assert "RivalPlayer" in msg
 
 
 # ---------------------------------------------------------------------------
@@ -332,19 +333,24 @@ def test_build_rematch_section_multiple_opponents():
 # _call_ollama
 # ---------------------------------------------------------------------------
 
+_TEST_MESSAGES = [{"role": "user", "content": "test"}]
+
+
 def _ollama_resp(comment: str) -> MagicMock:
-    """Ollama の JSON レスポンスモックを生成する。"""
+    """Ollama Chat API（/api/chat）のレスポンスモックを生成する。"""
     import json
     mock = MagicMock()
     mock.raise_for_status.return_value = None
-    mock.json.return_value = {"response": json.dumps({"comment": comment})}
+    mock.json.return_value = {
+        "message": {"role": "assistant", "content": json.dumps({"comment": comment})}
+    }
     return mock
 
 
 def test_call_ollama_parses_json_comment():
-    """JSON レスポンスから comment フィールドを抽出して返す。"""
+    """Chat API レスポンスの message.content から comment フィールドを抽出して返す。"""
     with patch("requests.post", return_value=_ollama_resp("良い調子です")):
-        result = _call_ollama("testmodel", "test prompt")
+        result = _call_ollama("testmodel", _TEST_MESSAGES)
     assert result == "良い調子です"
 
 
@@ -352,19 +358,19 @@ def test_call_ollama_fallback_on_invalid_json():
     """JSON 解析失敗時は生テキストにフォールバックして返す。"""
     mock = MagicMock()
     mock.raise_for_status.return_value = None
-    mock.json.return_value = {"response": "これはJSONではない"}
+    mock.json.return_value = {"message": {"role": "assistant", "content": "これはJSONではない"}}
     with patch("requests.post", return_value=mock):
-        result = _call_ollama("testmodel", "test prompt")
+        result = _call_ollama("testmodel", _TEST_MESSAGES)
     assert result == "これはJSONではない"
 
 
 def test_call_ollama_returns_none_for_empty_response():
-    """空レスポンスは None を返す。"""
+    """空コンテンツは None を返す。"""
     mock = MagicMock()
     mock.raise_for_status.return_value = None
-    mock.json.return_value = {"response": ""}
+    mock.json.return_value = {"message": {"role": "assistant", "content": ""}}
     with patch("requests.post", return_value=mock):
-        result = _call_ollama("testmodel", "test prompt")
+        result = _call_ollama("testmodel", _TEST_MESSAGES)
     assert result is None
 
 
@@ -373,9 +379,9 @@ def test_call_ollama_returns_none_for_empty_comment_field():
     import json
     mock = MagicMock()
     mock.raise_for_status.return_value = None
-    mock.json.return_value = {"response": json.dumps({"comment": ""})}
+    mock.json.return_value = {"message": {"role": "assistant", "content": json.dumps({"comment": ""})}}
     with patch("requests.post", return_value=mock):
-        result = _call_ollama("testmodel", "test prompt")
+        result = _call_ollama("testmodel", _TEST_MESSAGES)
     assert result is None
 
 
@@ -383,7 +389,24 @@ def test_call_ollama_raises_on_http_error():
     """HTTP エラー時は例外を再送出する。"""
     with patch("requests.post", side_effect=requests.RequestException("connection error")):
         with pytest.raises(requests.RequestException):
-            _call_ollama("testmodel", "test prompt")
+            _call_ollama("testmodel", _TEST_MESSAGES)
+
+
+def test_call_ollama_uses_chat_endpoint():
+    """Chat API エンドポイント（/api/chat）を呼び出す。"""
+    with patch("requests.post", return_value=_ollama_resp("テスト")) as mock_post:
+        _call_ollama("testmodel", _TEST_MESSAGES)
+    url = mock_post.call_args[0][0]
+    assert url.endswith("/api/chat")
+
+
+def test_call_ollama_sends_messages_array():
+    """requests.post に messages リストが渡される。"""
+    with patch("requests.post", return_value=_ollama_resp("テスト")) as mock_post:
+        _call_ollama("testmodel", _TEST_MESSAGES)
+    payload = mock_post.call_args.kwargs.get("json") or mock_post.call_args[1].get("json")
+    assert "messages" in payload
+    assert payload["messages"] == _TEST_MESSAGES
 
 
 # ---------------------------------------------------------------------------
@@ -461,17 +484,37 @@ def test_analyze_invalid_date_format():
     assert result is not None
 
 
-def test_build_prompt_contains_xml_tags():
-    """プロンプトに XML 構造タグが含まれる。"""
+def test_build_messages_returns_two_messages():
+    """_build_messages() は system + user の2要素リストを返す。"""
     battles = [_battle(True)]
-    prompt = _build_prompt(battles, "2024/01/15")
-    for tag in ["<role>", "<examples>", "<battle_data>", "<constraints>", "<output_format>"]:
-        assert tag in prompt
+    msgs = _build_messages(battles, "2024/01/15")
+    assert len(msgs) == 2
+    assert msgs[0]["role"] == "system"
+    assert msgs[1]["role"] == "user"
 
 
-def test_build_prompt_contains_few_shot_examples():
-    """Few-shot サンプルがプロンプトに含まれる。"""
-    battles = [_battle(True)]
-    prompt = _build_prompt(battles, "2024/01/15")
+def test_build_messages_system_contains_xml_tags():
+    """システムメッセージに examples / constraints / output_format タグが含まれる。"""
+    system_content = _build_messages([_battle(True)], "2024/01/15")[0]["content"]
+    for tag in ["<examples>", "<constraints>", "<output_format>"]:
+        assert tag in system_content
+
+
+def test_build_messages_user_contains_xml_tags():
+    """ユーザーメッセージに battle_data / insights タグが含まれる。"""
+    user_content = _build_messages([_battle(True)], "2024/01/15")[1]["content"]
+    for tag in ["<battle_data>", "<insights>"]:
+        assert tag in user_content
+
+
+def test_build_system_prompt_contains_few_shot_examples():
+    """システムプロンプトに Few-shot サンプルが含まれる。"""
+    prompt = _build_system_prompt()
     assert "<example>" in prompt
     assert "Bryan" in prompt  # サンプル内のキャラ名
+
+
+def test_build_system_prompt_no_player_specific_data():
+    """システムプロンプトにプレイヤー固有データ（ExodusOverseer）は含まれない。"""
+    prompt = _build_system_prompt()
+    assert "ExodusOverseer" not in prompt

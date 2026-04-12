@@ -2,7 +2,9 @@
 Ollama（ローカルLLM）を使ってバトルデータを分析するモジュール。
 
 プロンプト設計方針:
-  - XML タグで role / examples / battle_data / insights / constraints / output_format を分離
+  - Chat API（/api/chat）で role: system / user を分離
+    - system: コーチ人格・Few-shot・制約・出力形式（静的、全リクエスト共通）
+    - user  : 戦績データ・事前計算済み洞察（動的、リクエスト毎に生成）
   - Few-shot サンプルでコメントのトーンと長さを固定
   - format: "json" で出力を {"comment": "..."} に強制しハルシネーションを抑制
 """
@@ -255,46 +257,16 @@ def _build_insights_section(insights: dict, rematch_data: dict | None) -> str:
     return "\n".join(lines) if lines else "（特記事項なし）"
 
 
-def _build_prompt(
-    battles: list[Battle],
-    date_str: str,
-    player_name: str = "",
-    prev_battles: list[Battle] | None = None,
-    prev_date_str: str = "",
-    rematch_data: dict | None = None,
-) -> str:
+def _build_system_prompt() -> str:
     """
-    XML タグ構造化プロンプトを構築する。
-
-    構造:
-      <role>       — コーチとしての役割定義
-      <examples>   — Few-shot サンプル（好調日・不調日の2パターン）
-      <battle_data>— 今日の戦績データ
-      <insights>   — Python 側で事前計算した洞察
-      <constraints>— 厳守ルール
-      <output_format>— JSON 出力仕様
+    コーチとしての役割・Few-shot・制約・出力形式を定義するシステムプロンプト（静的）。
+    全リクエストで共通。
     """
-    stats    = _calculate_stats(battles)
-    insights = _compute_coaching_insights(battles, prev_battles)
-
-    battle_data = _build_battle_data_section(stats, date_str, player_name, insights, rematch_data)
-    insights_text = _build_insights_section(insights, rematch_data)
-
-    return f"""<role>
-あなたは鉄拳8の対戦コーチです。プレイヤーのデータを分析して、具体的で前向きなコーチングコメントを提供します。
-</role>
+    return f"""あなたは鉄拳8の対戦コーチです。プレイヤーのデータを分析して、具体的で前向きなコーチングコメントを提供します。
 
 <examples>
 {_FEW_SHOT_EXAMPLES}
 </examples>
-
-<battle_data>
-{battle_data}
-</battle_data>
-
-<insights>
-{insights_text}
-</insights>
 
 <constraints>
 - 「対戦キャラ別成績」に記載されていないキャラ名は絶対に出さない
@@ -309,27 +281,75 @@ def _build_prompt(
 </output_format>"""
 
 
-def _call_ollama(model: str, prompt: str) -> str | None:
+def _build_user_message(
+    battles: list[Battle],
+    date_str: str,
+    player_name: str = "",
+    prev_battles: list[Battle] | None = None,
+    rematch_data: dict | None = None,
+) -> str:
     """
-    指定モデルで Ollama を呼び出し、コーチングコメント文字列を返す。
+    今日の戦績データと事前計算済み洞察を含むユーザーメッセージ（動的）。
+    リクエスト毎に生成する。
+    """
+    stats    = _calculate_stats(battles)
+    insights = _compute_coaching_insights(battles, prev_battles)
+
+    battle_data   = _build_battle_data_section(stats, date_str, player_name, insights, rematch_data)
+    insights_text = _build_insights_section(insights, rematch_data)
+
+    return f"""<battle_data>
+{battle_data}
+</battle_data>
+
+<insights>
+{insights_text}
+</insights>"""
+
+
+def _build_messages(
+    battles: list[Battle],
+    date_str: str,
+    player_name: str = "",
+    prev_battles: list[Battle] | None = None,
+    rematch_data: dict | None = None,
+) -> list[dict]:
+    """
+    Ollama Chat API 用の messages リストを構築する。
+
+      messages[0]: {"role": "system"} — コーチ人格・Few-shot・制約（静的）
+      messages[1]: {"role": "user"}   — 今日の戦績・洞察（動的）
+    """
+    return [
+        {"role": "system", "content": _build_system_prompt()},
+        {"role": "user",   "content": _build_user_message(
+            battles, date_str, player_name, prev_battles, rematch_data,
+        )},
+    ]
+
+
+def _call_ollama(model: str, messages: list[dict]) -> str | None:
+    """
+    指定モデルで Ollama Chat API（/api/chat）を呼び出し、コーチングコメント文字列を返す。
 
     format: "json" で出力を {"comment": "..."} に強制する。
+    レスポンスは resp["message"]["content"] から取り出す（/api/generate の "response" とは異なる）。
     JSON 解析失敗時は生テキストにフォールバックして返す。
     失敗時は例外を再送出。
     """
     resp = requests.post(
-        f"{OLLAMA_URL}/api/generate",
+        f"{OLLAMA_URL}/api/chat",
         json={
-            "model":   model,
-            "prompt":  prompt,
-            "stream":  False,
-            "format":  "json",
-            "options": {"temperature": 0.7, "num_predict": 300},
+            "model":    model,
+            "messages": messages,
+            "stream":   False,
+            "format":   "json",
+            "options":  {"temperature": 0.7, "num_predict": 300},
         },
         timeout=TIMEOUT_LLM,
     )
     resp.raise_for_status()
-    raw = resp.json().get("response", "").strip()
+    raw = resp.json().get("message", {}).get("content", "").strip()
     if not raw:
         return None
 
@@ -359,19 +379,14 @@ def analyze(
     if not battles:
         return None
 
-    try:
-        prev_date_str = (datetime.strptime(date_str, "%Y/%m/%d") - timedelta(days=1)).strftime("%Y/%m/%d")
-    except ValueError:
-        prev_date_str = ""
-
-    prompt = _build_prompt(
+    messages = _build_messages(
         battles, date_str, player_name,
-        prev_battles=prev_battles, prev_date_str=prev_date_str,
+        prev_battles=prev_battles,
         rematch_data=rematch_data,
     )
 
     try:
-        comment = _call_ollama(OLLAMA_MODEL, prompt)
+        comment = _call_ollama(OLLAMA_MODEL, messages)
         logger.info(f"[analyzer] LLM分析完了({OLLAMA_MODEL}): {len(comment or '')}文字")
         return comment
     except requests.RequestException as e:
@@ -379,7 +394,7 @@ def analyze(
 
     if OLLAMA_FALLBACK_MODEL:
         try:
-            comment = _call_ollama(OLLAMA_FALLBACK_MODEL, prompt)
+            comment = _call_ollama(OLLAMA_FALLBACK_MODEL, messages)
             logger.info(f"[analyzer] フォールバックモデル成功({OLLAMA_FALLBACK_MODEL}): {len(comment or '')}文字")
             return comment
         except requests.RequestException as e:
