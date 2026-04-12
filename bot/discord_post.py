@@ -381,7 +381,9 @@ def build_weekly_message(
     if quick:
         qw = count_wins(quick)
         ql = count_losses(quick)
-        lines.append(f"⚡ クイック: {qw}勝{ql}敗 ({_win_rate(quick)})")
+        dist = _quick_rank_distribution(quick)
+        rank_suffix = f" | 相手段位: {dist}" if dist else ""
+        lines.append(f"⚡ クイック: {qw}勝{ql}敗 ({_win_rate(quick)}){rank_suffix}")
 
     if net_rating is not None:
         sign = "+" if net_rating >= 0 else ""
@@ -579,7 +581,11 @@ def build_weekly_embed(
     if quick:
         qw = count_wins(quick)
         ql = count_losses(quick)
-        fields.append({"name": "⚡ クイック", "value": f"{qw}勝{ql}敗 ({_win_rate(quick)})", "inline": True})
+        quick_val = f"{qw}勝{ql}敗 ({_win_rate(quick)})"
+        dist = _quick_rank_distribution(quick)
+        if dist:
+            quick_val += f"\n相手段位: {dist}"
+        fields.append({"name": "⚡ クイック", "value": quick_val, "inline": True})
     if net_rating is not None:
         sign = "+" if net_rating >= 0 else ""
         fields.append({"name": "📈 レーティング変動", "value": f"{sign}{net_rating}", "inline": True})

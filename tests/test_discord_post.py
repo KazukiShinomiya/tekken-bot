@@ -1495,3 +1495,45 @@ def test_build_weekly_embed_stagnation_field():
         result = build_weekly_embed(battles, "2024/01/15")
     assert result is not None
     assert any("停滞" in f["name"] for f in result["fields"])
+
+
+# ---------------------------------------------------------------------------
+# 週次サマリーの相手段位表示
+# ---------------------------------------------------------------------------
+
+def test_build_weekly_embed_quick_includes_rank_distribution():
+    """クイックマッチに opp_rank があれば Embed の クイック フィールドに相手段位を表示する。"""
+    battles = [
+        _quick_battle(won=True,  opp_rank=20),   # Kishin
+        _quick_battle(won=False, opp_rank=20),   # Kishin
+        _quick_battle(won=True,  opp_rank=22),   # Fujin
+    ]
+    result = build_weekly_embed(battles, "2024/01/15")
+    assert result is not None
+    quick_field = next((f for f in result["fields"] if "クイック" in f["name"]), None)
+    assert quick_field is not None
+    assert "相手段位" in quick_field["value"]
+
+
+def test_build_weekly_message_quick_includes_rank_distribution():
+    """build_weekly_message のクイック行に相手段位を表示する。"""
+    battles = [
+        _quick_battle(won=True,  opp_rank=20),
+        _quick_battle(won=False, opp_rank=20),
+    ]
+    msg = build_weekly_message(battles, "2024/01/15")
+    assert msg is not None
+    assert "相手段位" in msg
+
+
+def test_build_weekly_embed_quick_no_rank_omits_distribution():
+    """opp_rank がない場合は相手段位を表示しない。"""
+    battles = [
+        _quick_battle(won=True,  opp_rank=None),
+        _quick_battle(won=False, opp_rank=None),
+    ]
+    result = build_weekly_embed(battles, "2024/01/15")
+    assert result is not None
+    quick_field = next((f for f in result["fields"] if "クイック" in f["name"]), None)
+    assert quick_field is not None
+    assert "相手段位" not in quick_field["value"]
