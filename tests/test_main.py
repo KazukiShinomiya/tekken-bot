@@ -111,7 +111,7 @@ def test_fire_alerts_sends_rating_goal_notification():
         patch("main.RATING_GOAL", 10_000),
         patch("bot.discord_post.notify") as mock_notify,
     ):
-        _fire_alerts(today_battles, today_battles, prev_battles, "Alice")
+        _fire_alerts(today_battles, prev_battles, "Alice")
     mock_notify.assert_called_once()
     assert "達成" in mock_notify.call_args[0][0]
 
@@ -124,7 +124,7 @@ def test_fire_alerts_no_duplicate_rating_goal_notification():
         patch("main.RATING_GOAL", 10_000),
         patch("bot.discord_post.notify") as mock_notify,
     ):
-        _fire_alerts(today_battles, today_battles, prev_battles, "Alice")
+        _fire_alerts(today_battles, prev_battles, "Alice")
     mock_notify.assert_not_called()
 
 
@@ -135,7 +135,7 @@ def test_fire_alerts_no_notification_when_goal_zero():
         patch("main.RATING_GOAL", 0),
         patch("bot.discord_post.notify") as mock_notify,
     ):
-        _fire_alerts(battles, battles, [], "Alice")
+        _fire_alerts(battles, [], "Alice")
     mock_notify.assert_not_called()
 
 

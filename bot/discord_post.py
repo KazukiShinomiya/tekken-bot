@@ -19,8 +19,6 @@ from bot.config import (
     RANK_NAMES,
 )
 
-# 後方互換用（単一 URL を想定している既存ロジックの参照先）
-WEBHOOK_URL = WEBHOOK_URLS[0] if WEBHOOK_URLS else None
 from bot.models import Battle
 from bot.stats import (
     calculate_streak, aggregate_by_character, count_wins, count_losses,

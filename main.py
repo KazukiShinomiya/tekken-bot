@@ -10,6 +10,7 @@ import asyncio
 import logging
 import sys
 import threading
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import datetime, timedelta
 from logging.handlers import RotatingFileHandler
@@ -87,7 +88,6 @@ def _compute_opponent_data(
     今日の対戦相手データを一元計算する。
     Counter を1回だけ作成し、rematch_data と pids_to_scout を同時に返す。
     """
-    from collections import Counter
     pid_count: Counter[str] = Counter(
         pid
         for b in today_battles
@@ -139,7 +139,6 @@ def _fetch_scout_data(
 
 
 def _fire_alerts(
-    sorted_today: list[Battle],
     today_battles: list[Battle],
     prev_battles: list[Battle],
     player_name: str,
@@ -249,9 +248,8 @@ def _run_for_player(player_name: str, polaris_id: str, today_str: str, date_str:
 
     scout_data = _fetch_scout_data(pids_to_scout, player_name)
 
-    # 連敗・連勝・目標レーティングアラート
-    sorted_today = sorted(today_battles, key=lambda x: x["battle_at"])
-    _fire_alerts(sorted_today, today_battles, prev_battles, player_name)
+    # 目標レーティングアラート
+    _fire_alerts(today_battles, prev_battles, player_name)
 
     # Discord に即時投稿（LLM コメントなし）
     post_result = None
