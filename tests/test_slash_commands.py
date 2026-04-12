@@ -24,6 +24,18 @@ _app_commands_mock = types.ModuleType("discord.app_commands")
 _app_commands_mock.CommandTree = MagicMock()
 _app_commands_mock.Group = MagicMock(return_value=_group_instance)
 _app_commands_mock.describe = _noop_decorator
+_app_commands_mock.autocomplete = _noop_decorator
+
+
+def _make_choice(name: str, value: str) -> MagicMock:
+    """discord.app_commands.Choice の最小モック。MagicMock(name=...) は内部名になるため手動設定。"""
+    c = MagicMock()
+    c.name = name
+    c.value = value
+    return c
+
+
+_app_commands_mock.Choice = _make_choice
 
 _discord_mock = types.ModuleType("discord")
 _discord_mock.Intents = MagicMock()
@@ -37,7 +49,10 @@ _discord_mock.Object = MagicMock()
 sys.modules.setdefault("discord", _discord_mock)
 sys.modules.setdefault("discord.app_commands", _app_commands_mock)
 
-from bot.slash_commands import cmd_today, cmd_vs, cmd_chara, cmd_top, cmd_status, cmd_rival, cmd_trend, cmd_filter  # noqa: E402
+from bot.slash_commands import (  # noqa: E402
+    cmd_today, cmd_vs, cmd_chara, cmd_top, cmd_status, cmd_rival,
+    cmd_trend, cmd_filter, cmd_help, _chara_autocomplete,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -438,3 +453,57 @@ def test_cmd_filter_chara_invalid_date():
         asyncio.run(cmd_filter(interaction, chara="Jin", date="bad-date", days=None))
     msg = interaction.followup.send.call_args[0][0]
     assert "❌" in msg
+
+
+def test_cmd_filter_days_over_limit():
+    """/tekken filter days=999: 上限超過 → エラーメッセージ。"""
+    interaction = _make_interaction()
+    asyncio.run(cmd_filter(interaction, chara="Bryan", date=None, days=999))
+    msg = interaction.followup.send.call_args[0][0]
+    assert "❌" in msg
+    assert "365" in msg
+
+
+# ---------------------------------------------------------------------------
+# /tekken help
+# ---------------------------------------------------------------------------
+
+def test_cmd_help_sends_embed():
+    """/tekken help: Embed を send_message で返す。"""
+    interaction = _make_interaction()
+    asyncio.run(cmd_help(interaction))
+    kwargs = interaction.response.send_message.call_args.kwargs
+    assert "embed" in kwargs
+
+
+# ---------------------------------------------------------------------------
+# _chara_autocomplete
+# ---------------------------------------------------------------------------
+
+def test_chara_autocomplete_filters_by_current():
+    """_chara_autocomplete: current にマッチするキャラのみ返す。"""
+    interaction = _make_interaction()
+    with patch("bot.db.get_known_opp_charas", return_value=["Bryan", "Jin", "King", "Kazuya"]):
+        results = asyncio.run(_chara_autocomplete(interaction, current="k"))
+    names = [c.name for c in results]
+    assert "King" in names
+    assert "Kazuya" in names
+    assert "Bryan" not in names
+
+
+def test_chara_autocomplete_empty_current():
+    """_chara_autocomplete: current が空文字 → 全候補を返す（最大25件）。"""
+    interaction = _make_interaction()
+    all_charas = [f"Chara{i}" for i in range(30)]
+    with patch("bot.db.get_known_opp_charas", return_value=all_charas):
+        results = asyncio.run(_chara_autocomplete(interaction, current=""))
+    assert len(results) == 25
+
+
+def test_chara_autocomplete_case_insensitive():
+    """_chara_autocomplete: 大文字小文字を無視してマッチする。"""
+    interaction = _make_interaction()
+    with patch("bot.db.get_known_opp_charas", return_value=["Bryan", "Jin"]):
+        results = asyncio.run(_chara_autocomplete(interaction, current="JIN"))
+    assert len(results) == 1
+    assert results[0].name == "Jin"

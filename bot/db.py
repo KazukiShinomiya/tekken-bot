@@ -367,6 +367,15 @@ def load_chara_names() -> dict[int, str]:
             return {}
 
 
+def get_known_opp_charas() -> list[str]:
+    """battles テーブルに存在する対戦相手キャラ名（distinct）を返す。オートコンプリート用。"""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT opp_chara FROM battles WHERE opp_chara IS NOT NULL ORDER BY opp_chara"
+        ).fetchall()
+    return [r["opp_chara"] for r in rows]
+
+
 def has_posted_today(date_str: str, player_name: str = "default") -> bool:
     """指定日・プレイヤーがすでに投稿済みかを返す。"""
     with get_conn() as conn:

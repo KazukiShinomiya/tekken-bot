@@ -4,13 +4,21 @@
   "schemaVersion": 38,
   "version": 1,
   "refresh": "5m",
-  "time": { "from": "now-7d", "to": "now" },
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
   "panels": [
     {
       "id": 1,
       "title": "現在レーティング",
       "type": "stat",
-      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
       "targets": [
         {
           "expr": "tekken_rating_current",
@@ -18,7 +26,11 @@
         }
       ],
       "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
         "orientation": "auto",
         "textMode": "auto",
         "colorMode": "value"
@@ -28,9 +40,18 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "red",    "value": null },
-              { "color": "yellow", "value": 10000 },
-              { "color": "green",  "value": 15000 }
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 10000
+              },
+              {
+                "color": "green",
+                "value": 15000
+              }
             ]
           },
           "mappings": [],
@@ -42,7 +63,12 @@
       "id": 2,
       "title": "レーティング変動 (ranked)",
       "type": "bargauge",
-      "gridPos": { "x": 4, "y": 0, "w": 8, "h": 4 },
+      "gridPos": {
+        "x": 4,
+        "y": 0,
+        "w": 8,
+        "h": 4
+      },
       "targets": [
         {
           "expr": "tekken_rating_change",
@@ -50,7 +76,11 @@
         }
       ],
       "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
         "orientation": "horizontal",
         "displayMode": "gradient"
       },
@@ -60,8 +90,14 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "red",   "value": null },
-              { "color": "green", "value": 0 }
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              }
             ]
           }
         }
@@ -71,7 +107,12 @@
       "id": 3,
       "title": "勝率 (全期間・全種別)",
       "type": "gauge",
-      "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
       "targets": [
         {
           "expr": "tekken_win_rate{period=\"all\", battle_type=\"all\"}",
@@ -79,7 +120,11 @@
         }
       ],
       "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
         "showThresholdLabels": false,
         "showThresholdMarkers": true
       },
@@ -91,9 +136,18 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "red",    "value": null },
-              { "color": "yellow", "value": 0.45 },
-              { "color": "green",  "value": 0.55 }
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.45
+              },
+              {
+                "color": "green",
+                "value": 0.55
+              }
             ]
           }
         }
@@ -103,7 +157,12 @@
       "id": 4,
       "title": "試合数 (期間別)",
       "type": "barchart",
-      "gridPos": { "x": 16, "y": 0, "w": 8, "h": 4 },
+      "gridPos": {
+        "x": 16,
+        "y": 0,
+        "w": 8,
+        "h": 4
+      },
       "targets": [
         {
           "expr": "tekken_battles_total{battle_type=\"all\", result=\"win\"}",
@@ -119,10 +178,40 @@
         "stacking": "normal"
       },
       "fieldConfig": {
-        "defaults": { "unit": "short" },
+        "defaults": {
+          "unit": "short"
+        },
         "overrides": [
-          { "matcher": { "id": "byName", "options": "勝" }, "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }] },
-          { "matcher": { "id": "byName", "options": "敗" }, "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] }
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "勝"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "敗"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
         ]
       }
     },
@@ -130,7 +219,12 @@
       "id": 5,
       "title": "時間帯別勝率 (7日間)",
       "type": "barchart",
-      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 6 },
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 12,
+        "h": 6
+      },
       "targets": [
         {
           "expr": "tekken_hourly_win_rate{period=\"7d\"}",
@@ -149,12 +243,23 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "red",    "value": null },
-              { "color": "yellow", "value": 0.45 },
-              { "color": "green",  "value": 0.55 }
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.45
+              },
+              {
+                "color": "green",
+                "value": 0.55
+              }
             ]
           },
-          "custom": { "displayMode": "color-background" }
+          "custom": {
+            "displayMode": "color-background"
+          }
         }
       }
     },
@@ -162,7 +267,12 @@
       "id": 6,
       "title": "キャラ対面勝率 (ランク戦・全期間・3試合以上)",
       "type": "barchart",
-      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 6 },
+      "gridPos": {
+        "x": 12,
+        "y": 4,
+        "w": 12,
+        "h": 6
+      },
       "targets": [
         {
           "expr": "tekken_matchup_win_rate{period=\"all\"}",
@@ -181,9 +291,18 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "red",    "value": null },
-              { "color": "yellow", "value": 0.45 },
-              { "color": "green",  "value": 0.55 }
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.45
+              },
+              {
+                "color": "green",
+                "value": 0.55
+              }
             ]
           }
         }
@@ -193,7 +312,12 @@
       "id": 7,
       "title": "キャラ対面試合数 (ランク戦・全期間・3試合以上)",
       "type": "barchart",
-      "gridPos": { "x": 0, "y": 10, "w": 12, "h": 6 },
+      "gridPos": {
+        "x": 0,
+        "y": 10,
+        "w": 12,
+        "h": 6
+      },
       "targets": [
         {
           "expr": "tekken_matchup_battles{period=\"all\"}",
@@ -205,14 +329,21 @@
         "orientation": "horizontal"
       },
       "fieldConfig": {
-        "defaults": { "unit": "short" }
+        "defaults": {
+          "unit": "short"
+        }
       }
     },
     {
       "id": 9,
       "title": "使用キャラ別試合数 (7日間)",
       "type": "barchart",
-      "gridPos": { "x": 0, "y": 16, "w": 12, "h": 6 },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 6
+      },
       "targets": [
         {
           "expr": "tekken_chara_usage_total{period=\"7d\"}",
@@ -222,17 +353,28 @@
       "options": {
         "groupWidth": 0.7,
         "orientation": "horizontal",
-        "reduceOptions": { "calcs": ["lastNotNull"] }
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
       },
       "fieldConfig": {
-        "defaults": { "unit": "short" }
+        "defaults": {
+          "unit": "short"
+        }
       }
     },
     {
       "id": 10,
       "title": "使用キャラ別試合数 (30日間)",
       "type": "barchart",
-      "gridPos": { "x": 12, "y": 16, "w": 12, "h": 6 },
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 6
+      },
       "targets": [
         {
           "expr": "tekken_chara_usage_total{period=\"30d\"}",
@@ -242,17 +384,28 @@
       "options": {
         "groupWidth": 0.7,
         "orientation": "horizontal",
-        "reduceOptions": { "calcs": ["lastNotNull"] }
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
       },
       "fieldConfig": {
-        "defaults": { "unit": "short" }
+        "defaults": {
+          "unit": "short"
+        }
       }
     },
     {
       "id": 8,
       "title": "勝率推移 (ranked・日次)",
       "type": "timeseries",
-      "gridPos": { "x": 12, "y": 10, "w": 12, "h": 6 },
+      "gridPos": {
+        "x": 12,
+        "y": 10,
+        "w": 12,
+        "h": 6
+      },
       "targets": [
         {
           "expr": "tekken_win_rate{period=\"today\", battle_type=\"ranked\"}",
@@ -268,18 +421,28 @@
           "unit": "percentunit",
           "min": 0,
           "max": 1,
-          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10
+          }
         }
       },
       "options": {
-        "tooltip": { "mode": "multi" }
+        "tooltip": {
+          "mode": "multi"
+        }
       }
     },
     {
       "id": 11,
       "title": "キャラ対面勝率 (ランク戦・7日間・3試合以上)",
       "type": "barchart",
-      "gridPos": { "x": 0, "y": 22, "w": 12, "h": 6 },
+      "gridPos": {
+        "x": 0,
+        "y": 22,
+        "w": 12,
+        "h": 6
+      },
       "targets": [
         {
           "expr": "tekken_matchup_win_rate{period=\"7d\"}",
@@ -298,9 +461,18 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "red",    "value": null },
-              { "color": "yellow", "value": 0.45 },
-              { "color": "green",  "value": 0.55 }
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.45
+              },
+              {
+                "color": "green",
+                "value": 0.55
+              }
             ]
           }
         }
@@ -310,7 +482,12 @@
       "id": 12,
       "title": "時間帯別試合数 (7日間)",
       "type": "barchart",
-      "gridPos": { "x": 12, "y": 22, "w": 12, "h": 6 },
+      "gridPos": {
+        "x": 12,
+        "y": 22,
+        "w": 12,
+        "h": 6
+      },
       "targets": [
         {
           "expr": "tekken_hourly_battles{period=\"7d\"}",
@@ -325,6 +502,126 @@
         "defaults": {
           "unit": "short"
         }
+      }
+    },
+    {
+      "id": 13,
+      "title": "キャラ別勝率テーブル（ランク戦・全期間・1戦以上）",
+      "type": "table",
+      "gridPos": {
+        "x": 0,
+        "y": 28,
+        "w": 24,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "tekken_matchup_win_rate{period=\"all\"} * 100",
+          "legendFormat": "{{opp_chara}}",
+          "instant": true
+        },
+        {
+          "expr": "tekken_matchup_battles{period=\"all\"}",
+          "legendFormat": "{{opp_chara}}",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {
+            "valueLabel": "opp_chara"
+          }
+        },
+        {
+          "id": "merge",
+          "options": {}
+        }
+      ],
+      "options": {
+        "sortBy": [
+          {
+            "displayName": "Value #A",
+            "desc": false
+          }
+        ],
+        "footer": {
+          "show": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "displayMode": "color-background",
+            "align": "center"
+          },
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 45
+              },
+              {
+                "color": "green",
+                "value": 55
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #B"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "試合数"
+              },
+              {
+                "id": "custom.displayMode",
+                "value": "auto"
+              },
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "text",
+                      "value": null
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #A"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "勝率 (%)"
+              }
+            ]
+          }
+        ]
       }
     }
   ]

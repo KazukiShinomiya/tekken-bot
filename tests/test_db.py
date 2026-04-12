@@ -471,6 +471,39 @@ def test_get_battles_by_opp_chara_since_ts_player_filter(db):
 
 
 # ---------------------------------------------------------------------------
+# get_known_opp_charas
+# ---------------------------------------------------------------------------
+
+def test_get_known_opp_charas_returns_distinct(db):
+    """get_known_opp_charas: 重複なしでキャラ名を返す。"""
+    db.insert_battles([
+        _make_battle(battle_id="k1", opp_chara="Jin"),
+        _make_battle(battle_id="k2", opp_chara="Jin"),
+        _make_battle(battle_id="k3", opp_chara="Bryan"),
+    ], "Alice")
+    result = db.get_known_opp_charas()
+    assert "Jin" in result
+    assert "Bryan" in result
+    assert result.count("Jin") == 1
+
+
+def test_get_known_opp_charas_empty(db):
+    """get_known_opp_charas: バトルなし → 空リスト。"""
+    result = db.get_known_opp_charas()
+    assert result == []
+
+
+def test_get_known_opp_charas_sorted(db):
+    """get_known_opp_charas: アルファベット順で返す。"""
+    db.insert_battles([
+        _make_battle(battle_id="s1", opp_chara="Zafina"),
+        _make_battle(battle_id="s2", opp_chara="Alisa"),
+    ], "Alice")
+    result = db.get_known_opp_charas()
+    assert result == sorted(result)
+
+
+# ---------------------------------------------------------------------------
 # search_battles_vs_opponent (部分一致)
 # ---------------------------------------------------------------------------
 

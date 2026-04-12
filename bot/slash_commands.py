@@ -8,6 +8,8 @@ Discord スラッシュコマンド Bot。
   /tekken trend  — レーティング推移グラフを表示
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import threading
@@ -135,8 +137,20 @@ async def cmd_vs(interaction: discord.Interaction, name: str) -> None:
     await interaction.followup.send(embed=embed)
 
 
+async def _chara_autocomplete(
+    interaction: discord.Interaction,
+    current: str,
+) -> list[app_commands.Choice[str]]:
+    """battles テーブルの実績キャラ名からオートコンプリート候補を返す。"""
+    known = db.get_known_opp_charas()
+    lower = current.lower()
+    matches = [c for c in known if lower in c.lower()]
+    return [app_commands.Choice(name=c, value=c) for c in matches[:25]]
+
+
 @tekken_group.command(name="chara", description="特定キャラクターとの対戦成績を確認する")
 @app_commands.describe(name="キャラクター名（例: Bryan, Jin）")
+@app_commands.autocomplete(name=_chara_autocomplete)
 async def cmd_chara(interaction: discord.Interaction, name: str) -> None:
     await interaction.response.defer(thinking=True)
     battles = db.get_battles_by_opp_chara(name)
@@ -250,6 +264,7 @@ async def cmd_rival(interaction: discord.Interaction, name: str) -> None:
     date="対象日 YYYY-MM-DD（例: 2026-04-10）",
     days="直近N日間に絞り込む（chara 指定時のみ有効、省略で全期間）",
 )
+@app_commands.autocomplete(chara=_chara_autocomplete)
 async def cmd_filter(
     interaction: discord.Interaction,
     chara: str | None = None,
@@ -260,6 +275,10 @@ async def cmd_filter(
 
     if chara is None and date is None:
         await interaction.followup.send("❌ `chara` または `date` のどちらか一方は指定してください。")
+        return
+
+    if days is not None and days > 365:
+        await interaction.followup.send("❌ `days` は 365 以下で指定してください。")
         return
 
     players = _bot_main.get_players()
@@ -337,6 +356,44 @@ async def cmd_filter(
     if recent_lines:
         embed.add_field(name=f"直近{len(recent_lines)}試合", value="\n".join(recent_lines), inline=False)
     await interaction.followup.send(embed=embed)
+
+
+@tekken_group.command(name="help", description="使用可能なコマンド一覧を表示する")
+async def cmd_help(interaction: discord.Interaction) -> None:
+    embed = discord.Embed(
+        title="📖 /tekken コマンド一覧",
+        color=0x5865F2,
+    )
+    embed.add_field(
+        name="📊 戦績確認",
+        value=(
+            "`/tekken today [date]` — 当日または指定日の戦績を投稿\n"
+            "`/tekken weekly` — 週次サマリーを投稿\n"
+            "`/tekken trend [days]` — レーティング推移グラフ（デフォルト30日）"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="🔍 検索・分析",
+        value=(
+            "`/tekken vs <name>` — 対戦相手との通算成績（部分一致）\n"
+            "`/tekken chara <name>` — キャラ別対戦成績\n"
+            "`/tekken top` — キャラ別対戦成績ランキング\n"
+            "`/tekken rival <name>` — ライバル詳細分析\n"
+            "`/tekken filter [chara] [date] [days]` — バトルログ絞り込み"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="⚙️ その他",
+        value=(
+            "`/tekken status` — Bot 稼働状況を確認\n"
+            "`/tekken help` — このヘルプを表示"
+        ),
+        inline=False,
+    )
+    embed.set_footer(text="chara / rival の引数はタイプすると候補が表示されます")
+    await interaction.response.send_message(embed=embed)
 
 
 tree.add_command(tekken_group)
