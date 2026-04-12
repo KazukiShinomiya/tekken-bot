@@ -1,7 +1,13 @@
 """
 Ollama（ローカルLLM）を使ってバトルデータを分析するモジュール。
+
+プロンプト設計方針:
+  - XML タグで role / examples / battle_data / insights / constraints / output_format を分離
+  - Few-shot サンプルでコメントのトーンと長さを固定
+  - format: "json" で出力を {"comment": "..."} に強制しハルシネーションを抑制
 """
 
+import json
 import logging
 from datetime import datetime, timedelta
 import requests
@@ -15,6 +21,48 @@ from bot.stats import (
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Few-shot サンプル（プロンプトに埋め込む静的定数）
+# 好調日・不調日の2パターンでコメントのトーンと長さを固定する
+# ---------------------------------------------------------------------------
+
+_FEW_SHOT_EXAMPLES = """
+<example>
+<battle_data>
+日付: 2026/04/10 / プレイヤー: Player
+総合: 3勝7敗 (勝率30%)
+ランク戦: 3勝7敗 / クイック: 0勝0敗
+ラウンド勝率: 38%
+レーティング変動: -280
+対戦キャラ別成績:
+  Bryan: 0勝3敗
+  Dragunov: 2勝1敗
+  King: 1勝3敗
+苦手キャラ: Bryan(勝率0%,3戦) / King(勝率25%,4戦)
+</battle_data>
+<output>{"comment": "今日はBryan・Kingに苦戦。Bryan戦はヒートスマッシュ後の二択を優先して対策しよう。Dragunov戦は安定しているので自信を持って。厳しい日だが課題が明確になったのは収穫だ。"}</output>
+</example>
+<example>
+<battle_data>
+日付: 2026/04/11 / プレイヤー: Player
+総合: 8勝3敗 (勝率73%)
+ランク戦: 8勝3敗 / クイック: 0勝0敗
+ラウンド勝率: 68%
+レーティング変動: +420
+対戦キャラ別成績:
+  Kazuya: 3勝0敗
+  Law: 2勝1敗
+  Reina: 3勝2敗
+得意キャラ: Kazuya(勝率100%,3戦)
+</battle_data>
+<output>{"comment": "今日は絶好調、特にKazuya完封が光る。Reina戦は2敗があるのでフレーム有利からの択の精度を上げるとさらに完璧。この調子を維持していこう。"}</output>
+</example>
+""".strip()
+
+
+# ---------------------------------------------------------------------------
+# 統計計算
+# ---------------------------------------------------------------------------
 
 def _calculate_stats(battles: list[Battle]) -> dict:
     """バトルリストから集計値を計算して返す。"""
@@ -31,8 +79,8 @@ def _calculate_stats(battles: list[Battle]) -> dict:
     rated      = filter_rated_battles(ranked)
     net_rating = sum(b.get("rating_change") or 0 for b in rated) if rated else None
 
-    sorted_b              = sorted(battles, key=lambda x: x["battle_at"])
-    max_win, max_lose     = calculate_streak(sorted_b)
+    sorted_b          = sorted(battles, key=lambda x: x["battle_at"])
+    max_win, max_lose = calculate_streak(sorted_b)
 
     chara_results = aggregate_by_character(battles)
     matchups = [
@@ -51,7 +99,7 @@ def _calculate_stats(battles: list[Battle]) -> dict:
 
 
 def _build_summary_text(stats: dict, date_str: str) -> str:
-    """集計値からLLMへ渡すサマリーテキストを構築する。"""
+    """集計値からサマリーテキストを構築する。"""
     wins, losses = stats["wins"], stats["losses"]
     ranked, quick = stats["ranked"], stats["quick"]
     total = wins + losses
@@ -85,27 +133,22 @@ def _compute_coaching_insights(
     """
     chara_stats = aggregate_by_character(battles)
 
-    # 不得意キャラ（2戦以上で勝率40%未満）
     weak = sorted(
         [(c, sum(r) / len(r) * 100, len(r))
          for c, r in chara_stats.items() if len(r) >= 2 and sum(r) / len(r) < 0.4],
         key=lambda x: x[1],
     )
-
-    # 得意キャラ（2戦以上で勝率70%超）
     strong = sorted(
         [(c, sum(r) / len(r) * 100, len(r))
          for c, r in chara_stats.items() if len(r) >= 2 and sum(r) / len(r) >= 0.7],
         key=lambda x: -x[1],
     )
 
-    # 時間帯別勝率（2戦以上の時間帯のみ）
     hourly      = aggregate_by_hour(battles)
     valid_hours = [(h, r) for h, r in hourly.items() if len(r) >= 2]
     best_hour   = max(valid_hours, key=lambda x: sum(x[1]) / len(x[1]), default=None)
     worst_hour  = min(valid_hours, key=lambda x: sum(x[1]) / len(x[1]), default=None)
 
-    # 前日比勝率トレンド
     trend = None
     if prev_battles and battles:
         today_wr = count_wins(battles) / len(battles)
@@ -137,24 +180,23 @@ def _build_rematch_section(rematch_data: dict) -> str:
     return "【繰り返し対戦した相手の通算成績】\n" + "\n".join(lines)
 
 
-def _build_prompt(battles: list[Battle], date_str: str, player_name: str = "",
-                  prev_battles: list[Battle] | None = None, prev_date_str: str = "",
-                  rematch_data: dict | None = None) -> str:
-    stats    = _calculate_stats(battles)
-    insights = _compute_coaching_insights(battles, prev_battles)
-
+def _build_battle_data_section(
+    stats: dict,
+    date_str: str,
+    player_name: str,
+    insights: dict,
+    rematch_data: dict | None,
+) -> str:
+    """<battle_data> タグ内のテキストを構築する。"""
     wins, losses = stats["wins"], stats["losses"]
     ranked, quick = stats["ranked"], stats["quick"]
     total = wins + losses
     wr = round(wins * 100 / total) if total else 0
 
     lines = [
-        "あなたは鉄拳8の対戦コーチです。",
-        f"プレイヤー「{player_name}」 / {date_str}",
-        "",
-        "【戦績】",
+        f"日付: {date_str} / プレイヤー: {player_name}",
         f"総合: {wins}勝{losses}敗 (勝率{wr}%)",
-        f"ランク戦: {count_wins(ranked)}勝{count_losses(ranked)}敗",
+        f"ランク戦: {count_wins(ranked)}勝{count_losses(ranked)}敗 / "
         f"クイック: {count_wins(quick)}勝{count_losses(quick)}敗",
         f"ラウンド勝率: {stats['round_wr']}",
     ]
@@ -162,20 +204,23 @@ def _build_prompt(battles: list[Battle], date_str: str, player_name: str = "",
     if stats["net_rating"] is not None:
         sign = "+" if stats["net_rating"] >= 0 else ""
         lines.append(f"レーティング変動: {sign}{stats['net_rating']}")
-
     if stats["max_win"] >= 2:
         lines.append(f"最長連勝: {stats['max_win']}")
     if stats["max_lose"] >= 2:
         lines.append(f"最長連敗: {stats['max_lose']}")
-
     if insights["trend"]:
         lines.append(f"調子: {insights['trend']}")
 
-    lines.append("")
-    lines.append("【対戦キャラ別成績】")
+    lines.append("対戦キャラ別成績:")
     lines.extend(stats["matchups"])
 
-    # 事前分析済み洞察（LLMのハルシネーション抑止）
+    return "\n".join(lines)
+
+
+def _build_insights_section(insights: dict, rematch_data: dict | None) -> str:
+    """<insights> タグ内の事前分析済み洞察を構築する。"""
+    lines = []
+
     if insights["weak"]:
         weak_str = " / ".join(
             f"{c}(勝率{w:.0f}%,{n}戦)" for c, w, n in insights["weak"][:3]
@@ -197,8 +242,7 @@ def _build_prompt(battles: list[Battle], date_str: str, player_name: str = "",
         )
 
     if rematch_data:
-        lines.append("")
-        lines.append("【繰り返し対戦した相手の通算成績】")
+        lines.append("繰り返し対戦した相手:")
         for data in rematch_data.values():
             history = data["history"]
             rw = sum(1 for b in history if b["won"])
@@ -208,36 +252,103 @@ def _build_prompt(battles: list[Battle], date_str: str, player_name: str = "",
                 f"{rw}勝{rt - rw}敗 ({rw / rt * 100:.0f}%)"
             )
 
-    lines.extend([
-        "",
-        "上記データに基づき、日本語150文字以内でコーチコメントを書いてください。",
-        "①今日の総評 ②最優先の改善点（データに基づく具体的な1点） ③前向きな締め",
-        "【厳守】「対戦キャラ別成績」に記載されていないキャラ名は絶対に出さない。",
-        "【厳守】データにない事実・推測は述べない。余計な説明・挨拶・記号は不要。",
-    ])
+    return "\n".join(lines) if lines else "（特記事項なし）"
 
-    return "\n".join(lines)
+
+def _build_prompt(
+    battles: list[Battle],
+    date_str: str,
+    player_name: str = "",
+    prev_battles: list[Battle] | None = None,
+    prev_date_str: str = "",
+    rematch_data: dict | None = None,
+) -> str:
+    """
+    XML タグ構造化プロンプトを構築する。
+
+    構造:
+      <role>       — コーチとしての役割定義
+      <examples>   — Few-shot サンプル（好調日・不調日の2パターン）
+      <battle_data>— 今日の戦績データ
+      <insights>   — Python 側で事前計算した洞察
+      <constraints>— 厳守ルール
+      <output_format>— JSON 出力仕様
+    """
+    stats    = _calculate_stats(battles)
+    insights = _compute_coaching_insights(battles, prev_battles)
+
+    battle_data = _build_battle_data_section(stats, date_str, player_name, insights, rematch_data)
+    insights_text = _build_insights_section(insights, rematch_data)
+
+    return f"""<role>
+あなたは鉄拳8の対戦コーチです。プレイヤーのデータを分析して、具体的で前向きなコーチングコメントを提供します。
+</role>
+
+<examples>
+{_FEW_SHOT_EXAMPLES}
+</examples>
+
+<battle_data>
+{battle_data}
+</battle_data>
+
+<insights>
+{insights_text}
+</insights>
+
+<constraints>
+- 「対戦キャラ別成績」に記載されていないキャラ名は絶対に出さない
+- データにない事実・数値・推測は述べない
+- 挨拶・記号・余計な説明は不要
+- 日本語150文字以内で回答する
+</constraints>
+
+<output_format>
+以下の JSON 形式のみで回答してください。他のテキストは一切含めないこと。
+{{"comment": "コーチングコメント（150文字以内）"}}
+</output_format>"""
 
 
 def _call_ollama(model: str, prompt: str) -> str | None:
-    """指定モデルで Ollama を呼び出し、レスポンステキストを返す。失敗時は例外を再送出。"""
+    """
+    指定モデルで Ollama を呼び出し、コーチングコメント文字列を返す。
+
+    format: "json" で出力を {"comment": "..."} に強制する。
+    JSON 解析失敗時は生テキストにフォールバックして返す。
+    失敗時は例外を再送出。
+    """
     resp = requests.post(
         f"{OLLAMA_URL}/api/generate",
         json={
             "model":   model,
             "prompt":  prompt,
             "stream":  False,
-            "options": {"temperature": 0.7, "num_predict": 200},
+            "format":  "json",
+            "options": {"temperature": 0.7, "num_predict": 300},
         },
         timeout=TIMEOUT_LLM,
     )
     resp.raise_for_status()
-    return resp.json().get("response", "").strip() or None
+    raw = resp.json().get("response", "").strip()
+    if not raw:
+        return None
+
+    try:
+        data = json.loads(raw)
+        comment = data.get("comment", "").strip()
+        return comment or None
+    except (json.JSONDecodeError, AttributeError):
+        logger.warning("[analyzer] JSON解析失敗、生テキストにフォールバック")
+        return raw or None
 
 
-def analyze(battles: list[Battle], date_str: str, player_name: str = "",
-            prev_battles: list[Battle] | None = None,
-            rematch_data: dict | None = None) -> str | None:
+def analyze(
+    battles: list[Battle],
+    date_str: str,
+    player_name: str = "",
+    prev_battles: list[Battle] | None = None,
+    rematch_data: dict | None = None,
+) -> str | None:
     """
     バトルデータをLLMで分析してコメントを返す。
     prev_battles が渡された場合は前日比のコンテキストをプロンプトに含める。
@@ -259,7 +370,6 @@ def analyze(battles: list[Battle], date_str: str, player_name: str = "",
         rematch_data=rematch_data,
     )
 
-    # プライマリモデルを試みる
     try:
         comment = _call_ollama(OLLAMA_MODEL, prompt)
         logger.info(f"[analyzer] LLM分析完了({OLLAMA_MODEL}): {len(comment or '')}文字")
@@ -267,7 +377,6 @@ def analyze(battles: list[Battle], date_str: str, player_name: str = "",
     except requests.RequestException as e:
         logger.warning(f"[analyzer] プライマリモデル失敗({OLLAMA_MODEL}): {e}")
 
-    # フォールバックモデルがあれば試みる
     if OLLAMA_FALLBACK_MODEL:
         try:
             comment = _call_ollama(OLLAMA_FALLBACK_MODEL, prompt)

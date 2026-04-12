@@ -332,25 +332,55 @@ def test_build_rematch_section_multiple_opponents():
 # _call_ollama
 # ---------------------------------------------------------------------------
 
-def test_call_ollama_returns_response():
-    mock_resp = MagicMock()
-    mock_resp.json.return_value = {"response": "良い調子です"}
-    mock_resp.raise_for_status.return_value = None
-    with patch("requests.post", return_value=mock_resp):
+def _ollama_resp(comment: str) -> MagicMock:
+    """Ollama の JSON レスポンスモックを生成する。"""
+    import json
+    mock = MagicMock()
+    mock.raise_for_status.return_value = None
+    mock.json.return_value = {"response": json.dumps({"comment": comment})}
+    return mock
+
+
+def test_call_ollama_parses_json_comment():
+    """JSON レスポンスから comment フィールドを抽出して返す。"""
+    with patch("requests.post", return_value=_ollama_resp("良い調子です")):
         result = _call_ollama("testmodel", "test prompt")
     assert result == "良い調子です"
 
 
+def test_call_ollama_fallback_on_invalid_json():
+    """JSON 解析失敗時は生テキストにフォールバックして返す。"""
+    mock = MagicMock()
+    mock.raise_for_status.return_value = None
+    mock.json.return_value = {"response": "これはJSONではない"}
+    with patch("requests.post", return_value=mock):
+        result = _call_ollama("testmodel", "test prompt")
+    assert result == "これはJSONではない"
+
+
 def test_call_ollama_returns_none_for_empty_response():
-    mock_resp = MagicMock()
-    mock_resp.json.return_value = {"response": ""}
-    mock_resp.raise_for_status.return_value = None
-    with patch("requests.post", return_value=mock_resp):
+    """空レスポンスは None を返す。"""
+    mock = MagicMock()
+    mock.raise_for_status.return_value = None
+    mock.json.return_value = {"response": ""}
+    with patch("requests.post", return_value=mock):
+        result = _call_ollama("testmodel", "test prompt")
+    assert result is None
+
+
+def test_call_ollama_returns_none_for_empty_comment_field():
+    """JSON の comment が空文字の場合も None を返す。"""
+    import json
+    mock = MagicMock()
+    mock.raise_for_status.return_value = None
+    mock.json.return_value = {"response": json.dumps({"comment": ""})}
+    with patch("requests.post", return_value=mock):
         result = _call_ollama("testmodel", "test prompt")
     assert result is None
 
 
 def test_call_ollama_raises_on_http_error():
+    """HTTP エラー時は例外を再送出する。"""
     with patch("requests.post", side_effect=requests.RequestException("connection error")):
         with pytest.raises(requests.RequestException):
             _call_ollama("testmodel", "test prompt")
@@ -373,10 +403,7 @@ def test_analyze_empty_battles_returns_none():
 
 def test_analyze_calls_primary_model_and_returns_comment():
     battles = [_ranked_battle()]
-    mock_resp = MagicMock()
-    mock_resp.json.return_value = {"response": "今日は好調"}
-    mock_resp.raise_for_status.return_value = None
-    with patch("requests.post", return_value=mock_resp):
+    with patch("requests.post", return_value=_ollama_resp("今日は好調")):
         result = analyze(battles, "2024/01/15", "TestPlayer")
     assert result == "今日は好調"
 
@@ -384,12 +411,12 @@ def test_analyze_calls_primary_model_and_returns_comment():
 def test_analyze_fallback_on_primary_failure():
     """プライマリモデル失敗 → フォールバックモデルで成功。"""
     battles = [_ranked_battle()]
-    mock_resp = MagicMock()
-    mock_resp.json.return_value = {"response": "フォールバック結果"}
-    mock_resp.raise_for_status.return_value = None
     with (
         patch("bot.analyzer.OLLAMA_FALLBACK_MODEL", "fallback_model"),
-        patch("requests.post", side_effect=[requests.RequestException("primary fail"), mock_resp]),
+        patch("requests.post", side_effect=[
+            requests.RequestException("primary fail"),
+            _ollama_resp("フォールバック結果"),
+        ]),
     ):
         result = analyze(battles, "2024/01/15", "TestPlayer")
     assert result == "フォールバック結果"
@@ -419,12 +446,9 @@ def test_analyze_no_fallback_configured_returns_none():
 
 def test_analyze_with_prev_battles():
     """prev_battles を渡しても例外なく動作する。"""
-    battles  = [_ranked_battle(won=True,  battle_at=200)]
-    prev     = [_ranked_battle(won=False, battle_at=100)]
-    mock_resp = MagicMock()
-    mock_resp.json.return_value = {"response": "前日比コメント"}
-    mock_resp.raise_for_status.return_value = None
-    with patch("requests.post", return_value=mock_resp):
+    battles = [_ranked_battle(won=True,  battle_at=200)]
+    prev    = [_ranked_battle(won=False, battle_at=100)]
+    with patch("requests.post", return_value=_ollama_resp("前日比コメント")):
         result = analyze(battles, "2024/01/15", "TestPlayer", prev_battles=prev)
     assert result == "前日比コメント"
 
@@ -432,9 +456,22 @@ def test_analyze_with_prev_battles():
 def test_analyze_invalid_date_format():
     """日付フォーマットが不正でも例外を出さない。"""
     battles = [_ranked_battle()]
-    mock_resp = MagicMock()
-    mock_resp.json.return_value = {"response": "OK"}
-    mock_resp.raise_for_status.return_value = None
-    with patch("requests.post", return_value=mock_resp):
+    with patch("requests.post", return_value=_ollama_resp("OK")):
         result = analyze(battles, "invalid-date", "TestPlayer")
-    assert result is not None  # date parse error is caught internally
+    assert result is not None
+
+
+def test_build_prompt_contains_xml_tags():
+    """プロンプトに XML 構造タグが含まれる。"""
+    battles = [_battle(True)]
+    prompt = _build_prompt(battles, "2024/01/15")
+    for tag in ["<role>", "<examples>", "<battle_data>", "<constraints>", "<output_format>"]:
+        assert tag in prompt
+
+
+def test_build_prompt_contains_few_shot_examples():
+    """Few-shot サンプルがプロンプトに含まれる。"""
+    battles = [_battle(True)]
+    prompt = _build_prompt(battles, "2024/01/15")
+    assert "<example>" in prompt
+    assert "Bryan" in prompt  # サンプル内のキャラ名
