@@ -99,47 +99,6 @@ def test_compute_opponent_data_skips_none_polaris_id():
 # _fire_alerts
 # ---------------------------------------------------------------------------
 
-def test_fire_alerts_sends_losing_streak_notification():
-    """連敗数が閾値以上 → notify が呼ばれる。"""
-    battles = [_battle(won=False)] * 5
-    with (
-        patch("main.LOSS_ALERT_THRESHOLD", 3),
-        patch("main.WIN_ALERT_THRESHOLD", 0),
-        patch("main.RATING_GOAL", 0),
-        patch("bot.discord_post.notify") as mock_notify,
-    ):
-        _fire_alerts(battles, battles, [], "Alice")
-    mock_notify.assert_called_once()
-    assert "連敗" in mock_notify.call_args[0][0]
-
-
-def test_fire_alerts_no_losing_streak_below_threshold():
-    """連敗数が閾値未満 → notify は呼ばれない。"""
-    battles = [_battle(won=False)] * 2
-    with (
-        patch("main.LOSS_ALERT_THRESHOLD", 5),
-        patch("main.WIN_ALERT_THRESHOLD", 0),
-        patch("main.RATING_GOAL", 0),
-        patch("bot.discord_post.notify") as mock_notify,
-    ):
-        _fire_alerts(battles, battles, [], "Alice")
-    mock_notify.assert_not_called()
-
-
-def test_fire_alerts_sends_winning_streak_notification():
-    """連勝数が閾値以上 → notify が呼ばれる。"""
-    battles = [_battle(won=True)] * 5
-    with (
-        patch("main.LOSS_ALERT_THRESHOLD", 0),
-        patch("main.WIN_ALERT_THRESHOLD", 3),
-        patch("main.RATING_GOAL", 0),
-        patch("bot.discord_post.notify") as mock_notify,
-    ):
-        _fire_alerts(battles, battles, [], "Alice")
-    mock_notify.assert_called_once()
-    assert "連勝" in mock_notify.call_args[0][0]
-
-
 def test_fire_alerts_sends_rating_goal_notification():
     """今日目標レーティング達成（前日は未達成）→ notify が呼ばれる。"""
     today_battles = [
@@ -149,8 +108,6 @@ def test_fire_alerts_sends_rating_goal_notification():
         _battle(battle_at=999_999, rating_before=9_500, rating_change=100),
     ]
     with (
-        patch("main.LOSS_ALERT_THRESHOLD", 0),
-        patch("main.WIN_ALERT_THRESHOLD", 0),
         patch("main.RATING_GOAL", 10_000),
         patch("bot.discord_post.notify") as mock_notify,
     ):
@@ -164,8 +121,6 @@ def test_fire_alerts_no_duplicate_rating_goal_notification():
     today_battles = [_battle(battle_at=1_000_100, rating_before=9_900, rating_change=200)]
     prev_battles  = [_battle(battle_at=999_999,   rating_before=9_800, rating_change=300)]
     with (
-        patch("main.LOSS_ALERT_THRESHOLD", 0),
-        patch("main.WIN_ALERT_THRESHOLD", 0),
         patch("main.RATING_GOAL", 10_000),
         patch("bot.discord_post.notify") as mock_notify,
     ):
@@ -173,12 +128,10 @@ def test_fire_alerts_no_duplicate_rating_goal_notification():
     mock_notify.assert_not_called()
 
 
-def test_fire_alerts_disabled_when_all_thresholds_zero():
-    """全閾値 0 → notify は一切呼ばれない。"""
-    battles = [_battle(won=False)] * 10
+def test_fire_alerts_no_notification_when_goal_zero():
+    """RATING_GOAL=0（無効）→ notify は呼ばれない。"""
+    battles = [_battle(battle_at=1_000_100, rating_before=9_900, rating_change=200)]
     with (
-        patch("main.LOSS_ALERT_THRESHOLD", 0),
-        patch("main.WIN_ALERT_THRESHOLD", 0),
         patch("main.RATING_GOAL", 0),
         patch("bot.discord_post.notify") as mock_notify,
     ):
@@ -353,88 +306,6 @@ def test_fetch_scout_data_multiple_pids():
         result = _fetch_scout_data(["pid_a", "pid_b"], "Alice")
     assert "pid_a" in result
     assert "pid_b" in result
-
-
-# ---------------------------------------------------------------------------
-# _fire_alerts — 段位アップ通知
-# ---------------------------------------------------------------------------
-
-def _battle_with_rank(
-    battle_at: int,
-    won: bool = True,
-    my_rank: int | None = None,
-    rating_before: int | None = None,
-    rating_change: int | None = None,
-) -> dict:
-    return {
-        "battle_id":     f"t{battle_at}",
-        "battle_at":     battle_at,
-        "won":           won,
-        "opp_polaris_id": "pid_opp",
-        "opp_name":      "Opp",
-        "opp_chara":     "Jin",
-        "battle_type":   "ranked",
-        "my_rank":       my_rank,
-        "rating_before": rating_before,
-        "rating_change": rating_change,
-    }
-
-
-def test_fire_alerts_sends_rank_up_notification():
-    """今日の最終ランクが前日より高い → 段位アップ通知が飛ぶ。"""
-    today_battles = [_battle_with_rank(1_000_100, my_rank=22)]   # Raijin
-    prev_battles  = [_battle_with_rank(999_999,   my_rank=21)]   # Fujin
-    with (
-        patch("main.LOSS_ALERT_THRESHOLD", 0),
-        patch("main.WIN_ALERT_THRESHOLD", 0),
-        patch("main.RATING_GOAL", 0),
-        patch("bot.discord_post.notify") as mock_notify,
-    ):
-        _fire_alerts(today_battles, today_battles, prev_battles, "Alice")
-    mock_notify.assert_called_once()
-    assert "段位アップ" in mock_notify.call_args[0][0]
-    assert "Raijin" in mock_notify.call_args[0][0]
-
-
-def test_fire_alerts_no_rank_up_when_same():
-    """前日と同じランク → 段位アップ通知しない。"""
-    today_battles = [_battle_with_rank(1_000_100, my_rank=22)]
-    prev_battles  = [_battle_with_rank(999_999,   my_rank=22)]
-    with (
-        patch("main.LOSS_ALERT_THRESHOLD", 0),
-        patch("main.WIN_ALERT_THRESHOLD", 0),
-        patch("main.RATING_GOAL", 0),
-        patch("bot.discord_post.notify") as mock_notify,
-    ):
-        _fire_alerts(today_battles, today_battles, prev_battles, "Alice")
-    mock_notify.assert_not_called()
-
-
-def test_fire_alerts_no_rank_up_without_prev():
-    """前日データなし → 段位アップ通知しない。"""
-    today_battles = [_battle_with_rank(1_000_100, my_rank=22)]
-    with (
-        patch("main.LOSS_ALERT_THRESHOLD", 0),
-        patch("main.WIN_ALERT_THRESHOLD", 0),
-        patch("main.RATING_GOAL", 0),
-        patch("bot.discord_post.notify") as mock_notify,
-    ):
-        _fire_alerts(today_battles, today_battles, [], "Alice")
-    mock_notify.assert_not_called()
-
-
-def test_fire_alerts_no_rank_up_when_rank_missing():
-    """my_rank が None のバトルは段位アップ判定から除外される。"""
-    today_battles = [_battle_with_rank(1_000_100, my_rank=None)]
-    prev_battles  = [_battle_with_rank(999_999,   my_rank=21)]
-    with (
-        patch("main.LOSS_ALERT_THRESHOLD", 0),
-        patch("main.WIN_ALERT_THRESHOLD", 0),
-        patch("main.RATING_GOAL", 0),
-        patch("bot.discord_post.notify") as mock_notify,
-    ):
-        _fire_alerts(today_battles, today_battles, prev_battles, "Alice")
-    mock_notify.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
