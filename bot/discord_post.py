@@ -22,7 +22,7 @@ from bot.config import (
 from bot.models import Battle
 from bot.stats import (
     calculate_streak, aggregate_by_character, count_wins, count_losses,
-    filter_rated_battles, aggregate_by_hour, detect_momentum, predict_rating_trend,
+    filter_rated_battles, detect_momentum, predict_rating_trend,
     get_most_common,
 )
 
@@ -128,22 +128,6 @@ def _matchup_matrix(battles: list[Battle]) -> str | None:
     return "\n".join(lines)
 
 
-def _hourly_section(battles: list[Battle]) -> str | None:
-    """JST 時間帯別勝率セクションを返す。2試合以上の時間帯のみ表示。"""
-    hourly = aggregate_by_hour(battles)
-    rows = [(h, results) for h, results in hourly.items() if len(results) >= 2]
-    if not rows:
-        return None
-    rows.sort(key=lambda x: x[0])
-    lines = ["🕐 時間帯別"]
-    for hour, results in rows:
-        w   = sum(results)
-        l   = len(results) - w
-        wr  = w / len(results) * 100
-        icon = "✅" if wr > 50 else ("❌" if wr < 50 else "➖")
-        lines.append(f"  {hour:02d}時 {w}勝{l}敗 ({wr:.0f}%) {icon}")
-    return "\n".join(lines)
-
 
 def _scout_section(battles: list[Battle], scout_data: dict[str, dict]) -> str | None:
     """
@@ -171,26 +155,6 @@ def _scout_section(battles: list[Battle], scout_data: dict[str, dict]) -> str | 
         )
     return "\n".join(lines)
 
-
-def _rematch_section(battles: list[Battle]) -> str | None:
-    """同一対戦相手と2戦以上した場合に今日の対面成績をまとめて返す。"""
-    pid_count: Counter = Counter(
-        b.get("opp_polaris_id") for b in battles if b.get("opp_polaris_id")
-    )
-    repeat_pids = {pid for pid, cnt in pid_count.items() if cnt >= 2}
-    if not repeat_pids:
-        return None
-
-    lines = ["🔄 リピート対戦"]
-    for pid in sorted(repeat_pids):
-        subset = [b for b in battles if b.get("opp_polaris_id") == pid]
-        opp_name  = subset[0].get("opp_name") or "???"
-        opp_chara = subset[0].get("opp_chara") or "???"
-        w  = sum(1 for b in subset if b["won"])
-        l  = len(subset) - w
-        wr = w / len(subset) * 100
-        lines.append(f"  {opp_name}({opp_chara}) {w}勝{l}敗 ({wr:.0f}%)")
-    return "\n".join(lines)
 
 
 def _opp_rank_label(battle: Battle) -> str:
@@ -324,18 +288,6 @@ def build_message(
         lines.append("━━━━━━━━━━━━━━━")
         lines.append(matrix)
 
-    # --- 時間帯別勝率 ---
-    hourly = _hourly_section(battles)
-    if hourly:
-        lines.append("━━━━━━━━━━━━━━━")
-        lines.append(hourly)
-
-    # --- リピート対戦 ---
-    rematch = _rematch_section(battles)
-    if rematch:
-        lines.append("━━━━━━━━━━━━━━━")
-        lines.append(rematch)
-
     # --- 対戦相手スカウト ---
     if scout_data:
         scout = _scout_section(battles, scout_data)
@@ -398,9 +350,6 @@ def build_weekly_message(
         slope = trend["slope_per_day"]
         sign  = "+" if slope >= 0 else ""
         lines.append(f"📈 レーティングトレンド: {sign}{slope:.0f}/日")
-        stag = trend.get("stagnation_days", 0)
-        if stag >= 3:
-            lines.append(f"⚠️ 停滞気味: {stag}日間 変動が小さい")
 
     matrix = _matchup_matrix(battles)
     if matrix:
@@ -518,18 +467,6 @@ def build_embed(
         matrix_body = "\n".join(matrix.split("\n")[1:])
         fields.append({"name": "📊 対戦成績", "value": matrix_body[:1024], "inline": False})
 
-    # 時間帯別
-    hourly = _hourly_section(battles)
-    if hourly:
-        hourly_body = "\n".join(hourly.split("\n")[1:])
-        fields.append({"name": "🕐 時間帯別", "value": hourly_body[:1024], "inline": False})
-
-    # リピート対戦
-    rematch = _rematch_section(battles)
-    if rematch:
-        rematch_body = "\n".join(rematch.split("\n")[1:])
-        fields.append({"name": "🔄 リピート対戦", "value": rematch_body[:1024], "inline": False})
-
     # スカウト
     if scout_data:
         scout = _scout_section(battles, scout_data)
@@ -599,9 +536,6 @@ def build_weekly_embed(
         slope = trend["slope_per_day"]
         sign  = "+" if slope >= 0 else ""
         fields.append({"name": "📈 レーティングトレンド", "value": f"{sign}{slope:.0f}/日", "inline": True})
-        stag = trend.get("stagnation_days", 0)
-        if stag >= 3:
-            fields.append({"name": "⚠️ 停滞", "value": f"{stag}日間 変動が小さい", "inline": True})
 
     # 対戦成績
     matrix = _matchup_matrix(battles)
@@ -804,12 +738,14 @@ def edit_llm_comment(
     llm_comment: str,
 ) -> None:
     """
-    投稿済み Embed のフッターに LLM コメントを追記する（PATCH）。
+    投稿済み Embed の description 冒頭に LLM コメントを追記する（PATCH）。
     message_ids は [(message_id, webhook_url), ...] のリスト。
     チャート添付ファイルを保持するため GET → PATCH の順で処理する。
     失敗しても例外は出さない。
     """
-    updated = {**embed, "footer": {"text": f"🤖 {llm_comment}"[:2048]}}
+    original_desc = embed.get("description", "")
+    llm_block = f"💬 {llm_comment}\n\n"
+    updated = {**embed, "description": (llm_block + original_desc)[:4096]}
     for message_id, webhook_url in message_ids:
         parts = _parse_webhook_id_token(webhook_url)
         if not parts:

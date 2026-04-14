@@ -10,13 +10,11 @@ from bot.discord_post import (
     _nemesis,
     _rating_summary,
     _matchup_matrix,
-    _hourly_section,
     _scout_section,
     _opp_rank_label,
     _quick_rank_distribution,
     _parse_webhook_id_token,
     _embed_color,
-    _rematch_section,
     build_message,
     build_weekly_message,
     build_community_weekly,
@@ -566,52 +564,6 @@ def test_build_weekly_embed_contains_player_name():
 
 
 # ---------------------------------------------------------------------------
-# _hourly_section
-# ---------------------------------------------------------------------------
-# battle_at=1000 は JST で 1970-01-01 09:16:40 → hour=9
-# battle_at=4000 は JST で 1970-01-01 10:06:40 → hour=10
-
-def test_hourly_section_shows_hours_with_2plus_battles():
-    """2試合以上の時間帯のみ表示される。"""
-    battles = [
-        _battle(won=True,  battle_at=1000),
-        _battle(won=False, battle_at=1010),  # 同じ時間帯
-        _battle(won=True,  battle_at=4000),  # 別の時間帯、1試合のみ
-    ]
-    result = _hourly_section(battles)
-    assert result is not None
-    # hour=9 は2試合あるので表示される
-    assert "9" in result
-    # hour=10 は1試合のみなので表示されない
-    assert "10" not in result
-
-
-def test_hourly_section_none_when_all_single():
-    """全時間帯が1試合のみ → None を返す。"""
-    battles = [
-        _battle(won=True,  battle_at=1000),
-        _battle(won=False, battle_at=4000),
-    ]
-    assert _hourly_section(battles) is None
-
-
-def test_hourly_section_none_when_empty():
-    """空リスト → None を返す。"""
-    assert _hourly_section([]) is None
-
-
-def test_hourly_section_shows_win_rate():
-    """勝率が表示される（%が含まれる）。"""
-    battles = [
-        _battle(won=True,  battle_at=1000),
-        _battle(won=True,  battle_at=1010),
-        _battle(won=False, battle_at=1020),
-    ]
-    result = _hourly_section(battles)
-    assert result is not None
-    assert "%" in result
-
-
 # ---------------------------------------------------------------------------
 # _opp_rank_label / _quick_rank_distribution
 # ---------------------------------------------------------------------------
@@ -817,40 +769,6 @@ def test_embed_color_medium_win_rate():
 
 
 # ---------------------------------------------------------------------------
-# _rematch_section
-# ---------------------------------------------------------------------------
-
-def _rematch_battle(opp_pid: str, won: bool, opp_name: str = "Opp",
-                    opp_chara: str = "Jin", battle_at: int = 1000) -> dict:
-    b = _battle(won=won, opp_chara=opp_chara, battle_at=battle_at)
-    b["opp_polaris_id"] = opp_pid
-    b["opp_name"] = opp_name
-    return b
-
-
-def test_rematch_section_with_repeat():
-    """同一相手と2戦 → リピート対戦セクションを返す。"""
-    battles = [
-        _rematch_battle("pid1", True,  "TestOpp", "Jin"),
-        _rematch_battle("pid1", False, "TestOpp", "Jin"),
-    ]
-    result = _rematch_section(battles)
-    assert result is not None
-    assert "リピート対戦" in result
-    assert "TestOpp" in result
-
-
-def test_rematch_section_no_repeat():
-    """全員別の相手 → None を返す。"""
-    battles = [_rematch_battle("pid1", True), _rematch_battle("pid2", False)]
-    assert _rematch_section(battles) is None
-
-
-def test_rematch_section_empty():
-    """空リスト → None を返す。"""
-    assert _rematch_section([]) is None
-
-
 # ---------------------------------------------------------------------------
 # build_message 追加ブランチ
 # ---------------------------------------------------------------------------
@@ -923,23 +841,14 @@ def test_build_embed_shows_rank_name_in_power_field():
     assert "150,000" in str(result)
 
 
-def test_build_embed_with_rematch_section():
-    """同一相手と2戦 → Embed にリピート対戦フィールドが含まれる。"""
-    battles = [
-        _rematch_battle("pid1", True,  "Rival", battle_at=1000),
-        _rematch_battle("pid1", False, "Rival", battle_at=2000),
-    ]
-    result = build_embed(battles, "2024/01/01")
-    assert result is not None
-    assert any("リピート" in f["name"] for f in result["fields"])
-
-
 def test_build_embed_with_scout_data():
     """scout_data がある → Embed にスカウトフィールドが含まれる。"""
-    battles = [
-        _rematch_battle("pid1", True,  "Scout", battle_at=1000),
-        _rematch_battle("pid1", False, "Scout", battle_at=2000),
-    ]
+    def _b(won: bool, battle_at: int) -> dict:
+        b = _battle(won=won, opp_chara="Reina", battle_at=battle_at)
+        b["opp_polaris_id"] = "pid1"
+        b["opp_name"] = "Scout"
+        return b
+    battles = [_b(True, 1000), _b(False, 2000)]
     scout_data = {
         "pid1": {"total": 30, "win_rate": 55.0, "main_chara": "Reina",
                  "recent_wins": 8, "recent_total": 10, "recent_win_rate": 80.0}
@@ -1275,7 +1184,7 @@ def test_post_weekly_with_chart():
 # ---------------------------------------------------------------------------
 
 def test_edit_llm_comment_patches_embed():
-    """正常ケース → PATCH リクエストが発行される。"""
+    """正常ケース → PATCH リクエストが発行され、LLM コメントが description 冒頭に追加される。"""
     get_resp = MagicMock()
     get_resp.raise_for_status.return_value = None
     get_resp.json.return_value = {"attachments": []}
@@ -1284,7 +1193,7 @@ def test_edit_llm_comment_patches_embed():
     patch_resp.raise_for_status.return_value = None
 
     message_ids = [("msg123", "https://discord.com/api/webhooks/1/tok")]
-    embed = {"title": "test", "color": 0}
+    embed = {"title": "test", "color": 0, "description": "試合一覧"}
 
     with patch("bot.discord_post._webhook_session") as mock_sess:
         mock_sess.get.return_value  = get_resp
@@ -1293,7 +1202,9 @@ def test_edit_llm_comment_patches_embed():
 
     mock_sess.patch.assert_called_once()
     patch_call = mock_sess.patch.call_args[1]
-    assert "footer" in str(patch_call["json"])
+    updated_embed = patch_call["json"]["embeds"][0]
+    assert "LLM コメントです" in updated_embed["description"]
+    assert updated_embed["description"].startswith("💬")
 
 
 def test_edit_llm_comment_preserves_attachments():
@@ -1471,30 +1382,6 @@ def test_post_weekly_continues_when_chara_chart_raises():
         result = post_weekly(battles, "2024/01/15")
 
     assert result is not None
-
-
-# ---------------------------------------------------------------------------
-# 停滞表示（lines 403, 600）
-# ---------------------------------------------------------------------------
-
-def test_build_weekly_message_stagnation_warning():
-    """停滞3日以上 → ⚠️ 停滞気味行が表示される。"""
-    from unittest.mock import patch as _patch
-    battles = [_battle(True, battle_type="ranked", rating_before=10000, rating_change=10, battle_at=1000)]
-    with _patch("bot.discord_post.predict_rating_trend", return_value={"slope_per_day": 5.0, "stagnation_days": 5.0}):
-        msg = build_weekly_message(battles, "2024/01/15")
-    assert msg is not None
-    assert "停滞" in msg
-
-
-def test_build_weekly_embed_stagnation_field():
-    """停滞3日以上 → Embed に停滞フィールドが含まれる。"""
-    from unittest.mock import patch as _patch
-    battles = [_battle(True, battle_type="ranked", rating_before=10000, rating_change=10, battle_at=1000)]
-    with _patch("bot.discord_post.predict_rating_trend", return_value={"slope_per_day": 5.0, "stagnation_days": 4.0}):
-        result = build_weekly_embed(battles, "2024/01/15")
-    assert result is not None
-    assert any("停滞" in f["name"] for f in result["fields"])
 
 
 # ---------------------------------------------------------------------------

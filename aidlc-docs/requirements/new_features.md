@@ -22,47 +22,16 @@
 
 ---
 
-## Unit 6: 分析強化（Advanced Analytics）
+## Unit 5: 投稿体験改善（Engagement）
 
-### US-601: セッション別勝率分析
-**As a** プレイヤー,  
-**I want** ゲームセッション単位での勝率推移を確認できること,  
-**So that** 何局目から勝率が落ちるか（疲労・集中力低下）を把握できる。
+### US-501: 投稿の可読性向上
+**As a** Discord メンバー（鉄拳未プレイを含む）,  
+**I want** 投稿を見て「今日どんな展開だったか」が直感的に伝わること,  
+**So that** 鉄拳に興味を持ったり、活動を応援したりしやすくなる。
 
-**Acceptance Criteria:**
-- 30分以上の空白を「セッション区切り」と定義する
-- セッション番号・試合数・勝率をまとめてテキスト表示
-- 週次サマリーに「今週のベストセッション」を追加する
-- `/tekken sessions [days]` コマンドでオンデマンド確認可能
+**設計方針（2026-04-14 確定）:**
+- 人の言葉（LLM コメント）を最前面に出す → description 冒頭に配置
+- データ量より「ドラマ」を重視する → 乾燥した分析セクションは削除
+- 削除対象: 時間帯別勝率（`_hourly_section`）、リピート対戦（`_rematch_section`）、週次停滞警告
 
-**Status:** ⬜ Not started
-
----
-
-### US-602: 目標到達プロセス可視化
-**As a** プレイヤー,  
-**I want** 段位やレーティング目標への進捗をグラフで確認できること,  
-**So that** モチベーション維持と進捗確認がしやすくなる。
-
-**Acceptance Criteria:**
-- `RATING_GOAL` に対する現在の達成率をパーセントで表示する
-- 現在のトレンドが継続した場合の予測到達日を計算して表示する
-- `/tekken goal` コマンドで専用グラフを Discord に投稿する
-
-**Status:** ⬜ Not started
-
----
-
-## Unit 7: インフラ強化（Infrastructure）
-
-### US-701: Prometheus アラートルール
-**As a** 運用担当,  
-**I want** 勝率の急落や長期停滞を Prometheus Alertmanager で検知できること,  
-**So that** Bot の状態変化を Grafana 外でも把握できる。
-
-**Acceptance Criteria:**
-- 7日間勝率が 40% を下回った場合にアラートを発火する
-- 5日以上新規バトルがない場合に「長期非活動」アラートを発火する
-- `prometheus/alerts.yml` に定義し `docker-compose.yml` に組み込む
-
-**Status:** ⬜ Not started
+**Status:** ✅ Done（2026-04-14）
