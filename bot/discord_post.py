@@ -157,6 +157,17 @@ def _scout_section(battles: list[Battle], scout_data: dict[str, dict]) -> str | 
 
 
 
+def _power_part(b: Battle) -> str:
+    """自分と相手の鉄拳力を '(鉄拳力: 1,234,567 vs 1,100,000 [+134,567])' 形式で返す。どちらかが None なら空文字。"""
+    my_p  = b.get("my_power")
+    opp_p = b.get("opp_power")
+    if my_p is None or opp_p is None:
+        return ""
+    diff = my_p - opp_p
+    sign = "+" if diff >= 0 else ""
+    return f"(鉄拳力: {my_p:,} vs {opp_p:,} [{sign}{diff:,}])"
+
+
 def _opp_rank_label(battle: Battle) -> str:
     """クイックマッチの場合のみ相手段位名を返す。ランク戦・段位不明は空文字。"""
     if battle.get("battle_type") != "quick":
@@ -207,13 +218,17 @@ def build_message(
 
     # --- 試合一覧 ---
     for b in sorted_b:
-        icon      = "✅" if b["won"] else "❌"
-        score     = f"{b['my_rounds']}-{b['opp_rounds']}"
-        chara     = b.get("my_chara") or "???"
-        opp       = b.get("opp_chara") or "???"
-        rank_part = _opp_rank_label(b)
-        opp_field = f"{opp} {rank_part}".rstrip() if rank_part else opp
-        lines.append(f"⚔️  {chara} vs {opp_field:<12} {icon} {score}")
+        icon       = "✅" if b["won"] else "❌"
+        score      = f"{b['my_rounds']}-{b['opp_rounds']}"
+        chara      = b.get("my_chara") or "???"
+        opp        = b.get("opp_chara") or "???"
+        rank_part  = _opp_rank_label(b)
+        opp_field  = f"{opp} {rank_part}".rstrip() if rank_part else opp
+        power_part = _power_part(b)
+        line = f"⚔️  {chara} vs {opp_field:<12} {icon} {score}"
+        if power_part:
+            line += f"  {power_part}"
+        lines.append(line)
 
     lines.append("━━━━━━━━━━━━━━━")
 
@@ -396,13 +411,17 @@ def build_embed(
     # 試合一覧（description）
     battle_lines = []
     for b in sorted_b:
-        icon      = "✅" if b["won"] else "❌"
-        score     = f"{b['my_rounds']}-{b['opp_rounds']}"
-        chara     = b.get("my_chara") or "???"
-        opp       = b.get("opp_chara") or "???"
-        rank_part = _opp_rank_label(b)
-        opp_field = f"{opp} {rank_part}".rstrip() if rank_part else opp
-        battle_lines.append(f"⚔️ {chara} vs {opp_field:<12} {icon} {score}")
+        icon       = "✅" if b["won"] else "❌"
+        score      = f"{b['my_rounds']}-{b['opp_rounds']}"
+        chara      = b.get("my_chara") or "???"
+        opp        = b.get("opp_chara") or "???"
+        rank_part  = _opp_rank_label(b)
+        opp_field  = f"{opp} {rank_part}".rstrip() if rank_part else opp
+        power_part = _power_part(b)
+        line = f"⚔️ {chara} vs {opp_field:<12} {icon} {score}"
+        if power_part:
+            line += f"  {power_part}"
+        battle_lines.append(line)
     description = "\n".join(battle_lines)[:4096]
 
     fields: list[dict] = []
