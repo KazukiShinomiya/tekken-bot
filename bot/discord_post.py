@@ -366,6 +366,16 @@ def build_weekly_message(
         sign  = "+" if slope >= 0 else ""
         lines.append(f"📈 レーティングトレンド: {sign}{slope:.0f}/日")
 
+    # 週末時点の鉄拳力
+    latest = max(battles, key=lambda x: x["battle_at"])
+    if latest.get("my_power"):
+        rank_name = RANK_NAMES.get(latest.get("my_rank") or -1, "")
+        power_str = f"{latest['my_power']:,}"
+        if rank_name:
+            lines.append(f"💥 週末鉄拳力: {rank_name} ({power_str})")
+        else:
+            lines.append(f"💥 週末鉄拳力: {power_str}")
+
     matrix = _matchup_matrix(battles)
     if matrix:
         lines.append("━━━━━━━━━━━━━━━")
@@ -555,6 +565,14 @@ def build_weekly_embed(
         slope = trend["slope_per_day"]
         sign  = "+" if slope >= 0 else ""
         fields.append({"name": "📈 レーティングトレンド", "value": f"{sign}{slope:.0f}/日", "inline": True})
+
+    # 週末時点の鉄拳力
+    latest = max(battles, key=lambda x: x["battle_at"])
+    if latest.get("my_power"):
+        rank_name = RANK_NAMES.get(latest.get("my_rank") or -1, "")
+        power_str = f"{latest['my_power']:,}"
+        field_name = f"💥 週末鉄拳力: {rank_name}" if rank_name else "💥 週末鉄拳力"
+        fields.append({"name": field_name, "value": power_str, "inline": True})
 
     # 対戦成績
     matrix = _matchup_matrix(battles)
