@@ -9,6 +9,7 @@ import requests
 from collections import Counter
 from datetime import datetime
 from requests.adapters import HTTPAdapter
+from typing import Any
 from urllib3.util.retry import Retry
 
 from bot.config import (
@@ -190,198 +191,6 @@ def _quick_rank_distribution(quick_battles: list[Battle]) -> str:
     if not counts:
         return ""
     return " / ".join(f"{name}×{cnt}" for name, cnt in counts.most_common())
-
-
-# ---------------------------------------------------------------------------
-# メッセージ構築
-# ---------------------------------------------------------------------------
-
-def build_message(
-    battles: list[Battle],
-    date_str: str,
-    player_name: str | None = None,
-    scout_data: dict[str, dict] | None = None,
-) -> str | None:
-    if not battles:
-        return None
-
-    display_name = player_name or TEKKEN_ID
-    sorted_b = sorted(battles, key=lambda x: x["battle_at"])
-
-    # battle_type 別に分類
-    ranked = [b for b in battles if b.get("battle_type") == "ranked"]
-    quick  = [b for b in battles if b.get("battle_type") == "quick"]
-    other  = [b for b in battles if b.get("battle_type") not in ("ranked", "quick")]
-
-    lines = [f"🎮 **{display_name}** 本日の戦果 ({date_str})"]
-    lines.append("━━━━━━━━━━━━━━━")
-
-    # --- 試合一覧 ---
-    for b in sorted_b:
-        icon       = "✅" if b["won"] else "❌"
-        score      = f"{b['my_rounds']}-{b['opp_rounds']}"
-        chara      = b.get("my_chara") or "???"
-        opp        = b.get("opp_chara") or "???"
-        rank_part  = _opp_rank_label(b)
-        opp_field  = f"{opp} {rank_part}".rstrip() if rank_part else opp
-        power_part = _power_part(b)
-        line = f"⚔️  {chara} vs {opp_field:<12} {icon} {score}"
-        if power_part:
-            line += f"  {power_part}"
-        lines.append(line)
-
-    lines.append("━━━━━━━━━━━━━━━")
-
-    # --- タイプ別スタッツ ---
-    def _type_line(icon: str, label: str, subset: list[Battle]) -> str | None:
-        if not subset:
-            return None
-        w = count_wins(subset)
-        l = count_losses(subset)
-        wr = _win_rate(subset)
-        base = f"{icon} {label:<5} {w}勝{l}敗 ({wr})"
-        if label == "ランク":
-            rating = _rating_summary(subset)
-            if rating:
-                base += f" | {rating}"
-        if label == "クイック":
-            dist = _quick_rank_distribution(subset)
-            if dist:
-                base += f"\n        相手段位: {dist}"
-        return base
-
-    for line in filter(None, [
-        _type_line("🏆", "ランク",   ranked),
-        _type_line("⚡", "クイック", quick),
-        _type_line("🎮", "その他",   other),
-    ]):
-        lines.append(line)
-
-    lines.append("━━━━━━━━━━━━━━━")
-
-    # --- 詳細スタッツ ---
-    total_my_rounds  = sum(b.get("my_rounds",  0) or 0 for b in battles)
-    total_opp_rounds = sum(b.get("opp_rounds", 0) or 0 for b in battles)
-    total_rounds     = total_my_rounds + total_opp_rounds
-    round_wr = f"{total_my_rounds / total_rounds * 100:.0f}%" if total_rounds else "-"
-
-    close = sum(1 for b in battles
-                if (b.get("my_rounds") or 0) + (b.get("opp_rounds") or 0) >= 5)  # 3-2 or 2-3
-
-    max_win, max_lose = _streak(sorted_b)
-
-    lines.append(f"🎯 ラウンド勝率: {round_wr} | 接戦(3-2): {close}試合")
-
-    streak_parts = []
-    if max_win  >= 2: streak_parts.append(f"連勝: {max_win}")
-    if max_lose >= 2: streak_parts.append(f"連敗: {max_lose}")
-    if streak_parts:
-        lines.append("🔥 " + " | ".join(streak_parts))
-
-    nemesis = _nemesis(battles)
-    if nemesis:
-        lines.append(f"😤 天敵: {nemesis}")
-
-    # 調子の波
-    momentum = detect_momentum(sorted_b)
-    if momentum:
-        lines.append(momentum)
-
-    # 鉄拳力（ある場合）
-    latest = max(battles, key=lambda x: x["battle_at"])
-    if latest.get("my_power"):
-        rank_name = RANK_NAMES.get(latest.get("my_rank") or -1, "")
-        power_str = f"{latest['my_power']:,}"
-        if rank_name:
-            lines.append(f"💥 {rank_name} ({power_str})")
-        else:
-            lines.append(f"💥 鉄拳力: {power_str}")
-
-    # --- 対戦マトリクス ---
-    matrix = _matchup_matrix(battles)
-    if matrix:
-        lines.append("━━━━━━━━━━━━━━━")
-        lines.append(matrix)
-
-    # --- 対戦相手スカウト ---
-    if scout_data:
-        scout = _scout_section(battles, scout_data)
-        if scout:
-            lines.append("━━━━━━━━━━━━━━━")
-            lines.append(scout)
-
-    return "\n".join(lines)
-
-
-def build_weekly_message(
-    battles: list[Battle],
-    week_start_str: str,
-    player_name: str | None = None,
-) -> str | None:
-    """週次サマリーメッセージを構築する。"""
-    if not battles:
-        return None
-
-    display_name = player_name or TEKKEN_ID
-    ranked = [b for b in battles if b.get("battle_type") == "ranked"]
-    quick  = [b for b in battles if b.get("battle_type") == "quick"]
-
-    # レーティング変動
-    rated = filter_rated_battles(ranked)
-    net_rating = sum(b.get("rating_change") or 0 for b in rated) if rated else None
-
-    top_chara, top_chara_count = get_most_common(battles, "my_chara")
-    top_opp,   top_opp_count   = get_most_common(battles, "opp_chara")
-
-    total_w = count_wins(battles)
-    total_l = count_losses(battles)
-
-    lines = [f"📅 **{display_name}** 週次サマリー（{week_start_str} 週）"]
-    lines.append("━━━━━━━━━━━━━━━")
-    lines.append(f"🏆 総合: {total_w}勝{total_l}敗 ({_win_rate(battles)})")
-
-    if ranked:
-        rw = count_wins(ranked)
-        rl = count_losses(ranked)
-        lines.append(f"📊 ランク: {rw}勝{rl}敗 ({_win_rate(ranked)})")
-
-    if quick:
-        qw = count_wins(quick)
-        ql = count_losses(quick)
-        dist = _quick_rank_distribution(quick)
-        rank_suffix = f" | 相手段位: {dist}" if dist else ""
-        lines.append(f"⚡ クイック: {qw}勝{ql}敗 ({_win_rate(quick)}){rank_suffix}")
-
-    if net_rating is not None:
-        sign = "+" if net_rating >= 0 else ""
-        lines.append(f"📈 レーティング変動: {sign}{net_rating}")
-
-    lines.append(f"🥊 最多使用キャラ: {top_chara} ({top_chara_count}戦)")
-    lines.append(f"🎯 最多対戦相手: {top_opp} ({top_opp_count}戦)")
-
-    # --- レーティングトレンド ---
-    trend = predict_rating_trend(battles)
-    if trend:
-        slope = trend["slope_per_day"]
-        sign  = "+" if slope >= 0 else ""
-        lines.append(f"📈 レーティングトレンド: {sign}{slope:.0f}/日")
-
-    # 週末時点の鉄拳力
-    latest = max(battles, key=lambda x: x["battle_at"])
-    if latest.get("my_power"):
-        rank_name = RANK_NAMES.get(latest.get("my_rank") or -1, "")
-        power_str = f"{latest['my_power']:,}"
-        if rank_name:
-            lines.append(f"💥 週末鉄拳力: {rank_name} ({power_str})")
-        else:
-            lines.append(f"💥 週末鉄拳力: {power_str}")
-
-    matrix = _matchup_matrix(battles)
-    if matrix:
-        lines.append("━━━━━━━━━━━━━━━")
-        lines.append(matrix)
-
-    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -611,30 +420,6 @@ def build_community_weekly_embed(players_stats: list[dict], week_start_str: str)
 # 投稿
 # ---------------------------------------------------------------------------
 
-def build_community_weekly(players_stats: list[dict], week_start_str: str) -> str:
-    """
-    複数プレイヤーの週次ランキングメッセージを構築する。
-    players_stats: [{name, wins, losses, net_rating}, ...]
-    """
-    sorted_players = sorted(players_stats, key=lambda p: p["net_rating"], reverse=True)
-    medals = ["🥇", "🥈", "🥉"]
-
-    lines = [f"🏆 **格ゲー部 週間ランキング** ({week_start_str} 週)"]
-    lines.append("━━━━━━━━━━━━━━━")
-
-    for i, p in enumerate(sorted_players):
-        medal  = medals[i] if i < 3 else f"{i + 1}."
-        sign   = "+" if p["net_rating"] >= 0 else ""
-        total  = p["wins"] + p["losses"]
-        wr_str = f"{p['wins'] / total * 100:.0f}%" if total else "-"
-        lines.append(
-            f"{medal} {p['name']}: {sign}{p['net_rating']} "
-            f"({p['wins']}勝{p['losses']}敗 {wr_str})"
-        )
-
-    return "\n".join(lines)
-
-
 def post_community_weekly(players_stats: list[dict], week_start_str: str) -> None:
     """部内週次ランキングを全 Discord Webhook に投稿する。2人以上いる場合のみ投稿。"""
     if not WEBHOOK_URLS or len(players_stats) < 2:
@@ -647,6 +432,34 @@ def post_community_weekly(players_stats: list[dict], week_start_str: str) -> Non
             logger.info("[discord_post] 部内ランキング投稿完了")
         except requests.RequestException as e:
             logger.warning(f"[discord_post] 部内ランキング投稿失敗: {e}")
+
+
+def _send_to_webhooks(
+    embed: dict,
+    chart: Any | None = None,
+    filename: str = "image.png",
+    log_label: str = "投稿",
+) -> list[tuple[str, str]]:
+    """全 Webhook に Embed を送信し、成功した (message_id, url) のリストを返す。"""
+    results: list[tuple[str, str]] = []
+    for url in WEBHOOK_URLS:
+        try:
+            wait_url = url + "?wait=true"
+            if chart:
+                chart.seek(0)
+                resp = _webhook_session.post(
+                    wait_url,
+                    data={"payload_json": json.dumps({"embeds": [embed]})},
+                    files={"files[0]": (filename, chart, "image/png")},
+                    timeout=TIMEOUT_WEBHOOK_IMAGE,
+                )
+            else:
+                resp = _webhook_session.post(wait_url, json={"embeds": [embed]}, timeout=TIMEOUT_WEBHOOK)
+            resp.raise_for_status()
+            results.append((resp.json()["id"], url))
+        except requests.RequestException as e:
+            logger.warning(f"[discord_post] {log_label}失敗 ({url[:60]}): {e}")
+    return results
 
 
 def notify(message: str) -> None:
@@ -696,25 +509,7 @@ def post(
     if embed is None:
         return None
 
-    results: list[tuple[str, str]] = []
-    for url in WEBHOOK_URLS:
-        try:
-            wait_url = url + "?wait=true"
-            if chart:
-                chart.seek(0)
-                resp = _webhook_session.post(
-                    wait_url,
-                    data={"payload_json": json.dumps({"embeds": [embed]})},
-                    files={"files[0]": ("rating.png", chart, "image/png")},
-                    timeout=TIMEOUT_WEBHOOK_IMAGE,
-                )
-            else:
-                resp = _webhook_session.post(wait_url, json={"embeds": [embed]}, timeout=TIMEOUT_WEBHOOK)
-            resp.raise_for_status()
-            results.append((resp.json()["id"], url))
-        except requests.RequestException as e:
-            logger.warning(f"[discord_post] 投稿失敗 ({url[:60]}): {e}")
-
+    results = _send_to_webhooks(embed, chart, filename="rating.png")
     return (results, embed) if results else None
 
 
@@ -745,27 +540,7 @@ def post_weekly(
     except Exception as e:
         logger.warning(f"[discord_post] キャラグラフ生成失敗（スキップ）: {e}")
 
-    results: list[tuple[str, str]] = []
-    for url in WEBHOOK_URLS:
-        try:
-            wait_url = url + "?wait=true"
-            if chara_chart:
-                chara_chart.seek(0)
-                resp = _webhook_session.post(
-                    wait_url,
-                    data={"payload_json": json.dumps({"embeds": [embed]})},
-                    files={"files[0]": ("chara_usage.png", chara_chart, "image/png")},
-                    timeout=TIMEOUT_WEBHOOK_IMAGE,
-                )
-            else:
-                resp = _webhook_session.post(
-                    wait_url, json={"embeds": [embed]}, timeout=TIMEOUT_WEBHOOK
-                )
-            resp.raise_for_status()
-            results.append((resp.json()["id"], url))
-        except requests.RequestException as e:
-            logger.warning(f"[discord_post] 週次投稿失敗 ({url[:60]}): {e}")
-
+    results = _send_to_webhooks(embed, chara_chart, filename="chara_usage.png", log_label="週次投稿")
     return (results, embed) if results else None
 
 
