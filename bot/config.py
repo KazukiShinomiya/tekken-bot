@@ -44,7 +44,7 @@ JST = timezone(timedelta(hours=9))
 
 # ── タイムアウト（秒） ────────────────────────────────────────────────────────
 TIMEOUT_API           = int(os.getenv("TIMEOUT_API", "15"))    # wank / ewgf.gg API
-TIMEOUT_LLM           = int(os.getenv("TIMEOUT_LLM", "300"))  # gemma3:4b 実測153秒、週次は長め
+TIMEOUT_LLM           = int(os.getenv("TIMEOUT_LLM", "600"))  # qwen2.5:7b 実測～110秒、週次はさらに長め
 TIMEOUT_WEBHOOK       = int(os.getenv("TIMEOUT_WEBHOOK", "10"))        # Discord Webhook（テキストのみ）
 TIMEOUT_WEBHOOK_IMAGE = int(os.getenv("TIMEOUT_WEBHOOK_IMAGE", "15"))  # Discord Webhook（画像添付）
 

@@ -186,7 +186,7 @@ def _quick_rank_distribution(quick_battles: list[Battle]) -> str:
     for b in quick_battles:
         rank_id = b.get("opp_rank")
         if rank_id is not None:
-            name = RANK_NAMES.get(rank_id, f"Rank{rank_id}")
+            name = RANK_NAMES.get(rank_id, rank_id if isinstance(rank_id, str) else f"Rank{rank_id}")
             counts[name] += 1
     if not counts:
         return ""
