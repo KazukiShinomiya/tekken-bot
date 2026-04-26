@@ -396,6 +396,111 @@ def build_weekly_embed(
     }
 
 
+def build_rank_change_embed(player_name: str, old_rank: int, new_rank: int) -> dict:
+    """段位変化通知用の Embed dict を返す。"""
+    old_name = RANK_NAMES.get(old_rank, f"Rank{old_rank}")
+    new_name = RANK_NAMES.get(new_rank, f"Rank{new_rank}")
+    if new_rank > old_rank:
+        return {
+            "title":       f"🎊 {player_name} 段位昇格！",
+            "color":       0xFFD700,
+            "description": f"**{old_name}** → **{new_name}**",
+        }
+    return {
+        "title":       f"📉 {player_name} 段位降格",
+        "color":       0xED4245,
+        "description": f"**{old_name}** → **{new_name}**",
+    }
+
+
+def build_monthly_embed(
+    battles: list[Battle],
+    month_str: str,
+    player_name: str | None = None,
+    prev_battles: list[Battle] | None = None,
+) -> dict | None:
+    """月次サマリーの Embed dict を返す。試合なしの場合は None。LLM コメントは含まない。"""
+    if not battles:
+        return None
+
+    display_name = player_name or TEKKEN_ID
+    ranked = [b for b in battles if b.get("battle_type") == "ranked"]
+    quick  = [b for b in battles if b.get("battle_type") == "quick"]
+
+    rated      = filter_rated_battles(ranked)
+    net_rating = sum(b.get("rating_change") or 0 for b in rated) if rated else None
+
+    top_chara, top_chara_count = get_most_common(battles, "my_chara")
+    top_opp,   top_opp_count   = get_most_common(battles, "opp_chara")
+
+    total_w = count_wins(battles)
+    total_l = count_losses(battles)
+
+    fields: list[dict] = []
+    fields.append({"name": "🏆 総合", "value": f"{total_w}勝{total_l}敗 ({_win_rate(battles)})", "inline": True})
+
+    if ranked:
+        rw = count_wins(ranked)
+        rl = count_losses(ranked)
+        fields.append({"name": "📊 ランク", "value": f"{rw}勝{rl}敗 ({_win_rate(ranked)})", "inline": True})
+    if quick:
+        qw = count_wins(quick)
+        ql = count_losses(quick)
+        quick_val = f"{qw}勝{ql}敗 ({_win_rate(quick)})"
+        dist = _quick_rank_distribution(quick)
+        if dist:
+            quick_val += f"\n相手段位: {dist}"
+        fields.append({"name": "⚡ クイック", "value": quick_val, "inline": True})
+    if net_rating is not None:
+        sign = "+" if net_rating >= 0 else ""
+        fields.append({"name": "📈 レーティング変動", "value": f"{sign}{net_rating}", "inline": True})
+
+    # 前月比
+    if prev_battles:
+        prev_w = count_wins(prev_battles)
+        prev_l = count_losses(prev_battles)
+        prev_rated = filter_rated_battles([b for b in prev_battles if b.get("battle_type") == "ranked"])
+        prev_net   = sum(b.get("rating_change") or 0 for b in prev_rated) if prev_rated else None
+        win_diff   = total_w - prev_w
+        sign_w     = "+" if win_diff >= 0 else ""
+        comparison = f"勝利数 {sign_w}{win_diff} | 前月: {prev_w}勝{prev_l}敗"
+        if prev_net is not None and net_rating is not None:
+            rating_diff = net_rating - prev_net
+            sign_r = "+" if rating_diff >= 0 else ""
+            comparison += f"\nレーティング差分 {sign_r}{rating_diff}"
+        fields.append({"name": "📊 前月比", "value": comparison, "inline": False})
+
+    fields.append({"name": "🥊 最多使用キャラ", "value": f"{top_chara} ({top_chara_count}戦)", "inline": True})
+    fields.append({"name": "🎯 最多対戦相手", "value": f"{top_opp} ({top_opp_count}戦)", "inline": True})
+
+    # レーティングトレンド
+    trend = predict_rating_trend(battles)
+    if trend:
+        slope = trend["slope_per_day"]
+        sign  = "+" if slope >= 0 else ""
+        fields.append({"name": "📈 レーティングトレンド", "value": f"{sign}{slope:.0f}/日", "inline": True})
+
+    # 月末時点の鉄拳力
+    latest = max(battles, key=lambda x: x["battle_at"])
+    if latest.get("my_power"):
+        rank_name  = RANK_NAMES.get(latest.get("my_rank") or -1, "")
+        power_str  = f"{latest['my_power']:,}"
+        field_name = f"💥 月末鉄拳力: {rank_name}" if rank_name else "💥 月末鉄拳力"
+        fields.append({"name": field_name, "value": power_str, "inline": True})
+
+    # 対戦成績
+    matrix = _matchup_matrix(battles)
+    if matrix:
+        matrix_body = "\n".join(matrix.split("\n")[1:])
+        fields.append({"name": "📊 対戦成績", "value": matrix_body[:1024], "inline": False})
+
+    return {
+        "title":  f"📅 {display_name} 月次サマリー（{month_str}）",
+        "color":  _embed_color(battles),
+        "fields": fields[:DISCORD_EMBED_MAX_FIELDS],
+    }
+
+
 def build_community_weekly_embed(players_stats: list[dict], week_start_str: str) -> dict:
     """部内ランキングの Embed dict を返す。"""
     sorted_players = sorted(players_stats, key=lambda p: p["net_rating"], reverse=True)
@@ -419,6 +524,36 @@ def build_community_weekly_embed(players_stats: list[dict], week_start_str: str)
 # ---------------------------------------------------------------------------
 # 投稿
 # ---------------------------------------------------------------------------
+
+def post_rank_change(player_name: str, old_rank: int, new_rank: int) -> None:
+    """段位変化を Embed で全 Webhook に通知する。失敗しても例外は出さない。"""
+    if not WEBHOOK_URLS:
+        return
+    embed = build_rank_change_embed(player_name, old_rank, new_rank)
+    _send_to_webhooks(embed, log_label="段位変化通知")
+
+
+def post_monthly(
+    battles: list[Battle],
+    month_str: str,
+    player_name: str | None = None,
+    prev_battles: list[Battle] | None = None,
+) -> tuple[list[tuple[str, str]], dict] | None:
+    """
+    月次サマリーを全 Discord Webhook に Embed 形式で投稿。
+    成功時は ([(message_id, webhook_url), ...], embed) を返す。試合なし・全失敗時は None。
+    """
+    if not WEBHOOK_URLS:
+        raise ValueError("DISCORD_WEBHOOK_URL が .env に設定されていません")
+
+    embed = build_monthly_embed(battles, month_str, player_name, prev_battles)
+    if embed is None:
+        logger.info(f"[discord_post][{player_name}] 今月の試合なし。月次投稿をスキップ。")
+        return None
+
+    results = _send_to_webhooks(embed, log_label="月次投稿")
+    return (results, embed) if results else None
+
 
 def post_community_weekly(players_stats: list[dict], week_start_str: str) -> None:
     """部内週次ランキングを全 Discord Webhook に投稿する。2人以上いる場合のみ投稿。"""

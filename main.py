@@ -21,7 +21,7 @@ load_dotenv()
 
 from bot.config import (
     PLAYERS as PLAYERS_ENV, POLARIS_ID as POLARIS_ID_ENV, TEKKEN_ID as TEKKEN_ID_ENV,
-    LOG_PATH, JST, TIMEOUT_LLM, TIMEOUT_API, RATING_GOAL, validate_config,
+    LOG_PATH, JST, TIMEOUT_LLM, TIMEOUT_API, RATING_GOAL, RANK_NAMES, validate_config,
 )
 import bot.db as db
 import bot.fetcher as fetcher
@@ -33,8 +33,9 @@ from bot.stats import count_wins, count_losses, filter_rated_battles
 logger = logging.getLogger(__name__)
 
 # スケジューラとスラッシュコマンドの同時実行を防ぐロック
-_main_lock = threading.Lock()
-_weekly_lock = threading.Lock()
+_main_lock    = threading.Lock()
+_weekly_lock  = threading.Lock()
+_monthly_lock = threading.Lock()
 
 
 def setup_logging() -> None:
@@ -168,6 +169,23 @@ def _fire_alerts(
                     logger.info(f"[{player_name}] 目標レーティング達成通知: {current_rating}")
 
 
+def _fire_rank_alerts(today_battles: list[Battle], today_str: str, player_name: str) -> None:
+    """段位変化を検知して Discord に通知する。"""
+    if not today_battles:
+        return
+    latest = max(today_battles, key=lambda x: x["battle_at"])
+    current_rank = latest.get("my_rank")
+    if current_rank is None:
+        return
+    prev_rank = db.get_last_rank_before_date(today_str, player_name=player_name)
+    if prev_rank is None or prev_rank == current_rank:
+        return
+    prev_name = RANK_NAMES.get(prev_rank, f"Rank{prev_rank}")
+    curr_name = RANK_NAMES.get(current_rank, f"Rank{current_rank}")
+    discord_post.post_rank_change(player_name, prev_rank, current_rank)
+    logger.info(f"[{player_name}] 段位変化: {prev_name} → {curr_name}")
+
+
 def _analyze_with_timeout(
     battles: list[Battle],
     date_str: str,
@@ -248,8 +266,9 @@ def _run_for_player(player_name: str, polaris_id: str, today_str: str, date_str:
 
     scout_data = _fetch_scout_data(pids_to_scout, player_name)
 
-    # 目標レーティングアラート
+    # 目標レーティング・段位変化アラート
     _fire_alerts(today_battles, prev_battles, player_name)
+    _fire_rank_alerts(today_battles, today_str, player_name)
 
     # Discord に即時投稿（LLM コメントなし）
     post_result = None
@@ -415,6 +434,81 @@ async def weekly() -> None:
         _weekly_lock.release()
 
 
+def _run_monthly_for_player(
+    player_name: str,
+    year: int,
+    month: int,
+    month_str: str,
+) -> None:
+    """1プレイヤー分の月次サマリー処理（DB取得・LLM・投稿）。"""
+    battles = db.get_battles_in_month(year, month, player_name=player_name)
+    logger.info(f"[{player_name}] 月間バトル ({month_str}): {len(battles)} 件")
+
+    prev_year  = year - 1 if month == 1 else year
+    prev_month = 12       if month == 1 else month - 1
+    prev_battles = db.get_battles_in_month(prev_year, prev_month, player_name=player_name)
+
+    post_result = None
+    try:
+        post_result = discord_post.post_monthly(
+            battles, month_str,
+            player_name=player_name,
+            prev_battles=prev_battles or None,
+        )
+        logger.info(f"[{player_name}] 月次サマリー投稿完了。")
+    except Exception as e:
+        msg = f"[{player_name}] 月次サマリー投稿失敗: {e}"
+        logger.error(msg)
+        discord_post.notify_error(msg)
+
+    llm_comment = _analyze_with_timeout(battles, month_str, player_name=player_name)
+
+    if llm_comment and post_result:
+        message_ids, embed = post_result
+        discord_post.edit_llm_comment(message_ids, embed, llm_comment)
+        logger.info(f"[{player_name}] 月次LLMコメント追記完了。")
+
+
+async def monthly(month: str | None = None) -> None:
+    """
+    月次サマリーを全プレイヤー分投稿する。
+    month: 'YYYY-MM' 形式（省略時は先月）。スラッシュコマンドから月指定も可。
+    """
+    if not _monthly_lock.acquire(blocking=False):
+        logger.warning("monthly() は既に実行中のためスキップ")
+        return
+    try:
+        now = datetime.now(JST)
+        logger.info(f"Tekken Bot 月次サマリー開始 {now.isoformat()}")
+
+        db.init_db()
+        fetcher.load_learned_chara_names()
+
+        players = get_players()
+        if not players:
+            logger.warning("プレイヤーが設定されていません。月次サマリーをスキップ。")
+            return
+
+        if month is not None:
+            dt           = datetime.strptime(month, "%Y-%m").replace(tzinfo=JST)
+            target_year  = dt.year
+            target_month = dt.month
+        else:
+            first_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            last_month     = first_of_month - timedelta(days=1)
+            target_year    = last_month.year
+            target_month   = last_month.month
+
+        month_str = f"{target_year}年{target_month}月"
+
+        await asyncio.gather(*(
+            asyncio.to_thread(_run_monthly_for_player, name, target_year, target_month, month_str)
+            for name, _ in players
+        ))
+    finally:
+        _monthly_lock.release()
+
+
 def run_main_sync() -> None:
     """スケジューラ・スラッシュコマンドから呼ぶ同期エントリポイント。"""
     asyncio.run(main())
@@ -423,6 +517,11 @@ def run_main_sync() -> None:
 def run_weekly_sync() -> None:
     """スケジューラ・スラッシュコマンドから呼ぶ同期エントリポイント（週次）。"""
     asyncio.run(weekly())
+
+
+def run_monthly_sync() -> None:
+    """スケジューラ・スラッシュコマンドから呼ぶ同期エントリポイント（月次）。"""
+    asyncio.run(monthly())
 
 
 if __name__ == "__main__":

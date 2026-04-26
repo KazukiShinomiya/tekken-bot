@@ -39,10 +39,23 @@ def weekly_job() -> None:
         logger.error(f"[scheduler] weekly() で予期しないエラー: {e}")
 
 
+def monthly_check_job() -> None:
+    """毎日 09:00 JST に実行され、月初（1日）のみ月次サマリーを投稿する。"""
+    now = datetime.now(JST)
+    if now.day != 1:
+        return
+    logger.info(f"[scheduler] 月次サマリー実行開始 {now.isoformat()}")
+    try:
+        bot.run_monthly_sync()
+    except Exception as e:
+        logger.error(f"[scheduler] monthly() で予期しないエラー: {e}")
+
+
 schedule.every().day.at("08:00").do(job)
 schedule.every().sunday.at("21:00").do(weekly_job)
+schedule.every().day.at("09:00").do(monthly_check_job)
 
-logger.info("スケジューラ起動。毎日 08:00 JST に前日分を投稿、毎週日曜 21:00 JST に週次サマリーを実行します。")
+logger.info("スケジューラ起動。毎日 08:00 JST に前日分を投稿、毎週日曜 21:00 JST に週次サマリー、毎月1日 09:00 JST に月次サマリーを実行します。")
 logger.info(f"現在時刻: {datetime.now(JST).isoformat()}")
 
 while True:

@@ -18,8 +18,12 @@ from bot.discord_post import (
     build_community_weekly_embed,
     build_embed,
     build_weekly_embed,
+    build_rank_change_embed,
+    build_monthly_embed,
     post,
     post_weekly,
+    post_monthly,
+    post_rank_change,
     post_community_weekly,
     edit_llm_comment,
     notify,
@@ -1109,3 +1113,152 @@ def test_build_weekly_embed_quick_no_rank_omits_distribution():
     quick_field = next((f for f in result["fields"] if "クイック" in f["name"]), None)
     assert quick_field is not None
     assert "相手段位" not in quick_field["value"]
+
+
+# ---------------------------------------------------------------------------
+# build_rank_change_embed
+# ---------------------------------------------------------------------------
+
+def test_build_rank_change_embed_promotion():
+    """昇格 → ゴールド色・昇格タイトル・矢印が含まれる。"""
+    result = build_rank_change_embed("Alice", old_rank=15, new_rank=16)
+    assert result["color"] == 0xFFD700
+    assert "昇格" in result["title"]
+    assert "→" in result["description"]
+    assert "Garyu" in result["description"]
+    assert "Shinryu" in result["description"]
+
+
+def test_build_rank_change_embed_demotion():
+    """降格 → 赤色・降格タイトルが含まれる。"""
+    result = build_rank_change_embed("Bob", old_rank=16, new_rank=15)
+    assert result["color"] == 0xED4245
+    assert "降格" in result["title"]
+    assert "Shinryu" in result["description"]
+    assert "Garyu" in result["description"]
+
+
+def test_build_rank_change_embed_unknown_rank():
+    """RANK_NAMES に存在しない rank_id → Rank<N> 形式にフォールバック。"""
+    result = build_rank_change_embed("Test", old_rank=999, new_rank=1000)
+    assert "Rank999" in result["description"]
+    assert "Rank1000" in result["description"]
+
+
+# ---------------------------------------------------------------------------
+# post_rank_change
+# ---------------------------------------------------------------------------
+
+def test_post_rank_change_no_webhook_urls():
+    """WEBHOOK_URLS 未設定 → 何も送信しない（例外も出さない）。"""
+    with (
+        patch("bot.discord_post.WEBHOOK_URLS", []),
+        patch("bot.discord_post._send_to_webhooks") as mock_send,
+    ):
+        post_rank_change("Alice", 15, 16)
+    mock_send.assert_not_called()
+
+
+def test_post_rank_change_sends_embed():
+    """WEBHOOK_URLS 設定済み → _send_to_webhooks が呼ばれる。"""
+    with (
+        patch("bot.discord_post.WEBHOOK_URLS", ["https://discord.com/api/webhooks/1/tok"]),
+        patch("bot.discord_post._send_to_webhooks") as mock_send,
+    ):
+        post_rank_change("Alice", 15, 16)
+    mock_send.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# build_monthly_embed
+# ---------------------------------------------------------------------------
+
+def test_build_monthly_embed_returns_dict():
+    """バトルあり → Embed dict を返す。"""
+    battles = [_battle(True)]
+    result = build_monthly_embed(battles, "2024年1月")
+    assert result is not None
+    assert isinstance(result, dict)
+    assert "2024年1月" in result["title"]
+
+
+def test_build_monthly_embed_none_on_empty():
+    """バトルなし → None。"""
+    assert build_monthly_embed([], "2024年1月") is None
+
+
+def test_build_monthly_embed_with_prev_battles():
+    """前月データあり → 前月比フィールドが含まれる。"""
+    battles      = [_battle(True)] * 5 + [_battle(False)] * 3
+    prev_battles = [_battle(True)] * 3 + [_battle(False)] * 5
+    result = build_monthly_embed(battles, "2024年2月", prev_battles=prev_battles)
+    assert result is not None
+    assert any("前月比" in f["name"] for f in result["fields"])
+
+
+def test_build_monthly_embed_no_prev_battles():
+    """前月データなし → 前月比フィールドなし。"""
+    battles = [_battle(True)]
+    result  = build_monthly_embed(battles, "2024年1月", prev_battles=None)
+    assert result is not None
+    assert not any("前月比" in f["name"] for f in result["fields"])
+
+
+def test_build_monthly_embed_with_ranked_and_quick():
+    """ランク戦・クイックマッチ混在 → 両方のフィールドが含まれる。"""
+    battles = [
+        _battle(True,  battle_type="ranked"),
+        _battle(False, battle_type="quick"),
+    ]
+    result = build_monthly_embed(battles, "2024年3月")
+    assert result is not None
+    assert any("ランク" in f["name"] for f in result["fields"])
+    assert any("クイック" in f["name"] for f in result["fields"])
+
+
+def test_build_monthly_embed_contains_player_name():
+    """player_name → タイトルに含まれる。"""
+    battles = [_battle(True)]
+    result  = build_monthly_embed(battles, "2024年4月", player_name="Alice")
+    assert result is not None
+    assert "Alice" in result["title"]
+
+
+# ---------------------------------------------------------------------------
+# post_monthly
+# ---------------------------------------------------------------------------
+
+def test_post_monthly_returns_none_when_no_battles():
+    """試合なし → None を返す。"""
+    with patch("bot.discord_post.WEBHOOK_URLS", ["https://discord.com/api/webhooks/1/tok"]):
+        result = post_monthly([], "2024年1月")
+    assert result is None
+
+
+def test_post_monthly_raises_when_no_webhook():
+    """WEBHOOK_URLS 未設定 → ValueError を送出する。"""
+    with (
+        patch("bot.discord_post.WEBHOOK_URLS", []),
+        pytest.raises(ValueError),
+    ):
+        post_monthly([_full_battle()], "2024年1月")
+
+
+def test_post_monthly_success():
+    """投稿成功 → (message_ids, embed) タプルを返す。"""
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status.return_value = None
+    mock_resp.json.return_value = {"id": "monthly123"}
+
+    battles = [_full_battle()]
+    with (
+        patch("bot.discord_post.WEBHOOK_URLS", ["https://discord.com/api/webhooks/1/tok"]),
+        patch("bot.discord_post._webhook_session") as mock_sess,
+    ):
+        mock_sess.post.return_value = mock_resp
+        result = post_monthly(battles, "2024年1月")
+
+    assert result is not None
+    message_ids, embed = result
+    assert message_ids[0][0] == "monthly123"
+    assert isinstance(embed, dict)

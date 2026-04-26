@@ -358,6 +358,22 @@ async def cmd_filter(
     await interaction.followup.send(embed=embed)
 
 
+@tekken_group.command(name="monthly", description="月次サマリーを投稿する")
+@app_commands.describe(month="対象月 YYYY-MM（省略すると先月）")
+async def cmd_monthly(interaction: discord.Interaction, month: str | None = None) -> None:
+    await interaction.response.defer(thinking=True)
+    try:
+        if month is not None:
+            datetime.strptime(month, "%Y-%m")  # バリデーション
+        await _bot_main.monthly(month=month)
+        await interaction.followup.send("✅ 月次サマリーを投稿しました。")
+    except ValueError:
+        await interaction.followup.send("❌ 月形式が正しくありません（YYYY-MM）。")
+    except Exception as e:
+        logger.error(f"[slash_commands] /tekken monthly エラー: {e}")
+        await interaction.followup.send(f"❌ エラーが発生しました: {e}")
+
+
 @tekken_group.command(name="help", description="使用可能なコマンド一覧を表示する")
 async def cmd_help(interaction: discord.Interaction) -> None:
     embed = discord.Embed(
@@ -369,6 +385,7 @@ async def cmd_help(interaction: discord.Interaction) -> None:
         value=(
             "`/tekken today [date]` — 当日または指定日の戦績を投稿\n"
             "`/tekken weekly` — 週次サマリーを投稿\n"
+            "`/tekken monthly [month]` — 月次サマリーを投稿（省略で先月）\n"
             "`/tekken trend [days]` — レーティング推移グラフ（デフォルト30日）"
         ),
         inline=False,

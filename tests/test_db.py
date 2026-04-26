@@ -762,3 +762,104 @@ def test_get_win_loss_by_hour_empty(db):
     """バトルなし → 空リスト。"""
     rows = db.get_win_loss_by_hour(since_ts=0)
     assert rows == []
+
+
+# ---------------------------------------------------------------------------
+# get_last_rank_before_date
+# ---------------------------------------------------------------------------
+
+def test_get_last_rank_before_date_returns_rank(db):
+    """指定日より前の最新 my_rank を返す。"""
+    b = _make_battle("rr1", battle_at=int(datetime(2024, 1, 14, 12, 0, 0, tzinfo=JST).timestamp()))
+    b["my_rank"] = 15
+    db.insert_battles([b], "Alice")
+    result = db.get_last_rank_before_date("2024-01-15", player_name="Alice")
+    assert result == 15
+
+
+def test_get_last_rank_before_date_returns_none_when_no_rank(db):
+    """my_rank が NULL のバトルのみ → None を返す。"""
+    ts = int(datetime(2024, 1, 14, 12, 0, 0, tzinfo=JST).timestamp())
+    db.insert_battles([_make_battle("rr2", battle_at=ts)], "Alice")
+    result = db.get_last_rank_before_date("2024-01-15", player_name="Alice")
+    assert result is None
+
+
+def test_get_last_rank_before_date_ignores_same_day(db):
+    """指定日当日のバトルは含まれない。"""
+    ts = int(datetime(2024, 1, 15, 12, 0, 0, tzinfo=JST).timestamp())
+    b = _make_battle("rr3", battle_at=ts)
+    b["my_rank"] = 20
+    db.insert_battles([b], "Alice")
+    result = db.get_last_rank_before_date("2024-01-15", player_name="Alice")
+    assert result is None
+
+
+def test_get_last_rank_before_date_returns_latest(db):
+    """複数バトルがある場合、最も新しい my_rank を返す。"""
+    b1 = _make_battle("rr4", battle_at=int(datetime(2024, 1, 10, 12, 0, 0, tzinfo=JST).timestamp()))
+    b1["my_rank"] = 10
+    b2 = _make_battle("rr5", battle_at=int(datetime(2024, 1, 12, 12, 0, 0, tzinfo=JST).timestamp()))
+    b2["my_rank"] = 15
+    db.insert_battles([b1, b2], "Alice")
+    result = db.get_last_rank_before_date("2024-01-15", player_name="Alice")
+    assert result == 15
+
+
+def test_get_last_rank_before_date_no_player_filter(db):
+    """player_name=None → 全プレイヤーから最新 my_rank を返す。"""
+    b = _make_battle("rr6", battle_at=int(datetime(2024, 1, 14, 12, 0, 0, tzinfo=JST).timestamp()))
+    b["my_rank"] = 25
+    db.insert_battles([b], "Bob")
+    result = db.get_last_rank_before_date("2024-01-15")
+    assert result == 25
+
+
+# ---------------------------------------------------------------------------
+# get_battles_in_month
+# ---------------------------------------------------------------------------
+
+def test_get_battles_in_month_returns_battles(db):
+    """指定月のバトルを返す。"""
+    ts = int(datetime(2024, 1, 15, 12, 0, 0, tzinfo=JST).timestamp())
+    db.insert_battles([_make_battle("im1", battle_at=ts)], "Alice")
+    result = db.get_battles_in_month(2024, 1, player_name="Alice")
+    assert len(result) == 1
+    assert result[0]["battle_id"] == "im1"
+
+
+def test_get_battles_in_month_excludes_other_month(db):
+    """他の月のバトルは含まれない。"""
+    ts_jan = int(datetime(2024, 1, 15, 12, 0, 0, tzinfo=JST).timestamp())
+    ts_feb = int(datetime(2024, 2, 15, 12, 0, 0, tzinfo=JST).timestamp())
+    db.insert_battles([_make_battle("im2", battle_at=ts_jan)], "Alice")
+    db.insert_battles([_make_battle("im3", battle_at=ts_feb)], "Alice")
+    result = db.get_battles_in_month(2024, 1, player_name="Alice")
+    assert len(result) == 1
+    assert result[0]["battle_id"] == "im2"
+
+
+def test_get_battles_in_month_december(db):
+    """12月 → 翌年1月を境界として正しく処理する。"""
+    ts_dec = int(datetime(2024, 12, 31, 12, 0, 0, tzinfo=JST).timestamp())
+    ts_jan = int(datetime(2025,  1,  1, 12, 0, 0, tzinfo=JST).timestamp())
+    db.insert_battles([_make_battle("im4", battle_at=ts_dec)], "Alice")
+    db.insert_battles([_make_battle("im5", battle_at=ts_jan)], "Alice")
+    result = db.get_battles_in_month(2024, 12, player_name="Alice")
+    assert len(result) == 1
+    assert result[0]["battle_id"] == "im4"
+
+
+def test_get_battles_in_month_empty(db):
+    """バトルなし → 空リスト。"""
+    result = db.get_battles_in_month(2024, 1, player_name="Alice")
+    assert result == []
+
+
+def test_get_battles_in_month_no_player_filter(db):
+    """player_name=None → 全プレイヤーのバトルを返す。"""
+    ts = int(datetime(2024, 3, 1, 12, 0, 0, tzinfo=JST).timestamp())
+    db.insert_battles([_make_battle("im6", battle_at=ts)], "Alice")
+    db.insert_battles([_make_battle("im7", battle_at=ts + 1)], "Bob")
+    result = db.get_battles_in_month(2024, 3)
+    assert len(result) == 2

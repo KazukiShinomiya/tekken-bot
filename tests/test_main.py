@@ -7,9 +7,9 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from main import (
-    _analyze_with_timeout, _compute_opponent_data, _fire_alerts,
+    _analyze_with_timeout, _compute_opponent_data, _fire_alerts, _fire_rank_alerts,
     get_players, setup_logging, _fetch_scout_data,
-    _run_for_player, run_main_sync, run_weekly_sync,
+    _run_for_player, run_main_sync, run_weekly_sync, run_monthly_sync,
 )
 
 
@@ -338,6 +338,7 @@ def test_run_for_player_happy_path():
         patch("main._compute_opponent_data", return_value=({}, [])),
         patch("main._fetch_scout_data", return_value={}),
         patch("main._fire_alerts"),
+        patch("main._fire_rank_alerts"),
         patch("main.discord_post.post", return_value=mock_post_result) as mock_post,
         patch("main._analyze_with_timeout", return_value=None),
         patch("main.discord_post.edit_llm_comment"),
@@ -397,6 +398,7 @@ def test_run_for_player_with_llm_comment():
         patch("main._compute_opponent_data", return_value=({}, [])),
         patch("main._fetch_scout_data", return_value={}),
         patch("main._fire_alerts"),
+        patch("main._fire_rank_alerts"),
         patch("main.discord_post.post", return_value=mock_post_result),
         patch("main._analyze_with_timeout", return_value="素晴らしい"),
         patch("main.discord_post.edit_llm_comment") as mock_edit,
@@ -453,6 +455,7 @@ def test_run_for_player_with_quick_battles():
         patch("main._compute_opponent_data", return_value=({}, [])),
         patch("main._fetch_scout_data", return_value={}),
         patch("main._fire_alerts"),
+        patch("main._fire_rank_alerts"),
         patch("main.discord_post.post", return_value=mock_post_result),
         patch("main._analyze_with_timeout", return_value=None),
         patch("main.discord_post.edit_llm_comment"),
@@ -475,6 +478,7 @@ def test_run_for_player_post_discord_exception():
         patch("main._compute_opponent_data", return_value=({}, [])),
         patch("main._fetch_scout_data", return_value={}),
         patch("main._fire_alerts"),
+        patch("main._fire_rank_alerts"),
         patch("main.discord_post.post", side_effect=RuntimeError("webhook error")),
         patch("main._analyze_with_timeout", return_value=None),
         patch("main.discord_post.edit_llm_comment"),
@@ -706,3 +710,213 @@ def test_weekly_happy_path():
     ):
         asyncio.run(_main_module.weekly())
     mock_community.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# _fire_rank_alerts
+# ---------------------------------------------------------------------------
+
+def test_fire_rank_alerts_no_battles():
+    """バトルなし → 何もしない。"""
+    with patch("bot.discord_post.post_rank_change") as mock_post:
+        _fire_rank_alerts([], "2026-04-10", "Alice")
+    mock_post.assert_not_called()
+
+
+def test_fire_rank_alerts_no_rank_in_latest():
+    """最新バトルに my_rank がない → 何もしない。"""
+    b = _battle(battle_at=1_000_000)
+    # my_rank 未設定
+    with patch("bot.discord_post.post_rank_change") as mock_post:
+        _fire_rank_alerts([b], "2026-04-10", "Alice")
+    mock_post.assert_not_called()
+
+
+def test_fire_rank_alerts_no_previous_rank():
+    """前回の段位が DB にない → 何もしない。"""
+    b = dict(_battle(battle_at=1_000_000), my_rank=15)
+    with (
+        patch("bot.db.get_last_rank_before_date", return_value=None),
+        patch("bot.discord_post.post_rank_change") as mock_post,
+    ):
+        _fire_rank_alerts([b], "2026-04-10", "Alice")
+    mock_post.assert_not_called()
+
+
+def test_fire_rank_alerts_same_rank():
+    """段位変化なし → 通知しない。"""
+    b = dict(_battle(battle_at=1_000_000), my_rank=15)
+    with (
+        patch("bot.db.get_last_rank_before_date", return_value=15),
+        patch("bot.discord_post.post_rank_change") as mock_post,
+    ):
+        _fire_rank_alerts([b], "2026-04-10", "Alice")
+    mock_post.assert_not_called()
+
+
+def test_fire_rank_alerts_promotion():
+    """昇格 → post_rank_change が呼ばれる。"""
+    b = dict(_battle(battle_at=1_000_000), my_rank=16)
+    with (
+        patch("bot.db.get_last_rank_before_date", return_value=15),
+        patch("bot.discord_post.post_rank_change") as mock_post,
+    ):
+        _fire_rank_alerts([b], "2026-04-10", "Alice")
+    mock_post.assert_called_once_with("Alice", 15, 16)
+
+
+def test_fire_rank_alerts_demotion():
+    """降格 → post_rank_change が呼ばれる。"""
+    b = dict(_battle(battle_at=1_000_000), my_rank=14)
+    with (
+        patch("bot.db.get_last_rank_before_date", return_value=15),
+        patch("bot.discord_post.post_rank_change") as mock_post,
+    ):
+        _fire_rank_alerts([b], "2026-04-10", "Alice")
+    mock_post.assert_called_once_with("Alice", 15, 14)
+
+
+def test_fire_rank_alerts_uses_latest_battle():
+    """複数バトルがある場合、最新（battle_at 最大）の my_rank を使う。"""
+    b_old = dict(_battle(battle_id="old", battle_at=1_000_000), my_rank=15)
+    b_new = dict(_battle(battle_id="new", battle_at=2_000_000), my_rank=16)
+    with (
+        patch("bot.db.get_last_rank_before_date", return_value=15),
+        patch("bot.discord_post.post_rank_change") as mock_post,
+    ):
+        _fire_rank_alerts([b_old, b_new], "2026-04-10", "Alice")
+    mock_post.assert_called_once_with("Alice", 15, 16)
+
+
+# ---------------------------------------------------------------------------
+# _run_monthly_for_player
+# ---------------------------------------------------------------------------
+
+from main import _run_monthly_for_player
+
+
+def test_run_monthly_for_player_happy_path():
+    """正常実行 → post_monthly が呼ばれる。"""
+    battles = [_make_battle()]
+    mock_post_result = ([("msg1", "https://discord.com/api/webhooks/1/tok")], {"title": "t"})
+    with (
+        patch("bot.db.get_battles_in_month", return_value=battles),
+        patch("main.discord_post.post_monthly", return_value=mock_post_result) as mock_post,
+        patch("main._analyze_with_timeout", return_value=None),
+        patch("main.discord_post.edit_llm_comment"),
+        patch("main.discord_post.notify_error"),
+    ):
+        _run_monthly_for_player("Alice", 2026, 3, "2026年3月")
+    mock_post.assert_called_once()
+
+
+def test_run_monthly_for_player_no_battles():
+    """試合なし → post_monthly が None を返してもエラーなし。"""
+    with (
+        patch("bot.db.get_battles_in_month", return_value=[]),
+        patch("main.discord_post.post_monthly", return_value=None),
+        patch("main._analyze_with_timeout", return_value=None),
+        patch("main.discord_post.notify_error"),
+    ):
+        _run_monthly_for_player("Alice", 2026, 3, "2026年3月")  # should not raise
+
+
+def test_run_monthly_for_player_post_exception():
+    """投稿失敗 → notify_error が呼ばれる。"""
+    with (
+        patch("bot.db.get_battles_in_month", return_value=[_make_battle()]),
+        patch("main.discord_post.post_monthly", side_effect=RuntimeError("error")),
+        patch("main.discord_post.notify_error") as mock_err,
+        patch("main._analyze_with_timeout", return_value=None),
+    ):
+        _run_monthly_for_player("Alice", 2026, 3, "2026年3月")
+    mock_err.assert_called_once()
+
+
+def test_run_monthly_for_player_with_llm():
+    """LLM コメントあり → edit_llm_comment が呼ばれる。"""
+    battles = [_make_battle()]
+    mock_post_result = ([("msg1", "https://discord.com/api/webhooks/1/tok")], {"title": "t"})
+    with (
+        patch("bot.db.get_battles_in_month", return_value=battles),
+        patch("main.discord_post.post_monthly", return_value=mock_post_result),
+        patch("main._analyze_with_timeout", return_value="月次コメント"),
+        patch("main.discord_post.edit_llm_comment") as mock_edit,
+        patch("main.discord_post.notify_error"),
+    ):
+        _run_monthly_for_player("Alice", 2026, 3, "2026年3月")
+    mock_edit.assert_called_once()
+
+
+def test_run_monthly_for_player_january_prev_month():
+    """1月の場合、前月は前年12月になる。"""
+    calls = []
+    def _mock_get_battles_in_month(year, month, player_name=None):
+        calls.append((year, month))
+        return []
+    with (
+        patch("bot.db.get_battles_in_month", side_effect=_mock_get_battles_in_month),
+        patch("main.discord_post.post_monthly", return_value=None),
+        patch("main._analyze_with_timeout", return_value=None),
+        patch("main.discord_post.notify_error"),
+    ):
+        _run_monthly_for_player("Alice", 2026, 1, "2026年1月")
+    # 当月(2026,1) と 前月(2025,12) の2回呼ばれるはず
+    assert (2026, 1) in calls
+    assert (2025, 12) in calls
+
+
+# ---------------------------------------------------------------------------
+# monthly() / run_monthly_sync
+# ---------------------------------------------------------------------------
+
+def test_monthly_skips_if_lock_held():
+    """_monthly_lock 取得済み → monthly() は即座に return する。"""
+    mock_lock = MagicMock()
+    mock_lock.acquire.return_value = False
+    with (
+        patch.object(_main_module, "_monthly_lock", mock_lock),
+        patch("bot.db.init_db") as mock_init,
+    ):
+        asyncio.run(_main_module.monthly())
+    mock_init.assert_not_called()
+
+
+def test_monthly_no_players_returns_early():
+    """プレイヤー未設定 → _run_monthly_for_player を呼ばない。"""
+    mock_lock = MagicMock()
+    mock_lock.acquire.return_value = True
+    with (
+        patch.object(_main_module, "_monthly_lock", mock_lock),
+        patch("bot.db.init_db"),
+        patch("main.fetcher.load_learned_chara_names"),
+        patch("main.get_players", return_value=[]),
+        patch("main._run_monthly_for_player") as mock_run,
+    ):
+        asyncio.run(_main_module.monthly())
+    mock_run.assert_not_called()
+
+
+def test_monthly_happy_path():
+    """正常実行 → _run_monthly_for_player が呼ばれる。"""
+    mock_lock = MagicMock()
+    mock_lock.acquire.return_value = True
+    with (
+        patch.object(_main_module, "_monthly_lock", mock_lock),
+        patch("bot.db.init_db"),
+        patch("main.fetcher.load_learned_chara_names"),
+        patch("main.get_players", return_value=[("Alice", "pid_a")]),
+        patch("main._run_monthly_for_player") as mock_run,
+    ):
+        asyncio.run(_main_module.monthly(month="2026-03"))
+    mock_run.assert_called_once()
+    args = mock_run.call_args[0]
+    assert args[0] == "Alice"
+    assert args[1] == 2026
+    assert args[2] == 3
+
+
+def test_run_monthly_sync_runs_without_error():
+    """run_monthly_sync() が asyncio.run(monthly()) を呼ぶ（モック）。"""
+    with patch("main.monthly", new=AsyncMock()):
+        run_monthly_sync()  # should not raise

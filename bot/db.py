@@ -512,6 +512,43 @@ def get_unknown_chara_battles(limit: int = 10) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def get_last_rank_before_date(date_str: str, player_name: str | None = None) -> int | None:
+    """指定日より前の最新バトルの my_rank を返す。なければ None。"""
+    tz = timezone(timedelta(hours=9))
+    day_start = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=tz)
+    with get_conn() as conn:
+        if player_name is not None:
+            row = conn.execute("""
+                SELECT my_rank FROM battles
+                WHERE battle_at < ? AND player_name = ? AND my_rank IS NOT NULL
+                ORDER BY battle_at DESC LIMIT 1
+            """, (int(day_start.timestamp()), player_name)).fetchone()
+        else:
+            row = conn.execute("""
+                SELECT my_rank FROM battles
+                WHERE battle_at < ? AND my_rank IS NOT NULL
+                ORDER BY battle_at DESC LIMIT 1
+            """, (int(day_start.timestamp()),)).fetchone()
+    return int(row["my_rank"]) if row else None
+
+
+def get_battles_in_month(year: int, month: int, player_name: str | None = None) -> list[Battle]:
+    """指定月（JST）のバトルを返す。"""
+    tz = timezone(timedelta(hours=9))
+    month_start = datetime(year, month, 1, tzinfo=tz)
+    next_year  = year + 1 if month == 12 else year
+    next_month = 1       if month == 12 else month + 1
+    month_end  = datetime(next_year, next_month, 1, tzinfo=tz)
+    with get_conn() as conn:
+        rows = _query_battles(
+            conn,
+            "battle_at >= ? AND battle_at < ?",
+            (int(month_start.timestamp()), int(month_end.timestamp())),
+            player_name,
+        )
+    return cast(list[Battle], [dict(r) for r in rows])
+
+
 def get_win_loss_by_hour(since_ts: int) -> list[dict]:
     """since_ts 以降の JST 時間帯別 (hour, wins, losses) を返す。"""
     with get_conn() as conn:
