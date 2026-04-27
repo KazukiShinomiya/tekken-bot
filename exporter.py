@@ -148,6 +148,43 @@ class TekkenCollector:
                 chara_usage_g.add_metric([r["my_chara"], period], float(r["cnt"]))
         yield chara_usage_g
 
+        # ── 7. LLM 評価スコア（最新値） ───────────────────────────────────
+        llm_eval_g = GaugeMetricFamily(
+            "tekken_llm_eval_score",
+            "LLM コメントの最新評価スコア (0-100)",
+        )
+        latest_eval = db.get_latest_llm_eval_score()
+        if latest_eval is not None:
+            llm_eval_g.add_metric([], float(latest_eval))
+        yield llm_eval_g
+
+        # ── 8. 月次スナップショット ───────────────────────────────────────
+        monthly_wins_g = GaugeMetricFamily(
+            "tekken_monthly_wins",
+            "月間勝利数",
+            labels=["year_month"],
+        )
+        monthly_losses_g = GaugeMetricFamily(
+            "tekken_monthly_losses",
+            "月間敗北数",
+            labels=["year_month"],
+        )
+        monthly_rating_g = GaugeMetricFamily(
+            "tekken_monthly_rating_delta",
+            "月間レーティング変動 (ranked)",
+            labels=["year_month"],
+        )
+
+        snapshots = db.get_monthly_snapshots(limit=12)
+        for s in snapshots:
+            ym = s["year_month"]
+            monthly_wins_g.add_metric([ym],   float(s["wins"]))
+            monthly_losses_g.add_metric([ym],  float(s["losses"]))
+            monthly_rating_g.add_metric([ym],  float(s["rating_delta"]))
+        yield monthly_wins_g
+        yield monthly_losses_g
+        yield monthly_rating_g
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Tekken Bot Prometheus Exporter")

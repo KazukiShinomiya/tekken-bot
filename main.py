@@ -28,7 +28,7 @@ import bot.fetcher as fetcher
 import bot.discord_post as discord_post
 import bot.analyzer as analyzer
 from bot.models import Battle
-from bot.stats import count_wins, count_losses, filter_rated_battles
+from bot.stats import count_wins, count_losses, filter_rated_battles, get_most_common
 
 logger = logging.getLogger(__name__)
 
@@ -144,8 +144,9 @@ def _fire_alerts(
     prev_battles: list[Battle],
     player_name: str,
 ) -> None:
-    """目標レーティング達成通知を送信する。"""
-    if RATING_GOAL > 0:
+    """目標レーティング達成通知を送信する。目標は DB 優先・env var フォールバック。"""
+    goal = db.get_goal(player_name) or RATING_GOAL
+    if goal > 0:
         rated_today = [
             b for b in today_battles
             if b.get("rating_before") is not None and b.get("rating_change") is not None
@@ -153,7 +154,7 @@ def _fire_alerts(
         if rated_today:
             latest_rated = max(rated_today, key=lambda x: x["battle_at"])
             current_rating = (latest_rated.get("rating_before") or 0) + (latest_rated.get("rating_change") or 0)
-            if current_rating >= RATING_GOAL:
+            if current_rating >= goal:
                 prev_rated = [
                     b for b in prev_battles
                     if b.get("rating_before") is not None and b.get("rating_change") is not None
@@ -162,9 +163,9 @@ def _fire_alerts(
                 if prev_rated:
                     prev_latest = max(prev_rated, key=lambda x: x["battle_at"])
                     prev_rating = (prev_latest.get("rating_before") or 0) + (prev_latest.get("rating_change") or 0)
-                if prev_rating < RATING_GOAL:
+                if prev_rating < goal:
                     discord_post.notify(
-                        f"🎉 [{player_name}] 目標レーティング **{RATING_GOAL:,}** 達成！現在: **{current_rating:,}**"
+                        f"🎉 [{player_name}] 目標レーティング **{goal:,}** 達成！現在: **{current_rating:,}**"
                     )
                     logger.info(f"[{player_name}] 目標レーティング達成通知: {current_rating}")
 
@@ -295,6 +296,16 @@ def _run_for_player(player_name: str, polaris_id: str, today_str: str, date_str:
         message_ids, embed = post_result
         discord_post.edit_llm_comment(message_ids, embed, llm_comment)
         logger.info(f"[{player_name}] LLMコメント追記完了。")
+
+    # LLM コメントの品質を自動評価してDBに保存
+    if llm_comment:
+        try:
+            from bot.evaluator import evaluate_comment
+            eval_result = evaluate_comment(llm_comment, today_battles)
+            db.save_llm_eval_score(today_str, player_name, eval_result["score"])
+            logger.info(f"[{player_name}] LLM評価スコア: {eval_result['score']}/100")
+        except Exception as e:
+            logger.warning(f"[{player_name}] LLM評価スコア保存失敗: {e}")
 
 
 async def main(target_date: str | None = None) -> None:
@@ -467,6 +478,28 @@ def _run_monthly_for_player(
         message_ids, embed = post_result
         discord_post.edit_llm_comment(message_ids, embed, llm_comment)
         logger.info(f"[{player_name}] 月次LLMコメント追記完了。")
+
+    # 月次スナップショットをDBに保存（Prometheus exporter / Grafana 用）
+    try:
+        ranked = [b for b in battles if b.get("battle_type") == "ranked"]
+        rated  = filter_rated_battles(ranked)
+        rating_delta = sum(b.get("rating_change") or 0 for b in rated)
+        end_power: int | None = None
+        power_battles = [b for b in sorted(battles, key=lambda x: x["battle_at"])
+                         if b.get("my_power") is not None]
+        if power_battles:
+            end_power = power_battles[-1]["my_power"]
+        top_chara, _ = get_most_common(battles, "my_chara")
+        year_month = f"{year:04d}-{month:02d}"
+        db.upsert_monthly_snapshot(
+            year_month, player_name,
+            count_wins(battles), count_losses(battles),
+            rating_delta, end_power,
+            top_chara if top_chara != "???" else None,
+        )
+        logger.info(f"[{player_name}] 月次スナップショット保存完了 ({year_month})")
+    except Exception as e:
+        logger.warning(f"[{player_name}] 月次スナップショット保存失敗: {e}")
 
 
 async def monthly(month: str | None = None) -> None:

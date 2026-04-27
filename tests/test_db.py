@@ -863,3 +863,193 @@ def test_get_battles_in_month_no_player_filter(db):
     db.insert_battles([_make_battle("im7", battle_at=ts + 1)], "Bob")
     result = db.get_battles_in_month(2024, 3)
     assert len(result) == 2
+
+
+# ---------------------------------------------------------------------------
+# get_personal_records
+# ---------------------------------------------------------------------------
+
+def test_get_personal_records_empty(db):
+    """バトルなし → 空 dict を返す。"""
+    assert db.get_personal_records() == {}
+
+
+def test_get_personal_records_basic(db):
+    """通算試合数・勝敗・初対戦日が返る。"""
+    b1 = {**_make_battle("pr1", battle_at=1700000000, won=True),  "rating_before": 10000, "rating_change": 100}
+    b2 = {**_make_battle("pr2", battle_at=1700001000, won=False), "rating_before": 10100, "rating_change": -100}
+    db.insert_battles([b1, b2], "Alice")
+    rec = db.get_personal_records("Alice")
+    assert rec["total"] == 2
+    assert rec["wins"] == 1
+    assert rec["losses"] == 1
+    assert rec["first_date"] is not None
+
+
+def test_get_personal_records_max_rating(db):
+    """最高レーティングが正しく計算される。"""
+    b1 = {**_make_battle("pr3", battle_at=1700000000, won=True),  "rating_before": 50000, "rating_change": 500}
+    b2 = {**_make_battle("pr4", battle_at=1700001000, won=False), "rating_before": 50500, "rating_change": -500}
+    db.insert_battles([b1, b2], "Alice")
+    rec = db.get_personal_records("Alice")
+    assert rec["max_rating"] == 50500
+    assert rec["max_rating_date"] is not None
+
+
+def test_get_personal_records_win_streak(db):
+    """連勝記録が正しく計算される（3連勝→2連敗）。"""
+    battles = [
+        _make_battle("pr5", battle_at=1700000000, won=True),
+        _make_battle("pr6", battle_at=1700000100, won=True),
+        _make_battle("pr7", battle_at=1700000200, won=True),
+        _make_battle("pr8", battle_at=1700000300, won=False),
+        _make_battle("pr9", battle_at=1700000400, won=False),
+    ]
+    db.insert_battles(battles, "Alice")
+    rec = db.get_personal_records("Alice")
+    assert rec["max_win_streak"] == 3
+    assert rec["max_lose_streak"] == 2
+
+
+def test_get_personal_records_no_rating(db):
+    """rating_before/change が NULL でも空 dict 以外を返す。"""
+    db.insert_battles([_make_battle("pr10", won=True)], "Alice")
+    rec = db.get_personal_records("Alice")
+    assert rec["total"] == 1
+    assert rec["max_rating"] is None
+
+
+# ---------------------------------------------------------------------------
+# get_stage_stats
+# ---------------------------------------------------------------------------
+
+def test_get_stage_stats_basic(db):
+    """stage_id 別の勝敗集計が返る。"""
+    b1 = {**_make_battle("ss1", won=True),  "stage_id": 5}
+    b2 = {**_make_battle("ss2", battle_at=1700000001, won=False), "stage_id": 5}
+    b3 = {**_make_battle("ss3", battle_at=1700000002, won=True),  "stage_id": 5}
+    db.insert_battles([b1, b2, b3], "Alice")
+    rows = db.get_stage_stats(player_name="Alice", min_battles=2)
+    assert len(rows) == 1
+    assert rows[0]["stage_id"] == 5
+    assert rows[0]["wins"] == 2
+    assert rows[0]["total"] == 3
+
+
+def test_get_stage_stats_excludes_null_stage(db):
+    """stage_id が NULL のバトルは除外される。"""
+    db.insert_battles([_make_battle("ss4", won=True)], "Alice")  # stage_id=None
+    rows = db.get_stage_stats(player_name="Alice", min_battles=1)
+    assert rows == []
+
+
+def test_get_stage_stats_min_battles_filter(db):
+    """min_battles 未満のステージは除外される。"""
+    b = {**_make_battle("ss5", won=True), "stage_id": 99}
+    db.insert_battles([b], "Alice")
+    rows = db.get_stage_stats(player_name="Alice", min_battles=2)
+    assert all(r["stage_id"] != 99 for r in rows)
+
+
+# ---------------------------------------------------------------------------
+# goal CRUD
+# ---------------------------------------------------------------------------
+
+def test_goal_set_and_get(db):
+    """set_goal → get_goal で値を取得できる。"""
+    db.set_goal("Alice", 200000)
+    assert db.get_goal("Alice") == 200000
+
+
+def test_goal_get_none_when_unset(db):
+    """未設定のプレイヤーは None を返す。"""
+    assert db.get_goal("NoPlayer") is None
+
+
+def test_goal_overwrite(db):
+    """同じプレイヤーへの二度目の set_goal は上書き。"""
+    db.set_goal("Alice", 100000)
+    db.set_goal("Alice", 200000)
+    assert db.get_goal("Alice") == 200000
+
+
+def test_goal_clear(db):
+    """clear_goal → get_goal が None を返す。"""
+    db.set_goal("Alice", 150000)
+    db.clear_goal("Alice")
+    assert db.get_goal("Alice") is None
+
+
+def test_goal_clear_nonexistent(db):
+    """存在しないプレイヤーの clear_goal はエラーなし。"""
+    db.clear_goal("Ghost")  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# llm_eval_score
+# ---------------------------------------------------------------------------
+
+def test_save_and_get_llm_eval_score(db):
+    """save → get で評価スコアが取得できる。"""
+    db.save_llm_eval_score("2026-04-01", "Alice", 80)
+    rows = db.get_llm_eval_scores("Alice", days=30)
+    assert len(rows) == 1
+    assert rows[0]["score"] == 80
+    assert rows[0]["date_str"] == "2026-04-01"
+
+
+def test_get_llm_eval_scores_empty(db):
+    """データなし → 空リスト。"""
+    assert db.get_llm_eval_scores("Alice") == []
+
+
+def test_get_latest_llm_eval_score(db):
+    """最新スコアを返す。"""
+    db.save_llm_eval_score("2026-04-01", "Alice", 60)
+    db.save_llm_eval_score("2026-04-02", "Alice", 90)
+    assert db.get_latest_llm_eval_score("Alice") == 90
+
+
+def test_get_latest_llm_eval_score_none_when_empty(db):
+    """データなし → None。"""
+    assert db.get_latest_llm_eval_score() is None
+
+
+# ---------------------------------------------------------------------------
+# monthly_snapshot
+# ---------------------------------------------------------------------------
+
+def test_upsert_and_get_monthly_snapshot(db):
+    """upsert → get でスナップショットが取得できる。"""
+    db.upsert_monthly_snapshot("2026-03", "Alice", wins=20, losses=10,
+                               rating_delta=5000, end_power=1200000, top_chara="Lee")
+    rows = db.get_monthly_snapshots("Alice")
+    assert len(rows) == 1
+    assert rows[0]["year_month"] == "2026-03"
+    assert rows[0]["wins"] == 20
+    assert rows[0]["top_chara"] == "Lee"
+
+
+def test_monthly_snapshot_overwrite(db):
+    """同じ year_month + player_name への再 upsert は上書き。"""
+    db.upsert_monthly_snapshot("2026-03", "Alice", wins=5, losses=5,
+                               rating_delta=0, end_power=None, top_chara=None)
+    db.upsert_monthly_snapshot("2026-03", "Alice", wins=20, losses=10,
+                               rating_delta=3000, end_power=1000000, top_chara="Lee")
+    rows = db.get_monthly_snapshots("Alice")
+    assert len(rows) == 1
+    assert rows[0]["wins"] == 20
+
+
+def test_monthly_snapshot_limit(db):
+    """limit 引数が機能する。"""
+    for i in range(5):
+        db.upsert_monthly_snapshot(f"2026-0{i+1}", "Alice", wins=i, losses=i,
+                                   rating_delta=0, end_power=None, top_chara=None)
+    rows = db.get_monthly_snapshots("Alice", limit=3)
+    assert len(rows) == 3
+
+
+def test_get_monthly_snapshots_empty(db):
+    """データなし → 空リスト。"""
+    assert db.get_monthly_snapshots("Alice") == []

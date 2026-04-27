@@ -109,6 +109,37 @@ def init_db() -> None:
             )
         """)
 
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS goals (
+                player_name   TEXT PRIMARY KEY,
+                target_rating INTEGER NOT NULL
+            )
+        """)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS llm_eval_scores (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                date_str    TEXT    NOT NULL,
+                player_name TEXT    NOT NULL DEFAULT 'default',
+                score       INTEGER NOT NULL,
+                saved_at    INTEGER NOT NULL
+            )
+        """)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS monthly_snapshots (
+                year_month   TEXT NOT NULL,
+                player_name  TEXT NOT NULL DEFAULT 'default',
+                wins         INTEGER NOT NULL DEFAULT 0,
+                losses       INTEGER NOT NULL DEFAULT 0,
+                rating_delta INTEGER NOT NULL DEFAULT 0,
+                end_power    INTEGER,
+                top_chara    TEXT,
+                saved_at     INTEGER NOT NULL,
+                PRIMARY KEY (year_month, player_name)
+            )
+        """)
+
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_battle_at ON battles(battle_at)"
         )
@@ -547,6 +578,238 @@ def get_battles_in_month(year: int, month: int, player_name: str | None = None) 
             player_name,
         )
     return cast(list[Battle], [dict(r) for r in rows])
+
+
+def get_personal_records(player_name: str | None = None) -> dict:
+    """全期間の個人最高記録を返す。データなしなら空 dict。"""
+    with get_conn() as conn:
+        rows = _query_battles(conn, "1=1", (), player_name)
+    battles = cast(list[Battle], [dict(r) for r in rows])
+    if not battles:
+        return {}
+
+    sorted_b = sorted(battles, key=lambda b: b["battle_at"])
+    total = len(battles)
+    wins  = sum(1 for b in battles if b["won"])
+
+    first_dt = datetime.fromtimestamp(sorted_b[0]["battle_at"],
+                                       timezone(timedelta(hours=9))).strftime("%Y/%m/%d")
+
+    # 最高レーティング
+    max_rating: int | None = None
+    max_rating_date: str | None = None
+    for b in sorted_b:
+        if b.get("rating_before") is not None and b.get("rating_change") is not None:
+            r = (b["rating_before"] or 0) + (b["rating_change"] or 0)
+            if max_rating is None or r > max_rating:
+                max_rating = r
+                max_rating_date = datetime.fromtimestamp(
+                    b["battle_at"], timezone(timedelta(hours=9))
+                ).strftime("%Y/%m/%d")
+
+    # 最長連勝・連敗（時系列順に走査）
+    max_win = max_lose = cur_win = cur_lose = 0
+    best_win_start = best_win_end = best_lose_start = best_lose_end = None
+    cur_win_start: str | None = None
+    cur_lose_start: str | None = None
+
+    for b in sorted_b:
+        dt_str = datetime.fromtimestamp(
+            b["battle_at"], timezone(timedelta(hours=9))
+        ).strftime("%Y/%m/%d")
+        if b["won"]:
+            cur_win += 1
+            if cur_win == 1:
+                cur_win_start = dt_str
+            cur_lose = 0
+            cur_lose_start = None
+            if cur_win > max_win:
+                max_win = cur_win
+                best_win_start = cur_win_start
+                best_win_end = dt_str
+        else:
+            cur_lose += 1
+            if cur_lose == 1:
+                cur_lose_start = dt_str
+            cur_win = 0
+            cur_win_start = None
+            if cur_lose > max_lose:
+                max_lose = cur_lose
+                best_lose_start = cur_lose_start
+                best_lose_end = dt_str
+
+    return {
+        "total":           total,
+        "wins":            wins,
+        "losses":          total - wins,
+        "first_date":      first_dt,
+        "max_rating":      max_rating,
+        "max_rating_date": max_rating_date,
+        "max_win_streak":  max_win,
+        "max_win_start":   best_win_start,
+        "max_win_end":     best_win_end,
+        "max_lose_streak": max_lose,
+        "max_lose_start":  best_lose_start,
+        "max_lose_end":    best_lose_end,
+    }
+
+
+def get_stage_stats(
+    player_name: str | None = None,
+    min_battles: int = 2,
+) -> list[dict]:
+    """ステージ別の勝敗集計を返す（stage_id IS NOT NULL かつ min_battles 以上のみ）。"""
+    with get_conn() as conn:
+        if player_name is not None:
+            rows = conn.execute("""
+                SELECT stage_id,
+                       SUM(won)  AS wins,
+                       COUNT(*)  AS total
+                FROM battles
+                WHERE stage_id IS NOT NULL AND player_name = ?
+                GROUP BY stage_id
+                HAVING COUNT(*) >= ?
+                ORDER BY total DESC
+            """, (player_name, min_battles)).fetchall()
+        else:
+            rows = conn.execute("""
+                SELECT stage_id,
+                       SUM(won)  AS wins,
+                       COUNT(*)  AS total
+                FROM battles
+                WHERE stage_id IS NOT NULL
+                GROUP BY stage_id
+                HAVING COUNT(*) >= ?
+                ORDER BY total DESC
+            """, (min_battles,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# goal CRUD
+# ---------------------------------------------------------------------------
+
+def get_goal(player_name: str = "default") -> int | None:
+    """プレイヤーの目標レーティングを返す。未設定なら None。"""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT target_rating FROM goals WHERE player_name = ?", (player_name,)
+        ).fetchone()
+    return int(row["target_rating"]) if row else None
+
+
+def set_goal(player_name: str, target_rating: int) -> None:
+    """プレイヤーの目標レーティングを保存・更新する。"""
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO goals (player_name, target_rating) VALUES (?, ?)",
+            (player_name, target_rating),
+        )
+
+
+def clear_goal(player_name: str) -> None:
+    """プレイヤーの目標レーティングを削除する。"""
+    with get_conn() as conn:
+        conn.execute("DELETE FROM goals WHERE player_name = ?", (player_name,))
+
+
+# ---------------------------------------------------------------------------
+# LLM eval score
+# ---------------------------------------------------------------------------
+
+def save_llm_eval_score(date_str: str, player_name: str, score: int) -> None:
+    """LLM コメントの評価スコアを保存する。"""
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO llm_eval_scores (date_str, player_name, score, saved_at) VALUES (?, ?, ?, ?)",
+            (date_str, player_name, score, int(datetime.now(timezone.utc).timestamp())),
+        )
+
+
+def get_llm_eval_scores(player_name: str | None = None, days: int = 30) -> list[dict]:
+    """直近 N 日の LLM 評価スコア一覧を返す（新しい順）。"""
+    since_ts = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp())
+    with get_conn() as conn:
+        if player_name is not None:
+            rows = conn.execute("""
+                SELECT date_str, score, saved_at
+                FROM llm_eval_scores
+                WHERE player_name = ? AND saved_at >= ?
+                ORDER BY saved_at DESC
+            """, (player_name, since_ts)).fetchall()
+        else:
+            rows = conn.execute("""
+                SELECT date_str, score, saved_at
+                FROM llm_eval_scores
+                WHERE saved_at >= ?
+                ORDER BY saved_at DESC
+            """, (since_ts,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_latest_llm_eval_score(player_name: str | None = None) -> int | None:
+    """最新の LLM 評価スコアを返す（Prometheus exporter 用）。なければ None。"""
+    with get_conn() as conn:
+        if player_name is not None:
+            row = conn.execute(
+                "SELECT score FROM llm_eval_scores WHERE player_name = ? ORDER BY saved_at DESC, id DESC LIMIT 1",
+                (player_name,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT score FROM llm_eval_scores ORDER BY saved_at DESC, id DESC LIMIT 1"
+            ).fetchone()
+    return int(row["score"]) if row else None
+
+
+# ---------------------------------------------------------------------------
+# monthly snapshot
+# ---------------------------------------------------------------------------
+
+def upsert_monthly_snapshot(
+    year_month: str,
+    player_name: str,
+    wins: int,
+    losses: int,
+    rating_delta: int,
+    end_power: int | None,
+    top_chara: str | None,
+) -> None:
+    """月次スナップショットを保存・更新する（year_month='YYYY-MM'）。"""
+    with get_conn() as conn:
+        conn.execute("""
+            INSERT OR REPLACE INTO monthly_snapshots
+                (year_month, player_name, wins, losses, rating_delta, end_power, top_chara, saved_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            year_month, player_name, wins, losses, rating_delta,
+            end_power, top_chara,
+            int(datetime.now(timezone.utc).timestamp()),
+        ))
+
+
+def get_monthly_snapshots(
+    player_name: str | None = None,
+    limit: int = 12,
+) -> list[dict]:
+    """月次スナップショットを新しい順で最大 limit 件返す。"""
+    with get_conn() as conn:
+        if player_name is not None:
+            rows = conn.execute("""
+                SELECT year_month, wins, losses, rating_delta, end_power, top_chara
+                FROM monthly_snapshots
+                WHERE player_name = ?
+                ORDER BY year_month DESC
+                LIMIT ?
+            """, (player_name, limit)).fetchall()
+        else:
+            rows = conn.execute("""
+                SELECT year_month, wins, losses, rating_delta, end_power, top_chara
+                FROM monthly_snapshots
+                ORDER BY year_month DESC
+                LIMIT ?
+            """, (limit,)).fetchall()
+    return [dict(r) for r in rows]
 
 
 def get_win_loss_by_hour(since_ts: int) -> list[dict]:

@@ -21,7 +21,7 @@ from discord import app_commands
 
 import bot.db as db
 import main as _bot_main
-from bot.config import DISCORD_BOT_TOKEN as BOT_TOKEN, DISCORD_GUILD_ID, JST
+from bot.config import DISCORD_BOT_TOKEN as BOT_TOKEN, DISCORD_GUILD_ID, JST, STAGE_NAMES
 from bot.graph import generate_rating_chart
 from bot.stats import count_wins, count_losses, get_most_common, detect_winning_streak, detect_losing_streak
 
@@ -374,6 +374,135 @@ async def cmd_monthly(interaction: discord.Interaction, month: str | None = None
         await interaction.followup.send(f"❌ エラーが発生しました: {e}")
 
 
+@tekken_group.command(name="records", description="全期間の個人最高記録を表示する")
+async def cmd_records(interaction: discord.Interaction) -> None:
+    await interaction.response.defer(thinking=True)
+    players = _bot_main.get_players()
+    player_name = players[0][0] if players else None
+    rec = db.get_personal_records(player_name=player_name)
+
+    if not rec:
+        await interaction.followup.send("❌ 対戦データがありません。")
+        return
+
+    total = rec["total"]
+    wins  = rec["wins"]
+    losses = rec["losses"]
+    wr    = wins / total * 100 if total else 0
+
+    lines_personal = [
+        f"🗓️ 初対戦日: **{rec['first_date']}**",
+        f"📊 通算: **{total}戦** {wins}勝{losses}敗 ({wr:.0f}%)",
+    ]
+    if rec["max_rating"]:
+        date_note = f"（{rec['max_rating_date']}）" if rec["max_rating_date"] else ""
+        lines_personal.append(f"⭐ 最高レーティング: **{rec['max_rating']:,}** {date_note}")
+
+    lines_streak = []
+    if rec["max_win_streak"] > 0:
+        period = ""
+        if rec["max_win_start"] and rec["max_win_end"] and rec["max_win_start"] != rec["max_win_end"]:
+            period = f"（{rec['max_win_start']} 〜 {rec['max_win_end']}）"
+        elif rec["max_win_start"]:
+            period = f"（{rec['max_win_start']}）"
+        lines_streak.append(f"🔥 最長連勝: **{rec['max_win_streak']}連勝** {period}")
+    if rec["max_lose_streak"] > 0:
+        period = ""
+        if rec["max_lose_start"] and rec["max_lose_end"] and rec["max_lose_start"] != rec["max_lose_end"]:
+            period = f"（{rec['max_lose_start']} 〜 {rec['max_lose_end']}）"
+        elif rec["max_lose_start"]:
+            period = f"（{rec['max_lose_start']}）"
+        lines_streak.append(f"💀 最長連敗: **{rec['max_lose_streak']}連敗** {period}")
+
+    embed = discord.Embed(
+        title=f"🏆 {player_name or 'プレイヤー'} の個人記録",
+        color=0xFFD700,
+    )
+    embed.add_field(name="📈 通算成績", value="\n".join(lines_personal), inline=False)
+    if lines_streak:
+        embed.add_field(name="⚡ 連勝/連敗記録", value="\n".join(lines_streak), inline=False)
+    await interaction.followup.send(embed=embed)
+
+
+@tekken_group.command(name="goal", description="目標レーティングを設定・確認・解除する")
+@app_commands.describe(
+    rating="設定するレーティング（例: 200000）。省略すると現在の目標を確認",
+    clear="True にすると目標を解除する",
+)
+async def cmd_goal(
+    interaction: discord.Interaction,
+    rating: int | None = None,
+    clear: bool = False,
+) -> None:
+    players = _bot_main.get_players()
+    player_name = players[0][0] if players else "default"
+
+    if clear:
+        db.clear_goal(player_name)
+        await interaction.response.send_message(f"✅ `{player_name}` の目標レーティングを解除しました。")
+        return
+
+    if rating is not None:
+        if rating <= 0:
+            await interaction.response.send_message("❌ レーティングは 1 以上で指定してください。")
+            return
+        db.set_goal(player_name, rating)
+        await interaction.response.send_message(
+            f"✅ `{player_name}` の目標レーティングを **{rating:,}** に設定しました。"
+        )
+        return
+
+    # 確認モード
+    current_goal = db.get_goal(player_name)
+    if current_goal:
+        await interaction.response.send_message(
+            f"🎯 `{player_name}` の現在の目標レーティング: **{current_goal:,}**\n"
+            "解除するには `/tekken goal clear:True`、変更するには `/tekken goal rating:<数値>` を使ってください。"
+        )
+    else:
+        from bot.config import RATING_GOAL
+        if RATING_GOAL > 0:
+            await interaction.response.send_message(
+                f"🎯 目標レーティングは環境変数で **{RATING_GOAL:,}** に設定されています。\n"
+                "`/tekken goal rating:<数値>` でDB設定に上書きできます。"
+            )
+        else:
+            await interaction.response.send_message(
+                "🎯 目標レーティングは未設定です。\n`/tekken goal rating:<数値>` で設定できます。"
+            )
+
+
+@tekken_group.command(name="stage", description="ステージ別勝率を確認する（全期間）")
+async def cmd_stage(interaction: discord.Interaction) -> None:
+    await interaction.response.defer(thinking=True)
+    players = _bot_main.get_players()
+    player_name = players[0][0] if players else None
+    stats = db.get_stage_stats(player_name=player_name, min_battles=2)
+
+    if not stats:
+        await interaction.followup.send("❌ ステージデータが足りません（各ステージ2戦以上必要）。")
+        return
+
+    lines = []
+    for row in stats[:20]:
+        sid   = row["stage_id"]
+        name  = STAGE_NAMES.get(sid, f"Stage #{sid}")
+        wins  = row["wins"]
+        total = row["total"]
+        losses = total - wins
+        wr    = wins / total * 100
+        icon  = "✅" if wr > 50 else ("❌" if wr < 50 else "➖")
+        lines.append(f"{icon} {name:<20} {wins}勝{losses}敗 ({wr:.0f}%)")
+
+    embed = discord.Embed(
+        title="🗺️ ステージ別対戦成績（試合数順）",
+        description="```\n" + "\n".join(lines) + "\n```",
+        color=0x5865F2,
+    )
+    embed.set_footer(text="stage_id → ステージ名は config.py の STAGE_NAMES で設定できます")
+    await interaction.followup.send(embed=embed)
+
+
 @tekken_group.command(name="help", description="使用可能なコマンド一覧を表示する")
 async def cmd_help(interaction: discord.Interaction) -> None:
     embed = discord.Embed(
@@ -397,7 +526,16 @@ async def cmd_help(interaction: discord.Interaction) -> None:
             "`/tekken chara <name>` — キャラ別対戦成績\n"
             "`/tekken top` — キャラ別対戦成績ランキング\n"
             "`/tekken rival <name>` — ライバル詳細分析\n"
+            "`/tekken stage` — ステージ別勝率\n"
             "`/tekken filter [chara] [date] [days]` — バトルログ絞り込み"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="🏆 記録・目標",
+        value=(
+            "`/tekken records` — 全期間の個人最高記録\n"
+            "`/tekken goal [rating] [clear]` — 目標レーティングの設定・確認・解除"
         ),
         inline=False,
     )

@@ -109,6 +109,7 @@ def test_fire_alerts_sends_rating_goal_notification():
     ]
     with (
         patch("main.RATING_GOAL", 10_000),
+        patch("bot.db.get_goal", return_value=None),
         patch("bot.discord_post.notify") as mock_notify,
     ):
         _fire_alerts(today_battles, prev_battles, "Alice")
@@ -122,6 +123,7 @@ def test_fire_alerts_no_duplicate_rating_goal_notification():
     prev_battles  = [_battle(battle_at=999_999,   rating_before=9_800, rating_change=300)]
     with (
         patch("main.RATING_GOAL", 10_000),
+        patch("bot.db.get_goal", return_value=None),
         patch("bot.discord_post.notify") as mock_notify,
     ):
         _fire_alerts(today_battles, prev_battles, "Alice")
@@ -133,10 +135,38 @@ def test_fire_alerts_no_notification_when_goal_zero():
     battles = [_battle(battle_at=1_000_100, rating_before=9_900, rating_change=200)]
     with (
         patch("main.RATING_GOAL", 0),
+        patch("bot.db.get_goal", return_value=None),
         patch("bot.discord_post.notify") as mock_notify,
     ):
         _fire_alerts(battles, [], "Alice")
     mock_notify.assert_not_called()
+
+
+def test_fire_alerts_db_goal_takes_priority():
+    """DB の目標が設定されていれば env var より優先される。"""
+    today_battles = [_battle(battle_at=1_000_100, rating_before=19_800, rating_change=300)]
+    prev_battles  = [_battle(battle_at=999_999,   rating_before=19_500, rating_change=100)]
+    with (
+        patch("main.RATING_GOAL", 0),        # env var は無効
+        patch("bot.db.get_goal", return_value=20_000),  # DB 目標 = 20,000
+        patch("bot.discord_post.notify") as mock_notify,
+    ):
+        _fire_alerts(today_battles, prev_battles, "Alice")
+    mock_notify.assert_called_once()
+    assert "達成" in mock_notify.call_args[0][0]
+
+
+def test_fire_alerts_db_goal_none_falls_back_to_env():
+    """DB 目標が None → env var の RATING_GOAL を使う。"""
+    today_battles = [_battle(battle_at=1_000_100, rating_before=9_900, rating_change=200)]
+    prev_battles  = [_battle(battle_at=999_999,   rating_before=9_500, rating_change=100)]
+    with (
+        patch("main.RATING_GOAL", 10_000),
+        patch("bot.db.get_goal", return_value=None),
+        patch("bot.discord_post.notify") as mock_notify,
+    ):
+        _fire_alerts(today_battles, prev_battles, "Alice")
+    mock_notify.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -407,6 +437,35 @@ def test_run_for_player_with_llm_comment():
         _run_for_player("Alice", "pid_alice", "2026-04-10", "2026/04/10")
 
     mock_edit.assert_called_once()
+
+
+def test_run_for_player_llm_eval_score_saved():
+    """LLM コメントあり → LLM評価スコアが DB に保存される。"""
+    today_battles = [_make_battle()]
+    mock_post_result = ([("msg1", "https://discord.com/api/webhooks/1/tok")], {"title": "t"})
+    with (
+        patch("bot.db.get_latest_battle_at", return_value=None),
+        patch("main.fetcher.fetch_battles_since", return_value=today_battles),
+        patch("bot.db.insert_battles", return_value=1),
+        patch("main.fetcher.fetch_quick_battles_from_ewgf", return_value=[]),
+        patch("bot.db.get_battles_on_date", return_value=today_battles),
+        patch("bot.db.has_posted_today", return_value=False),
+        patch("bot.db.mark_posted_today"),
+        patch("main._compute_opponent_data", return_value=({}, [])),
+        patch("main._fetch_scout_data", return_value={}),
+        patch("main._fire_alerts"),
+        patch("main._fire_rank_alerts"),
+        patch("main.discord_post.post", return_value=mock_post_result),
+        patch("main._analyze_with_timeout", return_value="良いコメント"),
+        patch("main.discord_post.edit_llm_comment"),
+        patch("main.discord_post.notify_error"),
+        patch("bot.evaluator.evaluate_comment", return_value={"score": 80}) as mock_eval,
+        patch("bot.db.save_llm_eval_score") as mock_save_score,
+    ):
+        _run_for_player("Alice", "pid_alice", "2026-04-10", "2026/04/10")
+
+    mock_eval.assert_called_once()
+    mock_save_score.assert_called_once_with("2026-04-10", "Alice", 80)
 
 
 def test_run_for_player_fetch_error_posts_error():

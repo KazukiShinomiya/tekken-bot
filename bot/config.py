@@ -51,6 +51,13 @@ TIMEOUT_WEBHOOK_IMAGE = int(os.getenv("TIMEOUT_WEBHOOK_IMAGE", "15"))  # Discord
 # ── 通知設定 ──────────────────────────────────────────────────────────────────
 RATING_GOAL = int(os.getenv("RATING_GOAL", "0"))  # 0=無効
 
+STAGE_NAMES: dict[int, str] = {
+    # wank.wavu.wiki の stage_id → Tekken 8 ステージ名
+    # 実データで確認できた ID のみ記載。不明 ID は "Stage #N" にフォールバック。
+    # 実際の対戦ログで ID が判明したら随時追記してください。
+}
+
+
 def validate_config() -> list[str]:
     """
     設定の問題点をリストで返す。空リストなら問題なし。

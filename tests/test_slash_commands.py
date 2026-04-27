@@ -53,6 +53,7 @@ from bot.slash_commands import (  # noqa: E402
     cmd_today, cmd_vs, cmd_chara, cmd_top, cmd_status, cmd_rival,
     cmd_trend, cmd_filter, cmd_help, _chara_autocomplete,
     cmd_weekly, on_ready, start_bot, start_bot_thread,
+    cmd_records, cmd_goal, cmd_stage,
 )
 
 
@@ -672,3 +673,152 @@ def test_start_bot_thread_returns_thread():
         t = start_bot_thread()
     assert isinstance(t, threading.Thread)
     assert t.daemon is True
+
+
+# ---------------------------------------------------------------------------
+# /tekken records
+# ---------------------------------------------------------------------------
+
+def test_cmd_records_no_data():
+    """/tekken records: データなし → ❌ メッセージ。"""
+    interaction = _make_interaction()
+    with (
+        patch("main.get_players", return_value=[("Alice", "pid1")]),
+        patch("bot.db.get_personal_records", return_value={}),
+    ):
+        asyncio.run(cmd_records(interaction))
+    msg = interaction.followup.send.call_args[0][0]
+    assert "❌" in msg
+
+
+def test_cmd_records_with_data():
+    """/tekken records: データあり → Embed を返す。"""
+    interaction = _make_interaction()
+    rec = {
+        "total": 100, "wins": 60, "losses": 40,
+        "first_date": "2024/01/01",
+        "max_rating": 150000, "max_rating_date": "2024/06/01",
+        "max_win_streak": 7, "max_win_start": "2024/03/01", "max_win_end": "2024/03/07",
+        "max_lose_streak": 3, "max_lose_start": "2024/04/01", "max_lose_end": "2024/04/03",
+    }
+    with (
+        patch("main.get_players", return_value=[("Alice", "pid1")]),
+        patch("bot.db.get_personal_records", return_value=rec),
+    ):
+        asyncio.run(cmd_records(interaction))
+    sent_kwargs = interaction.followup.send.call_args.kwargs
+    assert "embed" in sent_kwargs
+
+
+def test_cmd_records_no_streak():
+    """/tekken records: 連勝/連敗が 0 でも Embed を返す。"""
+    interaction = _make_interaction()
+    rec = {
+        "total": 1, "wins": 1, "losses": 0,
+        "first_date": "2024/01/01",
+        "max_rating": None, "max_rating_date": None,
+        "max_win_streak": 0, "max_win_start": None, "max_win_end": None,
+        "max_lose_streak": 0, "max_lose_start": None, "max_lose_end": None,
+    }
+    with (
+        patch("main.get_players", return_value=[("Alice", "pid1")]),
+        patch("bot.db.get_personal_records", return_value=rec),
+    ):
+        asyncio.run(cmd_records(interaction))
+    interaction.followup.send.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# /tekken goal
+# ---------------------------------------------------------------------------
+
+def test_cmd_goal_set():
+    """/tekken goal rating=200000 → set_goal を呼んで ✅ メッセージ。"""
+    interaction = _make_interaction()
+    with (
+        patch("main.get_players", return_value=[("Alice", "pid1")]),
+        patch("bot.db.set_goal") as mock_set,
+    ):
+        asyncio.run(cmd_goal(interaction, rating=200000, clear=False))
+    mock_set.assert_called_once_with("Alice", 200000)
+    msg = interaction.response.send_message.call_args[0][0]
+    assert "✅" in msg
+
+
+def test_cmd_goal_clear():
+    """/tekken goal clear=True → clear_goal を呼んで ✅ メッセージ。"""
+    interaction = _make_interaction()
+    with (
+        patch("main.get_players", return_value=[("Alice", "pid1")]),
+        patch("bot.db.clear_goal") as mock_clear,
+    ):
+        asyncio.run(cmd_goal(interaction, rating=None, clear=True))
+    mock_clear.assert_called_once_with("Alice")
+    msg = interaction.response.send_message.call_args[0][0]
+    assert "✅" in msg
+
+
+def test_cmd_goal_show_existing():
+    """/tekken goal (引数なし) で既存目標を表示。"""
+    interaction = _make_interaction()
+    with (
+        patch("main.get_players", return_value=[("Alice", "pid1")]),
+        patch("bot.db.get_goal", return_value=180000),
+    ):
+        asyncio.run(cmd_goal(interaction, rating=None, clear=False))
+    msg = interaction.response.send_message.call_args[0][0]
+    assert "180,000" in msg
+
+
+def test_cmd_goal_show_none():
+    """/tekken goal (引数なし) で目標未設定の場合。"""
+    interaction = _make_interaction()
+    with (
+        patch("main.get_players", return_value=[("Alice", "pid1")]),
+        patch("bot.db.get_goal", return_value=None),
+        patch("bot.config.RATING_GOAL", 0),
+    ):
+        asyncio.run(cmd_goal(interaction, rating=None, clear=False))
+    msg = interaction.response.send_message.call_args[0][0]
+    assert "未設定" in msg
+
+
+def test_cmd_goal_invalid_rating():
+    """/tekken goal rating=0 → ❌ エラーメッセージ。"""
+    interaction = _make_interaction()
+    with patch("main.get_players", return_value=[("Alice", "pid1")]):
+        asyncio.run(cmd_goal(interaction, rating=0, clear=False))
+    msg = interaction.response.send_message.call_args[0][0]
+    assert "❌" in msg
+
+
+# ---------------------------------------------------------------------------
+# /tekken stage
+# ---------------------------------------------------------------------------
+
+def test_cmd_stage_no_data():
+    """/tekken stage: データなし → ❌ メッセージ。"""
+    interaction = _make_interaction()
+    with (
+        patch("main.get_players", return_value=[("Alice", "pid1")]),
+        patch("bot.db.get_stage_stats", return_value=[]),
+    ):
+        asyncio.run(cmd_stage(interaction))
+    msg = interaction.followup.send.call_args[0][0]
+    assert "❌" in msg
+
+
+def test_cmd_stage_with_data():
+    """/tekken stage: データあり → Embed を返す。"""
+    interaction = _make_interaction()
+    stats = [
+        {"stage_id": 1, "wins": 10, "total": 15},
+        {"stage_id": 2, "wins": 3,  "total": 8},
+    ]
+    with (
+        patch("main.get_players", return_value=[("Alice", "pid1")]),
+        patch("bot.db.get_stage_stats", return_value=stats),
+    ):
+        asyncio.run(cmd_stage(interaction))
+    sent_kwargs = interaction.followup.send.call_args.kwargs
+    assert "embed" in sent_kwargs
