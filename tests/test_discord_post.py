@@ -1125,8 +1125,8 @@ def test_build_rank_change_embed_promotion():
     assert result["color"] == 0xFFD700
     assert "昇格" in result["title"]
     assert "→" in result["description"]
-    assert "Garyu" in result["description"]
-    assert "Shinryu" in result["description"]
+    assert "臥龍" in result["description"]
+    assert "真龍" in result["description"]
 
 
 def test_build_rank_change_embed_demotion():
@@ -1134,8 +1134,8 @@ def test_build_rank_change_embed_demotion():
     result = build_rank_change_embed("Bob", old_rank=16, new_rank=15)
     assert result["color"] == 0xED4245
     assert "降格" in result["title"]
-    assert "Shinryu" in result["description"]
-    assert "Garyu" in result["description"]
+    assert "真龍" in result["description"]
+    assert "臥龍" in result["description"]
 
 
 def test_build_rank_change_embed_unknown_rank():
