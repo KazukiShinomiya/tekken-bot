@@ -10,6 +10,7 @@ from bot.discord_post import (
     _nemesis,
     _rating_summary,
     _matchup_matrix,
+    _quick_rank_chara_matrix,
     _scout_section,
     _opp_rank_label,
     _quick_rank_distribution,
@@ -1222,6 +1223,137 @@ def test_build_monthly_embed_contains_player_name():
     result  = build_monthly_embed(battles, "2024年4月", player_name="Alice")
     assert result is not None
     assert "Alice" in result["title"]
+
+
+# ---------------------------------------------------------------------------
+# _quick_rank_chara_matrix
+# ---------------------------------------------------------------------------
+
+def test_quick_rank_chara_matrix_basic():
+    """クイック + opp_rank あり → 段位名とキャラ名が含まれる。"""
+    battles = [
+        _quick_battle(won=True,  opp_rank=22, opp_chara="Paul"),
+        _quick_battle(won=False, opp_rank=22, opp_chara="Paul"),
+        _quick_battle(won=True,  opp_rank=22, opp_chara="King"),
+    ]
+    result = _quick_rank_chara_matrix(battles)
+    assert result is not None
+    assert "雷神" in result  # rank 22
+    assert "Paul" in result
+    assert "King" in result
+
+
+def test_quick_rank_chara_matrix_rank_order_descending():
+    """段位降順（強い相手が上）で表示される。"""
+    battles = [
+        _quick_battle(won=True,  opp_rank=15, opp_chara="Jin"),   # 臥龍（弱め）
+        _quick_battle(won=False, opp_rank=25, opp_chara="Law"),   # 鉄拳王（強め）
+    ]
+    result = _quick_rank_chara_matrix(battles)
+    assert result is not None
+    assert result.index("鉄拳王") < result.index("臥龍")
+
+
+def test_quick_rank_chara_matrix_winrate_order_ascending():
+    """同じ段位内で勝率昇順（苦手キャラが上）に並ぶ。"""
+    battles = [
+        _quick_battle(won=True,  opp_rank=20, opp_chara="Paul"),
+        _quick_battle(won=True,  opp_rank=20, opp_chara="Paul"),   # Paul 100%
+        _quick_battle(won=False, opp_rank=20, opp_chara="King"),
+        _quick_battle(won=False, opp_rank=20, opp_chara="King"),   # King 0%
+    ]
+    result = _quick_rank_chara_matrix(battles)
+    assert result is not None
+    assert result.index("King") < result.index("Paul")
+
+
+def test_quick_rank_chara_matrix_icons():
+    """勝率に応じた ✅/❌/➖ が付く。"""
+    battles = [
+        _quick_battle(won=True,  opp_rank=20, opp_chara="Paul"),
+        _quick_battle(won=True,  opp_rank=20, opp_chara="Paul"),   # 100% ✅
+        _quick_battle(won=False, opp_rank=20, opp_chara="King"),
+        _quick_battle(won=False, opp_rank=20, opp_chara="King"),   # 0%   ❌
+        _quick_battle(won=True,  opp_rank=20, opp_chara="Kazuya"),
+        _quick_battle(won=False, opp_rank=20, opp_chara="Kazuya"), # 50%  ➖
+    ]
+    result = _quick_rank_chara_matrix(battles)
+    assert result is not None
+    assert "✅" in result
+    assert "❌" in result
+    assert "➖" in result
+
+
+def test_quick_rank_chara_matrix_excludes_ranked():
+    """ランク戦は除外され、クイックマッチのみ集計される。"""
+    battles = [
+        _battle(won=False, opp_chara="Paul", battle_type="ranked"),  # ranked → 除外
+        _quick_battle(won=True, opp_rank=20, opp_chara="King"),
+    ]
+    result = _quick_rank_chara_matrix(battles)
+    assert result is not None
+    assert "Paul" not in result
+    assert "King" in result
+
+
+def test_quick_rank_chara_matrix_excludes_no_rank():
+    """opp_rank が None のクイック対戦は除外される。"""
+    battles = [
+        _quick_battle(won=False, opp_rank=None, opp_chara="Paul"),  # rank不明 → 除外
+        _quick_battle(won=True,  opp_rank=20,   opp_chara="King"),
+    ]
+    result = _quick_rank_chara_matrix(battles)
+    assert result is not None
+    assert "Paul" not in result
+    assert "King" in result
+
+
+def test_quick_rank_chara_matrix_all_no_rank_returns_none():
+    """全バトルで opp_rank が None → None を返す。"""
+    battles = [_quick_battle(won=True, opp_rank=None)] * 3
+    assert _quick_rank_chara_matrix(battles) is None
+
+
+def test_quick_rank_chara_matrix_empty_returns_none():
+    """空リスト → None を返す。"""
+    assert _quick_rank_chara_matrix([]) is None
+
+
+def test_quick_rank_chara_matrix_rank_name_japanese():
+    """段位名が日本語で表示される。"""
+    battles = [_quick_battle(won=True, opp_rank=25, opp_chara="Jin")]  # 25 = 鉄拳王
+    result = _quick_rank_chara_matrix(battles)
+    assert result is not None
+    assert "鉄拳王" in result
+
+
+def test_build_embed_includes_quick_rank_chara_field():
+    """クイック + opp_rank あり → Embed に段位別対戦成績フィールドが含まれる。"""
+    battles = [
+        _quick_battle(won=True,  opp_rank=22, opp_chara="Paul"),
+        _quick_battle(won=False, opp_rank=22, opp_chara="King"),
+    ]
+    for i, b in enumerate(battles):
+        b["my_chara"]  = "Lee"
+        b["my_rounds"] = 2
+        b["opp_rounds"] = 1
+        b["battle_at"] = 1000 + i
+        b["opp_polaris_id"] = f"pid{i}"
+        b["opp_name"] = "Opp"
+        b["my_power"] = None
+    result = build_embed(battles, "2026-05-12")
+    assert result is not None
+    assert any("段位別" in f["name"] for f in result["fields"])
+
+
+def test_build_embed_no_quick_rank_chara_field_when_no_rank():
+    """クイックで全 opp_rank が None → 段位別対戦成績フィールドなし。"""
+    battles = [_quick_battle(won=True, opp_rank=None, opp_chara="Paul")]
+    battles[0].update({"my_chara": "Lee", "my_rounds": 2, "opp_rounds": 1,
+                        "battle_at": 1000, "opp_polaris_id": "p", "opp_name": "Opp", "my_power": None})
+    result = build_embed(battles, "2026-05-12")
+    assert result is not None
+    assert not any("段位別" in f["name"] for f in result["fields"])
 
 
 # ---------------------------------------------------------------------------

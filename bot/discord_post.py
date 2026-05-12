@@ -180,6 +180,44 @@ def _opp_rank_label(battle: Battle) -> str:
     return f"({name})" if name else ""
 
 
+def _quick_rank_chara_matrix(battles: list[Battle]) -> str | None:
+    """
+    クイックマッチの相手段位×キャラ対戦成績を返す。
+    opp_rank が不明な試合は除外。データなしは None を返す。
+    段位降順（強い相手から）、段位内は勝率昇順（苦手キャラから）で表示する。
+    """
+    quick = [
+        b for b in battles
+        if b.get("battle_type") == "quick" and b.get("opp_rank") is not None
+    ]
+    if not quick:
+        return None
+
+    groups: dict[int, dict[str, list[bool]]] = {}
+    for b in quick:
+        rank_id = b["opp_rank"]
+        chara   = b.get("opp_chara") or UNKNOWN_CHARACTER
+        groups.setdefault(rank_id, {}).setdefault(chara, []).append(bool(b["won"]))
+
+    lines = []
+    for rank_id in sorted(groups.keys(), reverse=True):
+        chara_stats = groups[rank_id]
+        rank_name   = RANK_NAMES.get(rank_id, f"Rank{rank_id}")
+        rank_total  = sum(len(v) for v in chara_stats.values())
+        rank_wins   = sum(sum(v) for v in chara_stats.values())
+        rank_wr     = f"{rank_wins / rank_total * 100:.0f}%"
+        lines.append(f"■ {rank_name} ({rank_total}戦 {rank_wr})")
+
+        for chara, results in sorted(chara_stats.items(), key=lambda x: sum(x[1]) / len(x[1])):
+            n    = len(results)
+            wr   = sum(results) / n
+            pct  = f"{wr * 100:.0f}%"
+            icon = "✅" if wr > 0.5 else ("❌" if wr < 0.5 else "➖")
+            lines.append(f"  {chara:<12} {n}戦 {pct:>4} {icon}")
+
+    return "\n".join(lines)
+
+
 def _quick_rank_distribution(quick_battles: list[Battle]) -> str:
     """クイックマッチの相手段位分布を `God×4 / Kishin×3` 形式で返す。データなしは空文字。"""
     counts: Counter = Counter()
@@ -311,6 +349,11 @@ def build_embed(
         if scout:
             scout_body = "\n".join(scout.split("\n")[1:])
             fields.append({"name": "🔍 スカウト", "value": scout_body[:1024], "inline": False})
+
+    # クイック 段位×キャラ対戦成績
+    quick_rank_matrix = _quick_rank_chara_matrix(battles)
+    if quick_rank_matrix:
+        fields.append({"name": "⚡ クイック 段位別対戦成績", "value": quick_rank_matrix[:1024], "inline": False})
 
     embed: dict = {
         "title":       f"🎮 {display_name} 本日の戦果 ({date_str})",
