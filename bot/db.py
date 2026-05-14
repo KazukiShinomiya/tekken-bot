@@ -15,6 +15,16 @@ from bot.models import Battle
 logger = logging.getLogger(__name__)
 
 
+def _player_filter(player_name: str | None) -> tuple[str, tuple]:
+    """player_name フィルタ用の WHERE 条件フラグメントとパラメータを返す。
+    戻り値を f-string の WHERE 句末尾に挿入し、params に結合して使う。
+    例: sql = f"SELECT ... WHERE col = ? {pf}", params + pp
+    """
+    if player_name is not None:
+        return "AND player_name = ?", (player_name,)
+    return "", ()
+
+
 def _query_battles(
     conn: sqlite3.Connection,
     where_sql: str,
@@ -25,11 +35,9 @@ def _query_battles(
     WHERE 句に player_name フィルタを条件付きで追加して SELECT * FROM battles を実行する。
     ORDER BY battle_at は常に付与する。
     """
-    if player_name is not None:
-        sql = f"SELECT * FROM battles WHERE {where_sql} AND player_name = ? ORDER BY battle_at"
-        return conn.execute(sql, params + (player_name,)).fetchall()
-    sql = f"SELECT * FROM battles WHERE {where_sql} ORDER BY battle_at"
-    return conn.execute(sql, params).fetchall()
+    pf, pp = _player_filter(player_name)
+    sql = f"SELECT * FROM battles WHERE {where_sql} {pf} ORDER BY battle_at"
+    return conn.execute(sql, params + pp).fetchall()
 
 
 def get_conn() -> sqlite3.Connection:
@@ -201,15 +209,12 @@ def insert_battles(battles: list[Battle], player_name: str = "default") -> int:
 
 def get_latest_battle_at(player_name: str | None = None) -> float:
     """DB内の最新バトルのタイムスタンプを返す。なければ 0。"""
+    pf, pp = _player_filter(player_name)
     with get_conn() as conn:
-        if player_name is not None:
-            row = conn.execute(
-                "SELECT MAX(battle_at) AS m FROM battles WHERE player_name = ?",
-                (player_name,),
-            ).fetchone()
-        else:
-            row = conn.execute("SELECT MAX(battle_at) AS m FROM battles").fetchone()
-        return float(row["m"]) if row["m"] is not None else 0.0
+        row = conn.execute(
+            f"SELECT MAX(battle_at) AS m FROM battles WHERE 1=1 {pf}", pp
+        ).fetchone()
+    return float(row["m"]) if row["m"] is not None else 0.0
 
 
 def get_battles_on_date(
@@ -270,19 +275,14 @@ def get_rating_delta(since_ts: int) -> int:
 
 def get_win_loss(since_ts: int, battle_type: str | None = None) -> tuple[int, int]:
     """since_ts 以降の (勝数, 敗数) を返す。battle_type=None で全種別。"""
+    btf = "AND battle_type = ?" if battle_type is not None else ""
+    btp = (battle_type,) if battle_type is not None else ()
     with get_conn() as conn:
-        if battle_type is None:
-            rows = conn.execute("""
-                SELECT won, COUNT(*) AS cnt
-                FROM battles WHERE battle_at >= ?
-                GROUP BY won
-            """, (since_ts,)).fetchall()
-        else:
-            rows = conn.execute("""
-                SELECT won, COUNT(*) AS cnt
-                FROM battles WHERE battle_at >= ? AND battle_type = ?
-                GROUP BY won
-            """, (since_ts, battle_type)).fetchall()
+        rows = conn.execute(f"""
+            SELECT won, COUNT(*) AS cnt
+            FROM battles WHERE battle_at >= ? {btf}
+            GROUP BY won
+        """, (since_ts,) + btp).fetchall()
     wins   = next((r["cnt"] for r in rows if r["won"]),     0)
     losses = next((r["cnt"] for r in rows if not r["won"]), 0)
     return wins, losses
@@ -341,29 +341,18 @@ def get_matchup_ranking(
     min_battles: int = 2,
 ) -> list[dict]:
     """全キャラとの通算対戦成績を試合数降順で返す（min_battles 以上のみ）。"""
+    pf, pp = _player_filter(player_name)
     with get_conn() as conn:
-        if player_name is not None:
-            rows = conn.execute("""
-                SELECT opp_chara,
-                       SUM(won)  AS wins,
-                       COUNT(*)  AS total
-                FROM battles
-                WHERE player_name = ? AND opp_chara IS NOT NULL
-                GROUP BY opp_chara
-                HAVING COUNT(*) >= ?
-                ORDER BY total DESC, wins DESC
-            """, (player_name, min_battles)).fetchall()
-        else:
-            rows = conn.execute("""
-                SELECT opp_chara,
-                       SUM(won)  AS wins,
-                       COUNT(*)  AS total
-                FROM battles
-                WHERE opp_chara IS NOT NULL
-                GROUP BY opp_chara
-                HAVING COUNT(*) >= ?
-                ORDER BY total DESC, wins DESC
-            """, (min_battles,)).fetchall()
+        rows = conn.execute(f"""
+            SELECT opp_chara,
+                   SUM(won)  AS wins,
+                   COUNT(*)  AS total
+            FROM battles
+            WHERE opp_chara IS NOT NULL {pf}
+            GROUP BY opp_chara
+            HAVING COUNT(*) >= ?
+            ORDER BY total DESC, wins DESC
+        """, pp + (min_battles,)).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -428,21 +417,14 @@ def mark_posted_today(date_str: str, player_name: str = "default") -> None:
 
 def get_my_chara_counts(since_ts: int, player_name: str | None = None) -> list[dict]:
     """since_ts 以降の自キャラ別使用試合数を返す（Prometheus メトリクス用）。"""
+    pf, pp = _player_filter(player_name)
     with get_conn() as conn:
-        if player_name is not None:
-            rows = conn.execute("""
-                SELECT my_chara, COUNT(*) AS cnt
-                FROM battles
-                WHERE my_chara IS NOT NULL AND battle_at >= ? AND player_name = ?
-                GROUP BY my_chara ORDER BY cnt DESC
-            """, (since_ts, player_name)).fetchall()
-        else:
-            rows = conn.execute("""
-                SELECT my_chara, COUNT(*) AS cnt
-                FROM battles
-                WHERE my_chara IS NOT NULL AND battle_at >= ?
-                GROUP BY my_chara ORDER BY cnt DESC
-            """, (since_ts,)).fetchall()
+        rows = conn.execute(f"""
+            SELECT my_chara, COUNT(*) AS cnt
+            FROM battles
+            WHERE my_chara IS NOT NULL AND battle_at >= ? {pf}
+            GROUP BY my_chara ORDER BY cnt DESC
+        """, (since_ts,) + pp).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -472,29 +454,18 @@ def get_weekly_my_chara_counts(
 ) -> list[dict]:
     """過去 N 週の JST 週別・自キャラ使用数を返す（週次グラフ用）。"""
     since_ts = int((datetime.now(timezone.utc) - timedelta(weeks=weeks)).timestamp())
+    pf, pp = _player_filter(player_name)
     with get_conn() as conn:
-        if player_name is not None:
-            rows = conn.execute("""
-                SELECT
-                    strftime('%Y-W%W', datetime(battle_at, 'unixepoch', '+9 hours')) AS week,
-                    my_chara,
-                    COUNT(*) AS cnt
-                FROM battles
-                WHERE my_chara IS NOT NULL AND battle_at >= ? AND player_name = ?
-                GROUP BY week, my_chara
-                ORDER BY week, cnt DESC
-            """, (since_ts, player_name)).fetchall()
-        else:
-            rows = conn.execute("""
-                SELECT
-                    strftime('%Y-W%W', datetime(battle_at, 'unixepoch', '+9 hours')) AS week,
-                    my_chara,
-                    COUNT(*) AS cnt
-                FROM battles
-                WHERE my_chara IS NOT NULL AND battle_at >= ?
-                GROUP BY week, my_chara
-                ORDER BY week, cnt DESC
-            """, (since_ts,)).fetchall()
+        rows = conn.execute(f"""
+            SELECT
+                strftime('%Y-W%W', datetime(battle_at, 'unixepoch', '+9 hours')) AS week,
+                my_chara,
+                COUNT(*) AS cnt
+            FROM battles
+            WHERE my_chara IS NOT NULL AND battle_at >= ? {pf}
+            GROUP BY week, my_chara
+            ORDER BY week, cnt DESC
+        """, (since_ts,) + pp).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -547,19 +518,13 @@ def get_last_rank_before_date(date_str: str, player_name: str | None = None) -> 
     """指定日より前の最新バトルの my_rank を返す。なければ None。"""
     tz = timezone(timedelta(hours=9))
     day_start = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=tz)
+    pf, pp = _player_filter(player_name)
     with get_conn() as conn:
-        if player_name is not None:
-            row = conn.execute("""
-                SELECT my_rank FROM battles
-                WHERE battle_at < ? AND player_name = ? AND my_rank IS NOT NULL
-                ORDER BY battle_at DESC LIMIT 1
-            """, (int(day_start.timestamp()), player_name)).fetchone()
-        else:
-            row = conn.execute("""
-                SELECT my_rank FROM battles
-                WHERE battle_at < ? AND my_rank IS NOT NULL
-                ORDER BY battle_at DESC LIMIT 1
-            """, (int(day_start.timestamp()),)).fetchone()
+        row = conn.execute(f"""
+            SELECT my_rank FROM battles
+            WHERE battle_at < ? AND my_rank IS NOT NULL {pf}
+            ORDER BY battle_at DESC LIMIT 1
+        """, (int(day_start.timestamp()),) + pp).fetchone()
     return int(row["my_rank"]) if row else None
 
 
@@ -659,29 +624,18 @@ def get_stage_stats(
     min_battles: int = 2,
 ) -> list[dict]:
     """ステージ別の勝敗集計を返す（stage_id IS NOT NULL かつ min_battles 以上のみ）。"""
+    pf, pp = _player_filter(player_name)
     with get_conn() as conn:
-        if player_name is not None:
-            rows = conn.execute("""
-                SELECT stage_id,
-                       SUM(won)  AS wins,
-                       COUNT(*)  AS total
-                FROM battles
-                WHERE stage_id IS NOT NULL AND player_name = ?
-                GROUP BY stage_id
-                HAVING COUNT(*) >= ?
-                ORDER BY total DESC
-            """, (player_name, min_battles)).fetchall()
-        else:
-            rows = conn.execute("""
-                SELECT stage_id,
-                       SUM(won)  AS wins,
-                       COUNT(*)  AS total
-                FROM battles
-                WHERE stage_id IS NOT NULL
-                GROUP BY stage_id
-                HAVING COUNT(*) >= ?
-                ORDER BY total DESC
-            """, (min_battles,)).fetchall()
+        rows = conn.execute(f"""
+            SELECT stage_id,
+                   SUM(won)  AS wins,
+                   COUNT(*)  AS total
+            FROM battles
+            WHERE stage_id IS NOT NULL {pf}
+            GROUP BY stage_id
+            HAVING COUNT(*) >= ?
+            ORDER BY total DESC
+        """, pp + (min_battles,)).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -729,36 +683,26 @@ def save_llm_eval_score(date_str: str, player_name: str, score: int) -> None:
 def get_llm_eval_scores(player_name: str | None = None, days: int = 30) -> list[dict]:
     """直近 N 日の LLM 評価スコア一覧を返す（新しい順）。"""
     since_ts = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp())
+    pf, pp = _player_filter(player_name)
     with get_conn() as conn:
-        if player_name is not None:
-            rows = conn.execute("""
-                SELECT date_str, score, saved_at
-                FROM llm_eval_scores
-                WHERE player_name = ? AND saved_at >= ?
-                ORDER BY saved_at DESC
-            """, (player_name, since_ts)).fetchall()
-        else:
-            rows = conn.execute("""
-                SELECT date_str, score, saved_at
-                FROM llm_eval_scores
-                WHERE saved_at >= ?
-                ORDER BY saved_at DESC
-            """, (since_ts,)).fetchall()
+        rows = conn.execute(f"""
+            SELECT date_str, score, saved_at
+            FROM llm_eval_scores
+            WHERE saved_at >= ? {pf}
+            ORDER BY saved_at DESC
+        """, (since_ts,) + pp).fetchall()
     return [dict(r) for r in rows]
 
 
 def get_latest_llm_eval_score(player_name: str | None = None) -> int | None:
     """最新の LLM 評価スコアを返す（Prometheus exporter 用）。なければ None。"""
+    pf, pp = _player_filter(player_name)
     with get_conn() as conn:
-        if player_name is not None:
-            row = conn.execute(
-                "SELECT score FROM llm_eval_scores WHERE player_name = ? ORDER BY saved_at DESC, id DESC LIMIT 1",
-                (player_name,),
-            ).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT score FROM llm_eval_scores ORDER BY saved_at DESC, id DESC LIMIT 1"
-            ).fetchone()
+        row = conn.execute(f"""
+            SELECT score FROM llm_eval_scores
+            WHERE 1=1 {pf}
+            ORDER BY saved_at DESC, id DESC LIMIT 1
+        """, pp).fetchone()
     return int(row["score"]) if row else None
 
 
@@ -793,22 +737,15 @@ def get_monthly_snapshots(
     limit: int = 12,
 ) -> list[dict]:
     """月次スナップショットを新しい順で最大 limit 件返す。"""
+    pf, pp = _player_filter(player_name)
     with get_conn() as conn:
-        if player_name is not None:
-            rows = conn.execute("""
-                SELECT year_month, wins, losses, rating_delta, end_power, top_chara
-                FROM monthly_snapshots
-                WHERE player_name = ?
-                ORDER BY year_month DESC
-                LIMIT ?
-            """, (player_name, limit)).fetchall()
-        else:
-            rows = conn.execute("""
-                SELECT year_month, wins, losses, rating_delta, end_power, top_chara
-                FROM monthly_snapshots
-                ORDER BY year_month DESC
-                LIMIT ?
-            """, (limit,)).fetchall()
+        rows = conn.execute(f"""
+            SELECT year_month, wins, losses, rating_delta, end_power, top_chara
+            FROM monthly_snapshots
+            WHERE 1=1 {pf}
+            ORDER BY year_month DESC
+            LIMIT ?
+        """, pp + (limit,)).fetchall()
     return [dict(r) for r in rows]
 
 

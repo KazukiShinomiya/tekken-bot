@@ -81,8 +81,19 @@ RETRY_STATUS_CODES   = [429, 500, 502, 503, 504]
 WANK_FETCH_LIMIT = 50
 
 # スタッツ計算
-MIN_BATTLES_FOR_STAT         = 2
-RATING_STAGNATION_THRESHOLD  = 100
+MIN_BATTLES_FOR_STAT         = 2    # 対キャラ統計・時間帯統計の最低試合数
+MIN_BATTLES_FOR_TREND        = 3    # レーティングトレンド回帰計算の最低試合数
+RATING_STAGNATION_THRESHOLD  = 100  # 停滞判定の1日あたり変動幅（±ポイント）
+
+# 勝率判定しきい値
+WIN_RATE_THRESHOLD       = 0.5   # 天敵判定・アイコン選択（50%ライン）
+WEAK_CHARA_THRESHOLD     = 0.4   # 苦手キャラ判定（勝率40%未満）
+STRONG_CHARA_THRESHOLD   = 0.7   # 得意キャラ判定（勝率70%以上）
+TREND_WIN_RATE_THRESHOLD = 0.1   # 前日比トレンド判定（10pt 以上の差）
+MOMENTUM_THRESHOLD       = 0.2   # 調子の波判定（前後半勝率差 20pt 以上）
+SCOUT_TREND_THRESHOLD    = 5.0   # スカウト傾向判定（勝率差 %ポイント）
+EMBED_COLOR_GOOD_WR      = 0.6   # Embed 緑カラー（勝率60%以上）
+EMBED_COLOR_BAD_WR       = 0.4   # Embed 赤カラー（勝率40%以下）
 
 # Discord
 DISCORD_EMBED_MAX_FIELDS = 25

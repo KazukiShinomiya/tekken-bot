@@ -6,7 +6,10 @@ analyzer.py と discord_post.py で共有する純粋関数。
 import logging
 from datetime import datetime
 from typing import cast
-from bot.config import JST, UNKNOWN_CHARACTER, RATING_STAGNATION_THRESHOLD
+from bot.config import (
+    JST, UNKNOWN_CHARACTER, RATING_STAGNATION_THRESHOLD,
+    MIN_BATTLES_FOR_TREND, MOMENTUM_THRESHOLD,
+)
 from bot.models import Battle
 
 logger = logging.getLogger(__name__)
@@ -112,7 +115,7 @@ def predict_rating_trend(battles: list[Battle]) -> dict[str, float]:
         stagnation_days: 末尾から連続して停滞（±100/日以内）した日数
     """
     ranked_rated = filter_rated_battles([b for b in battles if b.get("battle_type") == "ranked"])
-    if len(ranked_rated) < 3:
+    if len(ranked_rated) < MIN_BATTLES_FOR_TREND:
         return {}
 
     sorted_rated = sorted(ranked_rated, key=lambda b: b["battle_at"])
@@ -170,8 +173,8 @@ def detect_momentum(sorted_battles: list[Battle]) -> str | None:
     first_wr  = count_wins(sorted_battles[:half])  / half
     second_wr = count_wins(sorted_battles[half:]) / (n - half)
     diff = second_wr - first_wr
-    if diff >= 0.2:
+    if diff >= MOMENTUM_THRESHOLD:
         return "📈 後半に調子が上向いた"
-    if diff <= -0.2:
+    if diff <= -MOMENTUM_THRESHOLD:
         return "📉 後半に調子が落ちた"
     return None

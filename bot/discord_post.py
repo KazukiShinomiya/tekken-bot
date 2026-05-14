@@ -17,7 +17,9 @@ from bot.config import (
     TIMEOUT_WEBHOOK, TIMEOUT_WEBHOOK_IMAGE, JST,
     DISCORD_EMBED_MAX_FIELDS,
     RETRY_TOTAL, RETRY_BACKOFF_FACTOR,
-    RANK_NAMES,
+    RANK_NAMES, UNKNOWN_CHARACTER,
+    WIN_RATE_THRESHOLD, EMBED_COLOR_GOOD_WR, EMBED_COLOR_BAD_WR,
+    SCOUT_TREND_THRESHOLD,
 )
 
 from bot.models import Battle
@@ -78,8 +80,7 @@ def _nemesis(battles: list[Battle]) -> str | None:
     losses = len(worst_results) - wins
     wr     = wins / len(worst_results) * 100
 
-    # 勝率50%以上なら天敵なし
-    if wins / len(worst_results) >= 0.5:
+    if wins / len(worst_results) >= WIN_RATE_THRESHOLD:
         return None
 
     return f"{worst_chara} ({wins}勝{losses}敗, {wr:.0f}%)"
@@ -118,9 +119,9 @@ def _matchup_matrix(battles: list[Battle]) -> str | None:
         n  = len(results)
         wr = sum(results) / n
         pct = f"{wr * 100:.0f}%"
-        if wr > 0.5:
+        if wr > WIN_RATE_THRESHOLD:
             icon = "✅"
-        elif wr < 0.5:
+        elif wr < WIN_RATE_THRESHOLD:
             icon = "❌"
         else:
             icon = "➖"
@@ -148,7 +149,7 @@ def _scout_section(battles: list[Battle], scout_data: dict[str, dict]) -> str | 
         opp_name  = next((b.get("opp_name") for b in battles if b.get("opp_polaris_id") == pid), "???")
         wr        = s["win_rate"]
         recent_wr = s["recent_win_rate"]
-        trend_icon = "↑" if recent_wr > wr + 5 else ("↓" if recent_wr < wr - 5 else "→")
+        trend_icon = "↑" if recent_wr > wr + SCOUT_TREND_THRESHOLD else ("↓" if recent_wr < wr - SCOUT_TREND_THRESHOLD else "→")
         lines.append(
             f"  {opp_name}({s['main_chara']}) "
             f"直近{s['total']}戦 勝率{wr:.0f}% | "
@@ -212,7 +213,7 @@ def _quick_rank_chara_matrix(battles: list[Battle]) -> str | None:
             n    = len(results)
             wr   = sum(results) / n
             pct  = f"{wr * 100:.0f}%"
-            icon = "✅" if wr > 0.5 else ("❌" if wr < 0.5 else "➖")
+            icon = "✅" if wr > WIN_RATE_THRESHOLD else ("❌" if wr < WIN_RATE_THRESHOLD else "➖")
             lines.append(f"  {chara:<12} {n}戦 {pct:>4} {icon}")
 
     return "\n".join(lines)
@@ -240,9 +241,9 @@ def _embed_color(battles: list[Battle]) -> int:
     if not battles:
         return 0x5865F2  # Blurple
     wr = count_wins(battles) / len(battles)
-    if wr >= 0.6:
+    if wr >= EMBED_COLOR_GOOD_WR:
         return 0x57F287  # 緑
-    if wr <= 0.4:
+    if wr <= EMBED_COLOR_BAD_WR:
         return 0xED4245  # 赤
     return 0xFEE75C      # 黄
 
@@ -367,31 +368,18 @@ def build_embed(
     return embed
 
 
-def build_weekly_embed(
-    battles: list[Battle],
-    week_start_str: str,
-    player_name: str | None = None,
-) -> dict | None:
-    """週次サマリーの Embed dict を返す。試合なしの場合は None。LLM コメントは含まない。"""
-    if not battles:
-        return None
-
-    display_name = player_name or TEKKEN_ID
+def _build_period_stats_top(battles: list[Battle]) -> list[dict]:
+    """週次・月次 Embed の共通上部フィールド（総合〜レーティング変動）を構築する。"""
     ranked = [b for b in battles if b.get("battle_type") == "ranked"]
     quick  = [b for b in battles if b.get("battle_type") == "quick"]
-
-    rated      = filter_rated_battles(ranked)
+    rated  = filter_rated_battles(ranked)
     net_rating = sum(b.get("rating_change") or 0 for b in rated) if rated else None
-
-    top_chara, top_chara_count = get_most_common(battles, "my_chara")
-    top_opp,   top_opp_count   = get_most_common(battles, "opp_chara")
 
     total_w = count_wins(battles)
     total_l = count_losses(battles)
 
     fields: list[dict] = []
     fields.append({"name": "🏆 総合", "value": f"{total_w}勝{total_l}敗 ({_win_rate(battles)})", "inline": True})
-
     if ranked:
         rw = count_wins(ranked)
         rl = count_losses(ranked)
@@ -407,31 +395,51 @@ def build_weekly_embed(
     if net_rating is not None:
         sign = "+" if net_rating >= 0 else ""
         fields.append({"name": "📈 レーティング変動", "value": f"{sign}{net_rating}", "inline": True})
+    return fields
 
+
+def _build_period_stats_bottom(battles: list[Battle], power_label: str) -> list[dict]:
+    """週次・月次 Embed の共通下部フィールド（最多キャラ〜対戦成績）を構築する。"""
+    top_chara, top_chara_count = get_most_common(battles, "my_chara")
+    top_opp,   top_opp_count   = get_most_common(battles, "opp_chara")
+
+    fields: list[dict] = []
     fields.append({"name": "🥊 最多使用キャラ", "value": f"{top_chara} ({top_chara_count}戦)", "inline": True})
     fields.append({"name": "🎯 最多対戦相手", "value": f"{top_opp} ({top_opp_count}戦)", "inline": True})
 
-    # レーティングトレンド
     trend = predict_rating_trend(battles)
     if trend:
         slope = trend["slope_per_day"]
         sign  = "+" if slope >= 0 else ""
         fields.append({"name": "📈 レーティングトレンド", "value": f"{sign}{slope:.0f}/日", "inline": True})
 
-    # 週末時点の鉄拳力
     latest = max(battles, key=lambda x: x["battle_at"])
     if latest.get("my_power"):
-        rank_name = RANK_NAMES.get(latest.get("my_rank") or -1, "")
-        power_str = f"{latest['my_power']:,}"
-        field_name = f"💥 週末鉄拳力: {rank_name}" if rank_name else "💥 週末鉄拳力"
+        rank_name  = RANK_NAMES.get(latest.get("my_rank") or -1, "")
+        power_str  = f"{latest['my_power']:,}"
+        field_name = f"💥 {power_label}: {rank_name}" if rank_name else f"💥 {power_label}"
         fields.append({"name": field_name, "value": power_str, "inline": True})
 
-    # 対戦成績
     matrix = _matchup_matrix(battles)
     if matrix:
         matrix_body = "\n".join(matrix.split("\n")[1:])
         fields.append({"name": "📊 対戦成績", "value": matrix_body[:1024], "inline": False})
+    return fields
 
+
+def build_weekly_embed(
+    battles: list[Battle],
+    week_start_str: str,
+    player_name: str | None = None,
+) -> dict | None:
+    """週次サマリーの Embed dict を返す。試合なしの場合は None。LLM コメントは含まない。"""
+    if not battles:
+        return None
+    display_name = player_name or TEKKEN_ID
+    fields = (
+        _build_period_stats_top(battles)
+        + _build_period_stats_bottom(battles, "週末鉄拳力")
+    )
     return {
         "title":  f"📅 {display_name} 週次サマリー（{week_start_str} 週）",
         "color":  _embed_color(battles),
@@ -467,43 +475,17 @@ def build_monthly_embed(
         return None
 
     display_name = player_name or TEKKEN_ID
-    ranked = [b for b in battles if b.get("battle_type") == "ranked"]
-    quick  = [b for b in battles if b.get("battle_type") == "quick"]
+    fields = _build_period_stats_top(battles)
 
-    rated      = filter_rated_battles(ranked)
-    net_rating = sum(b.get("rating_change") or 0 for b in rated) if rated else None
-
-    top_chara, top_chara_count = get_most_common(battles, "my_chara")
-    top_opp,   top_opp_count   = get_most_common(battles, "opp_chara")
-
-    total_w = count_wins(battles)
-    total_l = count_losses(battles)
-
-    fields: list[dict] = []
-    fields.append({"name": "🏆 総合", "value": f"{total_w}勝{total_l}敗 ({_win_rate(battles)})", "inline": True})
-
-    if ranked:
-        rw = count_wins(ranked)
-        rl = count_losses(ranked)
-        fields.append({"name": "📊 ランク", "value": f"{rw}勝{rl}敗 ({_win_rate(ranked)})", "inline": True})
-    if quick:
-        qw = count_wins(quick)
-        ql = count_losses(quick)
-        quick_val = f"{qw}勝{ql}敗 ({_win_rate(quick)})"
-        dist = _quick_rank_distribution(quick)
-        if dist:
-            quick_val += f"\n相手段位: {dist}"
-        fields.append({"name": "⚡ クイック", "value": quick_val, "inline": True})
-    if net_rating is not None:
-        sign = "+" if net_rating >= 0 else ""
-        fields.append({"name": "📈 レーティング変動", "value": f"{sign}{net_rating}", "inline": True})
-
-    # 前月比
+    # 前月比（レーティング変動フィールドの直後に挿入）
     if prev_battles:
-        prev_w = count_wins(prev_battles)
-        prev_l = count_losses(prev_battles)
+        total_w = count_wins(battles)
+        prev_w  = count_wins(prev_battles)
+        prev_l  = count_losses(prev_battles)
         prev_rated = filter_rated_battles([b for b in prev_battles if b.get("battle_type") == "ranked"])
         prev_net   = sum(b.get("rating_change") or 0 for b in prev_rated) if prev_rated else None
+        rated      = filter_rated_battles([b for b in battles if b.get("battle_type") == "ranked"])
+        net_rating = sum(b.get("rating_change") or 0 for b in rated) if rated else None
         win_diff   = total_w - prev_w
         sign_w     = "+" if win_diff >= 0 else ""
         comparison = f"勝利数 {sign_w}{win_diff} | 前月: {prev_w}勝{prev_l}敗"
@@ -513,30 +495,7 @@ def build_monthly_embed(
             comparison += f"\nレーティング差分 {sign_r}{rating_diff}"
         fields.append({"name": "📊 前月比", "value": comparison, "inline": False})
 
-    fields.append({"name": "🥊 最多使用キャラ", "value": f"{top_chara} ({top_chara_count}戦)", "inline": True})
-    fields.append({"name": "🎯 最多対戦相手", "value": f"{top_opp} ({top_opp_count}戦)", "inline": True})
-
-    # レーティングトレンド
-    trend = predict_rating_trend(battles)
-    if trend:
-        slope = trend["slope_per_day"]
-        sign  = "+" if slope >= 0 else ""
-        fields.append({"name": "📈 レーティングトレンド", "value": f"{sign}{slope:.0f}/日", "inline": True})
-
-    # 月末時点の鉄拳力
-    latest = max(battles, key=lambda x: x["battle_at"])
-    if latest.get("my_power"):
-        rank_name  = RANK_NAMES.get(latest.get("my_rank") or -1, "")
-        power_str  = f"{latest['my_power']:,}"
-        field_name = f"💥 月末鉄拳力: {rank_name}" if rank_name else "💥 月末鉄拳力"
-        fields.append({"name": field_name, "value": power_str, "inline": True})
-
-    # 対戦成績
-    matrix = _matchup_matrix(battles)
-    if matrix:
-        matrix_body = "\n".join(matrix.split("\n")[1:])
-        fields.append({"name": "📊 対戦成績", "value": matrix_body[:1024], "inline": False})
-
+    fields += _build_period_stats_bottom(battles, "月末鉄拳力")
     return {
         "title":  f"📅 {display_name} 月次サマリー（{month_str}）",
         "color":  _embed_color(battles),

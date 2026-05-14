@@ -14,7 +14,11 @@ import logging
 from datetime import datetime, timedelta
 import requests
 
-from bot.config import OLLAMA_URL, OLLAMA_MODEL, OLLAMA_FALLBACK_MODEL, TIMEOUT_LLM
+from bot.config import (
+    OLLAMA_URL, OLLAMA_MODEL, OLLAMA_FALLBACK_MODEL, TIMEOUT_LLM,
+    MIN_BATTLES_FOR_STAT, WEAK_CHARA_THRESHOLD, STRONG_CHARA_THRESHOLD,
+    TREND_WIN_RATE_THRESHOLD,
+)
 from bot.models import Battle
 from bot.stats import (
     calculate_streak, aggregate_by_character, count_wins, count_losses,
@@ -116,9 +120,9 @@ def _build_summary_text(stats: dict, date_str: str) -> str:
     if stats["net_rating"] is not None:
         sign = "+" if stats["net_rating"] >= 0 else ""
         lines.append(f"レーティング変動: {sign}{stats['net_rating']}")
-    if stats["max_win"] >= 2:
+    if stats["max_win"] >= MIN_BATTLES_FOR_STAT:
         lines.append(f"最長連勝: {stats['max_win']}")
-    if stats["max_lose"] >= 2:
+    if stats["max_lose"] >= MIN_BATTLES_FOR_STAT:
         lines.append(f"最長連敗: {stats['max_lose']}")
     lines.append("対戦キャラ別成績:")
     lines.extend(stats["matchups"])
@@ -137,17 +141,19 @@ def _compute_coaching_insights(
 
     weak = sorted(
         [(c, sum(r) / len(r) * 100, len(r))
-         for c, r in chara_stats.items() if len(r) >= 2 and sum(r) / len(r) < 0.4],
+         for c, r in chara_stats.items()
+         if len(r) >= MIN_BATTLES_FOR_STAT and sum(r) / len(r) < WEAK_CHARA_THRESHOLD],
         key=lambda x: x[1],
     )
     strong = sorted(
         [(c, sum(r) / len(r) * 100, len(r))
-         for c, r in chara_stats.items() if len(r) >= 2 and sum(r) / len(r) >= 0.7],
+         for c, r in chara_stats.items()
+         if len(r) >= MIN_BATTLES_FOR_STAT and sum(r) / len(r) >= STRONG_CHARA_THRESHOLD],
         key=lambda x: -x[1],
     )
 
     hourly      = aggregate_by_hour(battles)
-    valid_hours = [(h, r) for h, r in hourly.items() if len(r) >= 2]
+    valid_hours = [(h, r) for h, r in hourly.items() if len(r) >= MIN_BATTLES_FOR_STAT]
     best_hour   = max(valid_hours, key=lambda x: sum(x[1]) / len(x[1]), default=None)
     worst_hour  = min(valid_hours, key=lambda x: sum(x[1]) / len(x[1]), default=None)
 
@@ -156,7 +162,7 @@ def _compute_coaching_insights(
         today_wr = count_wins(battles) / len(battles)
         prev_wr  = count_wins(prev_battles) / len(prev_battles)
         diff = today_wr - prev_wr
-        if abs(diff) >= 0.1:
+        if abs(diff) >= TREND_WIN_RATE_THRESHOLD:
             trend = f"前日比{'↑' if diff > 0 else '↓'}{abs(diff) * 100:.0f}pt"
 
     return {
@@ -206,9 +212,9 @@ def _build_battle_data_section(
     if stats["net_rating"] is not None:
         sign = "+" if stats["net_rating"] >= 0 else ""
         lines.append(f"レーティング変動: {sign}{stats['net_rating']}")
-    if stats["max_win"] >= 2:
+    if stats["max_win"] >= MIN_BATTLES_FOR_STAT:
         lines.append(f"最長連勝: {stats['max_win']}")
-    if stats["max_lose"] >= 2:
+    if stats["max_lose"] >= MIN_BATTLES_FOR_STAT:
         lines.append(f"最長連敗: {stats['max_lose']}")
     if insights["trend"]:
         lines.append(f"調子: {insights['trend']}")
