@@ -130,9 +130,15 @@ def init_db() -> None:
                 date_str    TEXT    NOT NULL,
                 player_name TEXT    NOT NULL DEFAULT 'default',
                 score       INTEGER NOT NULL,
-                saved_at    INTEGER NOT NULL
+                saved_at    INTEGER NOT NULL,
+                comment     TEXT
             )
         """)
+        # 既存 DB へのカラム追加（冪等）
+        try:
+            conn.execute("ALTER TABLE llm_eval_scores ADD COLUMN comment TEXT")
+        except Exception:
+            pass
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS monthly_snapshots (
@@ -671,13 +677,31 @@ def clear_goal(player_name: str) -> None:
 # LLM eval score
 # ---------------------------------------------------------------------------
 
-def save_llm_eval_score(date_str: str, player_name: str, score: int) -> None:
+def save_llm_eval_score(
+    date_str: str, player_name: str, score: int, comment: str | None = None
+) -> None:
     """LLM コメントの評価スコアを保存する。"""
     with get_conn() as conn:
         conn.execute(
-            "INSERT INTO llm_eval_scores (date_str, player_name, score, saved_at) VALUES (?, ?, ?, ?)",
-            (date_str, player_name, score, int(datetime.now(timezone.utc).timestamp())),
+            "INSERT INTO llm_eval_scores (date_str, player_name, score, saved_at, comment)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (date_str, player_name, score, int(datetime.now(timezone.utc).timestamp()), comment),
         )
+
+
+def get_high_score_comments(
+    player_name: str | None = None, min_score: int = 80, limit: int = 3
+) -> list[str]:
+    """高スコア（min_score 以上）の LLM コメントを新しい順で最大 limit 件返す。"""
+    pf, pp = _player_filter(player_name)
+    with get_conn() as conn:
+        rows = conn.execute(f"""
+            SELECT comment FROM llm_eval_scores
+            WHERE score >= ? AND comment IS NOT NULL {pf}
+            ORDER BY score DESC, saved_at DESC
+            LIMIT ?
+        """, (min_score,) + pp + (limit,)).fetchall()
+    return [r["comment"] for r in rows]
 
 
 def get_llm_eval_scores(player_name: str | None = None, days: int = 30) -> list[dict]:

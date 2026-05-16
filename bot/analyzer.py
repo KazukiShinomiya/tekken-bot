@@ -263,15 +263,30 @@ def _build_insights_section(insights: dict, rematch_data: dict | None) -> str:
     return "\n".join(lines) if lines else "（特記事項なし）"
 
 
-def _build_system_prompt() -> str:
+def _build_dynamic_few_shot(high_score_comments: list[str]) -> str:
+    """高スコアコメントを few-shot の出力例として整形する。"""
+    parts = []
+    for comment in high_score_comments:
+        parts.append(
+            f'<example>\n<output>{{"comment": "{comment}"}}</output>\n</example>'
+        )
+    return "\n".join(parts)
+
+
+def _build_system_prompt(high_score_comments: list[str] | None = None) -> str:
     """
-    コーチとしての役割・Few-shot・制約・出力形式を定義するシステムプロンプト（静的）。
-    全リクエストで共通。
+    コーチとしての役割・Few-shot・制約・出力形式を定義するシステムプロンプト。
+    high_score_comments が渡された場合は DB の高スコア例を優先し、静的定数をフォールバックにする。
     """
+    if high_score_comments:
+        examples = _build_dynamic_few_shot(high_score_comments)
+    else:
+        examples = _FEW_SHOT_EXAMPLES
+
     return f"""あなたは鉄拳8の対戦コーチです。プレイヤーのデータを分析して、具体的で前向きなコーチングコメントを提供します。
 
 <examples>
-{_FEW_SHOT_EXAMPLES}
+{examples}
 </examples>
 
 <constraints>
@@ -319,15 +334,16 @@ def _build_messages(
     player_name: str = "",
     prev_battles: list[Battle] | None = None,
     rematch_data: dict | None = None,
+    high_score_comments: list[str] | None = None,
 ) -> list[dict]:
     """
     Ollama Chat API 用の messages リストを構築する。
 
-      messages[0]: {"role": "system"} — コーチ人格・Few-shot・制約（静的）
+      messages[0]: {"role": "system"} — コーチ人格・Few-shot・制約
       messages[1]: {"role": "user"}   — 今日の戦績・洞察（動的）
     """
     return [
-        {"role": "system", "content": _build_system_prompt()},
+        {"role": "system", "content": _build_system_prompt(high_score_comments)},
         {"role": "user",   "content": _build_user_message(
             battles, date_str, player_name, prev_battles, rematch_data,
         )},
@@ -374,11 +390,13 @@ def analyze(
     player_name: str = "",
     prev_battles: list[Battle] | None = None,
     rematch_data: dict | None = None,
+    high_score_comments: list[str] | None = None,
 ) -> str | None:
     """
     バトルデータをLLMで分析してコメントを返す。
     prev_battles が渡された場合は前日比のコンテキストをプロンプトに含める。
     rematch_data が渡された場合はリピート対戦相手の通算成績をプロンプトに含める。
+    high_score_comments が渡された場合は DB の高スコア例を few-shot に使用する。
     失敗時は None を返す（投稿自体は続行）。
     OLLAMA_FALLBACK_MODEL が設定されている場合、プライマリ失敗時に自動でフォールバック。
     """
@@ -389,6 +407,7 @@ def analyze(
         battles, date_str, player_name,
         prev_battles=prev_battles,
         rematch_data=rematch_data,
+        high_score_comments=high_score_comments,
     )
 
     try:

@@ -370,6 +370,7 @@ def test_run_for_player_happy_path():
         patch("main._fire_alerts"),
         patch("main._fire_rank_alerts"),
         patch("main.discord_post.post", return_value=mock_post_result) as mock_post,
+        patch("bot.db.get_high_score_comments", return_value=[]),
         patch("main._analyze_with_timeout", return_value=None),
         patch("main.discord_post.edit_llm_comment"),
         patch("main.discord_post.notify_error"),
@@ -430,6 +431,7 @@ def test_run_for_player_with_llm_comment():
         patch("main._fire_alerts"),
         patch("main._fire_rank_alerts"),
         patch("main.discord_post.post", return_value=mock_post_result),
+        patch("bot.db.get_high_score_comments", return_value=[]),
         patch("main._analyze_with_timeout", return_value="素晴らしい"),
         patch("main.discord_post.edit_llm_comment") as mock_edit,
         patch("main.discord_post.notify_error"),
@@ -456,6 +458,7 @@ def test_run_for_player_llm_eval_score_saved():
         patch("main._fire_alerts"),
         patch("main._fire_rank_alerts"),
         patch("main.discord_post.post", return_value=mock_post_result),
+        patch("bot.db.get_high_score_comments", return_value=[]),
         patch("main._analyze_with_timeout", return_value="良いコメント"),
         patch("main.discord_post.edit_llm_comment"),
         patch("main.discord_post.notify_error"),
@@ -465,7 +468,7 @@ def test_run_for_player_llm_eval_score_saved():
         _run_for_player("Alice", "pid_alice", "2026-04-10", "2026/04/10")
 
     mock_eval.assert_called_once()
-    mock_save_score.assert_called_once_with("2026-04-10", "Alice", 80)
+    mock_save_score.assert_called_once_with("2026-04-10", "Alice", 80, "良いコメント")
 
 
 def test_run_for_player_fetch_error_posts_error():
@@ -516,6 +519,7 @@ def test_run_for_player_with_quick_battles():
         patch("main._fire_alerts"),
         patch("main._fire_rank_alerts"),
         patch("main.discord_post.post", return_value=mock_post_result),
+        patch("bot.db.get_high_score_comments", return_value=[]),
         patch("main._analyze_with_timeout", return_value=None),
         patch("main.discord_post.edit_llm_comment"),
         patch("main.discord_post.notify_error"),
@@ -539,6 +543,7 @@ def test_run_for_player_post_discord_exception():
         patch("main._fire_alerts"),
         patch("main._fire_rank_alerts"),
         patch("main.discord_post.post", side_effect=RuntimeError("webhook error")),
+        patch("bot.db.get_high_score_comments", return_value=[]),
         patch("main._analyze_with_timeout", return_value=None),
         patch("main.discord_post.edit_llm_comment"),
         patch("main.discord_post.notify_error"),
