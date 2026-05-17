@@ -708,9 +708,13 @@ def edit_llm_comment(
     チャート添付ファイルを保持するため GET → PATCH の順で処理する。
     失敗しても例外は出さない。
     """
+    import time as _time
+
     original_desc = embed.get("description", "")
     llm_block = f"💬 {llm_comment}\n\n"
     updated = {**embed, "description": (llm_block + original_desc)[:4096]}
+    get_timeout = max(TIMEOUT_WEBHOOK * 3, 30)  # GET は余裕を持って
+
     for message_id, webhook_url in message_ids:
         parts = _parse_webhook_id_token(webhook_url)
         if not parts:
@@ -718,14 +722,25 @@ def edit_llm_comment(
         webhook_id, token = parts
         msg_url = f"https://discord.com/api/webhooks/{webhook_id}/{token}/messages/{message_id}"
 
-        # 既存の添付ファイル ID を保持するため現在のメッセージを取得
+        # 既存の添付ファイル ID を保持するため現在のメッセージを取得（最大3回リトライ）
         attachments: list[dict] = []
-        try:
-            get_resp = _webhook_session.get(msg_url, timeout=TIMEOUT_WEBHOOK)
-            get_resp.raise_for_status()
-            attachments = get_resp.json().get("attachments", [])
-        except requests.RequestException as e:
-            logger.warning(f"[discord_post] メッセージ取得失敗（添付ファイルなしで続行）: {e}")
+        get_ok = False
+        for attempt in range(3):
+            try:
+                get_resp = _webhook_session.get(msg_url, timeout=get_timeout)
+                get_resp.raise_for_status()
+                attachments = get_resp.json().get("attachments", [])
+                get_ok = True
+                break
+            except requests.RequestException as e:
+                if attempt < 2:
+                    logger.warning(f"[discord_post] メッセージ取得リトライ ({attempt + 1}/3): {e}")
+                    _time.sleep(5)
+                else:
+                    logger.warning(f"[discord_post] メッセージ取得失敗（3回失敗、スキップ）: {e}")
+
+        if not get_ok:
+            continue  # attachment ID 不明のまま PATCH すると description が反映されない場合がある
 
         patch_body: dict = {"embeds": [updated]}
         if attachments:
@@ -734,6 +749,15 @@ def edit_llm_comment(
         try:
             resp = _webhook_session.patch(msg_url, json=patch_body, timeout=TIMEOUT_WEBHOOK)
             resp.raise_for_status()
-            logger.info("[discord_post] LLMコメントを Embed に追記しました。")
+            # レスポンスで description が反映されたか確認
+            resp_embeds = resp.json().get("embeds", [{}])
+            applied_desc = resp_embeds[0].get("description", "") if resp_embeds else ""
+            if llm_block[:20] in applied_desc:
+                logger.info("[discord_post] LLMコメントを Embed に追記しました。")
+            else:
+                logger.warning(
+                    f"[discord_post] LLMコメント追記: PATCH 200 だが description 未反映。"
+                    f"applied={applied_desc[:80]!r}"
+                )
         except requests.RequestException as e:
             logger.warning(f"[discord_post] LLMコメント追記失敗: {e}")

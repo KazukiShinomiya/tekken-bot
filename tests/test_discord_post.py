@@ -967,24 +967,21 @@ def test_edit_llm_comment_skips_invalid_url():
     mock_sess.patch.assert_not_called()
 
 
-def test_edit_llm_comment_ignores_get_error():
-    """GET が失敗しても PATCH を続行（添付なしで処理）。"""
+def test_edit_llm_comment_skips_patch_on_get_error():
+    """GET が3回すべて失敗した場合は PATCH をスキップする（attachment 不明のまま PATCH すると description が反映されない）。"""
     import requests
     get_resp = MagicMock()
     get_resp.raise_for_status.side_effect = requests.RequestException("timeout")
 
-    patch_resp = MagicMock()
-    patch_resp.raise_for_status.return_value = None
-
     message_ids = [("msg123", "https://discord.com/api/webhooks/1/tok")]
     embed = {"title": "test", "color": 0}
 
-    with patch("bot.discord_post._webhook_session") as mock_sess:
-        mock_sess.get.return_value   = get_resp
-        mock_sess.patch.return_value = patch_resp
+    with patch("bot.discord_post._webhook_session") as mock_sess, \
+         patch("time.sleep"):
+        mock_sess.get.return_value = get_resp
         edit_llm_comment(message_ids, embed, "コメント")
 
-    mock_sess.patch.assert_called_once()
+    mock_sess.patch.assert_not_called()
 
 
 def test_edit_llm_comment_ignores_patch_error():
