@@ -17,7 +17,7 @@ from bot.config import (
     TIMEOUT_WEBHOOK, TIMEOUT_WEBHOOK_IMAGE, JST,
     DISCORD_EMBED_MAX_FIELDS,
     RETRY_TOTAL, RETRY_BACKOFF_FACTOR,
-    RANK_NAMES, UNKNOWN_CHARACTER,
+    RANK_NAMES, RANK_NAMES_EN, UNKNOWN_CHARACTER,
     WIN_RATE_THRESHOLD, EMBED_COLOR_GOOD_WR, EMBED_COLOR_BAD_WR,
     SCOUT_TREND_THRESHOLD,
 )
@@ -54,6 +54,15 @@ def _parse_webhook_id_token(url: str) -> tuple[str, str] | None:
 # ---------------------------------------------------------------------------
 # スタッツ計算
 # ---------------------------------------------------------------------------
+
+def _rank_name(rank_id: int | str | None) -> str:
+    """整数または英語文字列の rank_id を日本語段位名に変換する。"""
+    if rank_id is None:
+        return ""
+    if isinstance(rank_id, int):
+        return RANK_NAMES.get(rank_id, "")
+    return RANK_NAMES_EN.get(rank_id, rank_id)
+
 
 def _win_rate(battles: list[Battle]) -> str:
     if not battles:
@@ -177,7 +186,7 @@ def _opp_rank_label(battle: Battle) -> str:
     rank_id = battle.get("opp_rank")
     if rank_id is None:
         return ""
-    name = RANK_NAMES.get(rank_id, "")
+    name = _rank_name(rank_id)
     return f"({name})" if name else ""
 
 
@@ -203,7 +212,7 @@ def _quick_rank_chara_matrix(battles: list[Battle]) -> str | None:
     lines = []
     for rank_id in sorted(groups.keys(), reverse=True):
         chara_stats = groups[rank_id]
-        rank_name   = RANK_NAMES.get(rank_id, f"Rank{rank_id}")
+        rank_name   = _rank_name(rank_id) or f"Rank{rank_id}"
         rank_total  = sum(len(v) for v in chara_stats.values())
         rank_wins   = sum(sum(v) for v in chara_stats.values())
         rank_wr     = f"{rank_wins / rank_total * 100:.0f}%"
@@ -225,7 +234,7 @@ def _quick_rank_distribution(quick_battles: list[Battle]) -> str:
     for b in quick_battles:
         rank_id = b.get("opp_rank")
         if rank_id is not None:
-            name = RANK_NAMES.get(rank_id, rank_id if isinstance(rank_id, str) else f"Rank{rank_id}")
+            name = _rank_name(rank_id) or (rank_id if isinstance(rank_id, str) else f"Rank{rank_id}")
             counts[name] += 1
     if not counts:
         return ""
@@ -333,7 +342,7 @@ def build_embed(
     # 鉄拳力
     latest = max(battles, key=lambda x: x["battle_at"])
     if latest.get("my_power"):
-        rank_name = RANK_NAMES.get(latest.get("my_rank") or -1, "")
+        rank_name = _rank_name(latest.get("my_rank"))
         power_str = f"{latest['my_power']:,}"
         field_name = f"💥 {rank_name}" if rank_name else "💥 鉄拳力"
         fields.append({"name": field_name, "value": power_str, "inline": True})
