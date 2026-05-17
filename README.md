@@ -145,15 +145,21 @@ battles: battle_type, game_version, stage_id,
 
 「今は使わないが将来役に立つかもしれないデータ」を捨てない設計。ローカルLLMへの入力素材としても活用できる。
 
-### 4. ARM64 上のローカルLLM
+### 4. ARM64 上のローカルLLM（+ Gemini フォールバック）
 
-自宅サーバー（Raspberry Pi 系、8GB RAM）で Ollama を動かし、**外部APIに一切頼らず** 日本語コメントを生成する。
+自宅サーバー（Raspberry Pi 系、8GB RAM）で Ollama を動かし、**基本的には外部API不要** で日本語コメントを生成する。
 
 - モデル: `qwen2.5:7b`（Apache 2.0、商用利用可）
 - 推論速度: 約100〜120秒（CPU のみ）
 - Docker コンテナからは `network_mode: host` で localhost に直接接続
 
 毎日1回しか動かないボットなので、CPUの遅さは問題にならない。
+
+Ollama が完全に応答しない場合のみ、**Gemini 2.0 Flash**（無料枠）を最終フォールバックとして使用する（`GEMINI_API_KEY` 設定時のみ有効）。フォールバック順:
+
+```
+gemma3:4b（プライマリ）→ OLLAMA_FALLBACK_MODEL → Gemini 2.0 Flash → コメントなし
+```
 
 ### 5. LLM コーチングモード（ハルシネーション抑止 + 自動評価）
 
@@ -194,6 +200,7 @@ RivalPlayer(Reina) 直近50戦 勝率58% | 直近10戦 7勝 (70%) ↑
 - wank.wavu.wiki の Polaris ID（プロフィールURLから確認）
 - （任意）ewgf.gg API Key
 - （任意）Ollama + qwen2.5:7b
+- （任意）Gemini API Key（Ollama 完全失敗時のフォールバック。[取得先](https://aistudio.google.com/apikey)）
 
 ### .env 設定
 
@@ -216,6 +223,10 @@ RATING_GOAL=200000   # 目標レーティング（/tekken goal でも設定可�
 # オプション: エラー専用 Webhook（API 障害・DB エラーを別チャンネルに通知）
 # 未設定の場合は DISCORD_WEBHOOK_URL に通知される
 # DISCORD_ERROR_WEBHOOK_URL=https://discord.com/api/webhooks/...
+
+# オプション: Gemini（Ollama 完全失敗時の最終フォールバック、無料枠あり）
+# GEMINI_API_KEY=your_gemini_api_key_here
+# GEMINI_MODEL=gemini-2.0-flash
 ```
 
 ### ローカルで実行
@@ -298,7 +309,7 @@ tekken_bot/
 │   ├── analyzer.py      # ローカル LLM 分析（Ollama）
 │   ├── evaluator.py     # LLM コメント品質自動評価（0-100点、ハルシネーション検出）
 │   └── slash_commands.py  # Discord スラッシュコマンド（14コマンド）
-├── tests/               # pytest テストスイート（549テスト）
+├── tests/               # pytest テストスイート（556テスト）
 ├── tools/
 │   ├── check_ewgf.py    # ewgf.gg API 疎通確認
 │   └── check_stages.py  # DB 内の stage_id 一覧表示（STAGE_NAMES 補完用）
