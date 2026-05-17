@@ -58,8 +58,28 @@ RATING_GOAL = int(os.getenv("RATING_GOAL", "0"))  # 0=無効
 
 STAGE_NAMES: dict[int, str] = {
     # wank.wavu.wiki の stage_id → Tekken 8 ステージ名
-    # 実データで確認できた ID のみ記載。不明 ID は "Stage #N" にフォールバック。
-    # 実際の対戦ログで ID が判明したら随時追記してください。
+    # 出典: github.com/elgonio/TK8-thing/blob/master/enums.py
+    # X01 は X00 の昼夜バリアント（例: Arena Underground = Arena の夜版）
+    100:  "Arena",
+    101:  "Arena Underground",
+    200:  "Urban Square",
+    201:  "Urban Square Evening",
+    300:  "Yakushima",
+    400:  "Coliseum of Fate",
+    500:  "Rebel Hangar",
+    # 600: 未確認（DB に1件あり。対戦ログと照合して特定後に更新してください）
+    700:  "Fallen Destiny",
+    # 800: 対戦なし（未確認）
+    900:  "Descent into Subconscious",
+    1000: "Sanctum",
+    1100: "Into the Stratosphere",
+    1200: "Ortiz Farm",
+    1300: "Celebration on the Seine",
+    1400: "Secluded Training Ground",
+    1500: "Elegant Palace",
+    1600: "Midnight Siege",
+    # 1700, 1800/1801, 1900, 2200: Season 2/3 DLC ステージ（未確認）
+    # 対戦日時を wank.wavu.wiki の履歴と照合して特定後に追記してください
 }
 
 

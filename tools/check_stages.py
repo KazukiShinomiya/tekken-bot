@@ -21,8 +21,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import sqlite3
-from bot.config import DB_PATH, STAGE_NAMES, CHARA_NAMES
-from bot import fetcher  # CHARA_NAMES との参照用
+from bot.config import DB_PATH, STAGE_NAMES
+from bot import fetcher
 
 
 def main() -> None:
@@ -35,8 +35,7 @@ def main() -> None:
 
     # stage_id ごとの集計
     rows = conn.execute("""
-        SELECT stage_id, COUNT(*) AS total,
-               SUM(CASE WHEN result = 1 THEN 1 ELSE 0 END) AS wins
+        SELECT stage_id, COUNT(*) AS total, SUM(won) AS wins
         FROM battles
         WHERE stage_id IS NOT NULL
         GROUP BY stage_id
@@ -62,7 +61,7 @@ def main() -> None:
         for r in rows:
             sid = r["stage_id"]
             samples = conn.execute("""
-                SELECT battle_at, my_chara, opp_chara, result
+                SELECT battle_at, my_chara, opp_chara, won
                 FROM battles
                 WHERE stage_id = ?
                 ORDER BY battle_at DESC
@@ -72,7 +71,7 @@ def main() -> None:
             name = STAGE_NAMES.get(sid, f"Stage #{sid}")
             print(f"\n[{name}] stage_id={sid}")
             for s in samples:
-                result_str = "勝" if s["result"] == 1 else "負"
+                result_str = "勝" if s["won"] == 1 else "負"
                 my_c   = fetcher.CHARA_NAMES.get(s["my_chara"],  f"#{s['my_chara']}")
                 opp_c  = fetcher.CHARA_NAMES.get(s["opp_chara"], f"#{s['opp_chara']}")
                 print(f"  {s['battle_at']}  {my_c} vs {opp_c}  {result_str}")
