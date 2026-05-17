@@ -16,7 +16,7 @@ import requests
 
 from bot.config import (
     OLLAMA_URL, OLLAMA_MODEL, OLLAMA_FALLBACK_MODEL, TIMEOUT_LLM,
-    GEMINI_API_KEY, GEMINI_MODEL,
+    GEMINI_API_KEY, GEMINI_MODEL, GEMINI_FIRST,
     MIN_BATTLES_FOR_STAT, WEAK_CHARA_THRESHOLD, STRONG_CHARA_THRESHOLD,
     TREND_WIN_RATE_THRESHOLD,
 )
@@ -423,11 +423,8 @@ def analyze(
 ) -> str | None:
     """
     バトルデータをLLMで分析してコメントを返す。
-    prev_battles が渡された場合は前日比のコンテキストをプロンプトに含める。
-    rematch_data が渡された場合はリピート対戦相手の通算成績をプロンプトに含める。
-    high_score_comments が渡された場合は DB の高スコア例を few-shot に使用する。
+    GEMINI_FIRST=true の場合は Gemini → Ollama の順で試みる（デフォルトは Ollama 優先）。
     失敗時は None を返す（投稿自体は続行）。
-    OLLAMA_FALLBACK_MODEL が設定されている場合、プライマリ失敗時に自動でフォールバック。
     """
     if not battles:
         return None
@@ -438,28 +435,30 @@ def analyze(
         rematch_data=rematch_data,
         high_score_comments=high_score_comments,
     )
+    sys_prompt = messages[0]["content"]
+    user_msg   = messages[1]["content"]
 
-    try:
-        comment = _call_ollama(OLLAMA_MODEL, messages)
-        logger.info(f"[analyzer] LLM分析完了({OLLAMA_MODEL}): {len(comment or '')}文字")
-        return comment
-    except requests.RequestException as e:
-        logger.warning(f"[analyzer] プライマリモデル失敗({OLLAMA_MODEL}): {e}")
-
+    # フォールバックチェーン: (ラベル, callable, キャッチする例外型)
+    ollama_chain = [
+        (OLLAMA_MODEL, lambda: _call_ollama(OLLAMA_MODEL, messages), requests.RequestException),
+    ]
     if OLLAMA_FALLBACK_MODEL:
-        try:
-            comment = _call_ollama(OLLAMA_FALLBACK_MODEL, messages)
-            logger.info(f"[analyzer] フォールバックモデル成功({OLLAMA_FALLBACK_MODEL}): {len(comment or '')}文字")
-            return comment
-        except requests.RequestException as e:
-            logger.warning(f"[analyzer] フォールバックモデルも失敗({OLLAMA_FALLBACK_MODEL}): {e}")
+        fb = OLLAMA_FALLBACK_MODEL
+        ollama_chain.append((fb, lambda: _call_ollama(fb, messages), requests.RequestException))
 
+    gemini_chain = []
     if GEMINI_API_KEY:
+        gemini_chain.append(("Gemini", lambda: _call_gemini(sys_prompt, user_msg), Exception))
+
+    chain = gemini_chain + ollama_chain if GEMINI_FIRST else ollama_chain + gemini_chain
+
+    for label, call, exc_type in chain:
         try:
-            comment = _call_gemini(messages[0]["content"], messages[1]["content"])
-            logger.info(f"[analyzer] Gemini フォールバック成功: {len(comment or '')}文字")
-            return comment
-        except Exception as e:
-            logger.warning(f"[analyzer] Gemini フォールバック失敗: {e}")
+            comment = call()
+            if comment:
+                logger.info(f"[analyzer] {label} 成功: {len(comment)}文字")
+                return comment
+        except exc_type as e:
+            logger.warning(f"[analyzer] {label} 失敗: {e}")
 
     return None

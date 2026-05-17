@@ -41,6 +41,8 @@ OLLAMA_FALLBACK_MODEL = os.getenv("OLLAMA_FALLBACK_MODEL", "")
 # 無料枠: 15 RPM / 1M tokens/day。未設定=Gemini フォールバック無効。
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL   = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+# true/1/yes を設定すると Gemini を優先し、Ollama をフォールバックにする（評価・比較用）
+GEMINI_FIRST   = os.getenv("GEMINI_FIRST", "").lower() in ("1", "true", "yes")
 
 # ── ストレージ・ログ ──────────────────────────────────────────────────────────
 DB_PATH  = Path(os.getenv("DB_PATH", str(Path(__file__).parent / "battles.db")))

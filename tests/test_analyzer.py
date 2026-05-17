@@ -627,3 +627,34 @@ def test_analyze_returns_none_when_gemini_also_fails():
     ):
         result = analyze(battles, "2024/01/15", "TestPlayer")
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# analyze — GEMINI_FIRST フラグ
+# ---------------------------------------------------------------------------
+
+def test_analyze_gemini_first_calls_gemini_before_ollama():
+    """GEMINI_FIRST=True のとき Gemini が最初に呼ばれ、成功すれば Ollama は呼ばれない。"""
+    battles = [_ranked_battle()]
+    with (
+        patch("bot.analyzer.GEMINI_FIRST", True),
+        patch("bot.analyzer.GEMINI_API_KEY", "test-key"),
+        patch("bot.analyzer._call_gemini", return_value="Gemini優先コメント"),
+        patch("bot.analyzer._call_ollama") as mock_ollama,
+    ):
+        result = analyze(battles, "2024/01/15", "TestPlayer")
+    assert result == "Gemini優先コメント"
+    mock_ollama.assert_not_called()
+
+
+def test_analyze_gemini_first_falls_back_to_ollama_on_failure():
+    """GEMINI_FIRST=True で Gemini 失敗 → Ollama にフォールバック。"""
+    battles = [_ranked_battle()]
+    with (
+        patch("bot.analyzer.GEMINI_FIRST", True),
+        patch("bot.analyzer.GEMINI_API_KEY", "test-key"),
+        patch("bot.analyzer._call_gemini", side_effect=Exception("gemini fail")),
+        patch("requests.post", return_value=_ollama_resp("Ollama代替コメント")),
+    ):
+        result = analyze(battles, "2024/01/15", "TestPlayer")
+    assert result == "Ollama代替コメント"
