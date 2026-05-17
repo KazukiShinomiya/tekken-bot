@@ -37,6 +37,11 @@ OLLAMA_MODEL          = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
 # 例: OLLAMA_FALLBACK_MODEL=gemma3:4b  または  phi4
 OLLAMA_FALLBACK_MODEL = os.getenv("OLLAMA_FALLBACK_MODEL", "")
 
+# ── Gemini（Ollama 完全失敗時の最終フォールバックLLM） ───────────────────────────
+# 無料枠: 15 RPM / 1M tokens/day。未設定=Gemini フォールバック無効。
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL   = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+
 # ── ストレージ・ログ ──────────────────────────────────────────────────────────
 DB_PATH  = Path(os.getenv("DB_PATH", str(Path(__file__).parent / "battles.db")))
 LOG_PATH = os.getenv("LOG_PATH", "data/tekken_bot.log")

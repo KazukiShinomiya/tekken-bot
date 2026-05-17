@@ -16,6 +16,7 @@ import requests
 
 from bot.config import (
     OLLAMA_URL, OLLAMA_MODEL, OLLAMA_FALLBACK_MODEL, TIMEOUT_LLM,
+    GEMINI_API_KEY, GEMINI_MODEL,
     MIN_BATTLES_FOR_STAT, WEAK_CHARA_THRESHOLD, STRONG_CHARA_THRESHOLD,
     TREND_WIN_RATE_THRESHOLD,
 )
@@ -384,6 +385,34 @@ def _call_ollama(model: str, messages: list[dict]) -> str | None:
         return raw or None
 
 
+def _call_gemini(system_prompt: str, user_message: str) -> str | None:
+    """Gemini API でコーチングコメントを生成する（Ollama 完全失敗時の最終フォールバック）。"""
+    from google import genai  # 遅延インポート（未インストール環境でも起動可）
+
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    response = client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=user_message,
+        config=genai.types.GenerateContentConfig(
+            system_instruction=system_prompt,
+            response_mime_type="application/json",
+            temperature=0.7,
+            max_output_tokens=300,
+        ),
+    )
+    raw = (response.text or "").strip()
+    if not raw:
+        return None
+
+    try:
+        data = json.loads(raw)
+        comment = data.get("comment", "").strip()
+        return comment or None
+    except (json.JSONDecodeError, AttributeError):
+        logger.warning("[analyzer] Gemini JSON解析失敗、生テキストにフォールバック")
+        return raw or None
+
+
 def analyze(
     battles: list[Battle],
     date_str: str,
@@ -424,5 +453,13 @@ def analyze(
             return comment
         except requests.RequestException as e:
             logger.warning(f"[analyzer] フォールバックモデルも失敗({OLLAMA_FALLBACK_MODEL}): {e}")
+
+    if GEMINI_API_KEY:
+        try:
+            comment = _call_gemini(messages[0]["content"], messages[1]["content"])
+            logger.info(f"[analyzer] Gemini フォールバック成功: {len(comment or '')}文字")
+            return comment
+        except Exception as e:
+            logger.warning(f"[analyzer] Gemini フォールバック失敗: {e}")
 
     return None

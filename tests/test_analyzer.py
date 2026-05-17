@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 from bot.analyzer import (
     _build_messages, _build_system_prompt, _build_user_message,
     _compute_coaching_insights,
-    _build_summary_text, _build_rematch_section, _call_ollama, analyze,
+    _build_summary_text, _build_rematch_section, _call_ollama, _call_gemini, analyze,
 )
 
 
@@ -518,3 +518,112 @@ def test_build_system_prompt_no_player_specific_data():
     """システムプロンプトにプレイヤー固有データ（ExodusOverseer）は含まれない。"""
     prompt = _build_system_prompt()
     assert "ExodusOverseer" not in prompt
+
+
+# ---------------------------------------------------------------------------
+# _call_gemini
+# ---------------------------------------------------------------------------
+
+def _gemini_client_mock(comment_text: str) -> MagicMock:
+    """google.genai.Client モックを返す。"""
+    import json
+    mock_response = MagicMock()
+    mock_response.text = json.dumps({"comment": comment_text})
+    mock_client = MagicMock()
+    mock_client.models.generate_content.return_value = mock_response
+    return mock_client
+
+
+def test_call_gemini_returns_comment():
+    """Gemini API が正常な JSON を返した場合に comment を抽出して返す。"""
+    mock_client = _gemini_client_mock("Geminiコメント")
+    with (
+        patch("bot.analyzer.GEMINI_API_KEY", "test-key"),
+        patch("google.genai.Client", return_value=mock_client),
+    ):
+        result = _call_gemini("system prompt", "user message")
+    assert result == "Geminiコメント"
+
+
+def test_call_gemini_fallback_on_invalid_json():
+    """JSON 解析失敗時は生テキストにフォールバックして返す。"""
+    mock_response = MagicMock()
+    mock_response.text = "これはJSONではない"
+    mock_client = MagicMock()
+    mock_client.models.generate_content.return_value = mock_response
+    with (
+        patch("bot.analyzer.GEMINI_API_KEY", "test-key"),
+        patch("google.genai.Client", return_value=mock_client),
+    ):
+        result = _call_gemini("system prompt", "user message")
+    assert result == "これはJSONではない"
+
+
+def test_call_gemini_returns_none_for_empty_response():
+    """空レスポンスは None を返す。"""
+    mock_response = MagicMock()
+    mock_response.text = ""
+    mock_client = MagicMock()
+    mock_client.models.generate_content.return_value = mock_response
+    with (
+        patch("bot.analyzer.GEMINI_API_KEY", "test-key"),
+        patch("google.genai.Client", return_value=mock_client),
+    ):
+        result = _call_gemini("system prompt", "user message")
+    assert result is None
+
+
+def test_call_gemini_raises_on_api_error():
+    """API エラー時は例外を再送出する。"""
+    mock_client = MagicMock()
+    mock_client.models.generate_content.side_effect = Exception("API error")
+    with (
+        patch("bot.analyzer.GEMINI_API_KEY", "test-key"),
+        patch("google.genai.Client", return_value=mock_client),
+    ):
+        with pytest.raises(Exception):
+            _call_gemini("system prompt", "user message")
+
+
+# ---------------------------------------------------------------------------
+# analyze — Gemini フォールバック統合テスト
+# ---------------------------------------------------------------------------
+
+def test_analyze_gemini_fallback_when_both_ollama_fail():
+    """Ollama 両モデル失敗 + GEMINI_API_KEY あり → Gemini が成功してコメントを返す。"""
+    battles = [_ranked_battle()]
+    with (
+        patch("bot.analyzer.OLLAMA_FALLBACK_MODEL", "fallback_model"),
+        patch("bot.analyzer.GEMINI_API_KEY", "test-key"),
+        patch("requests.post", side_effect=requests.RequestException("all ollama fail")),
+        patch("bot.analyzer._call_gemini", return_value="Geminiコメント"),
+    ):
+        result = analyze(battles, "2024/01/15", "TestPlayer")
+    assert result == "Geminiコメント"
+
+
+def test_analyze_gemini_not_called_without_api_key():
+    """GEMINI_API_KEY 未設定では Ollama 失敗後も Gemini は呼ばれない。"""
+    battles = [_ranked_battle()]
+    with (
+        patch("bot.analyzer.OLLAMA_FALLBACK_MODEL", "fallback_model"),
+        patch("bot.analyzer.GEMINI_API_KEY", ""),
+        patch("requests.post", side_effect=requests.RequestException("all ollama fail")),
+        patch("bot.analyzer._call_gemini") as mock_gemini,
+    ):
+        result = analyze(battles, "2024/01/15", "TestPlayer")
+    assert result is None
+    mock_gemini.assert_not_called()
+
+
+def test_analyze_returns_none_when_gemini_also_fails():
+    """Ollama 両モデル + Gemini すべて失敗 → None。"""
+    battles = [_ranked_battle()]
+    with (
+        patch("bot.analyzer.OLLAMA_FALLBACK_MODEL", "fallback_model"),
+        patch("bot.analyzer.GEMINI_API_KEY", "test-key"),
+        patch("requests.post", side_effect=requests.RequestException("all ollama fail")),
+        patch("bot.analyzer._call_gemini", side_effect=Exception("gemini fail")),
+    ):
+        result = analyze(battles, "2024/01/15", "TestPlayer")
+    assert result is None
