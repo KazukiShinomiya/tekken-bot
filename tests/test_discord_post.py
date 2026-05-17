@@ -701,10 +701,11 @@ def test_notify_posts_message():
 
 
 def test_notify_error_prepends_warning():
-    """notify_error → ⚠️ プレフィックス付きで notify が呼ばれる。"""
+    """notify_error → ⚠️ プレフィックス付きで投稿される（ERROR_WEBHOOK_URLS 未設定時は WEBHOOK_URLS へ）。"""
     mock_resp = MagicMock()
     with (
         patch("bot.discord_post._webhook_session") as mock_sess,
+        patch("bot.discord_post.ERROR_WEBHOOK_URLS", []),
         patch("bot.discord_post.WEBHOOK_URLS", ["https://discord.com/api/webhooks/1/token"]),
     ):
         mock_sess.post.return_value = mock_resp
@@ -712,6 +713,22 @@ def test_notify_error_prepends_warning():
     call_kwargs = mock_sess.post.call_args[1]
     assert "⚠️" in call_kwargs["json"]["content"]
     assert "エラーメッセージ" in call_kwargs["json"]["content"]
+
+
+def test_notify_error_uses_error_webhook_when_set():
+    """notify_error → ERROR_WEBHOOK_URLS が設定されていればそちらへ投稿する。"""
+    error_url  = "https://discord.com/api/webhooks/error/token"
+    normal_url = "https://discord.com/api/webhooks/normal/token"
+    mock_resp = MagicMock()
+    with (
+        patch("bot.discord_post._webhook_session") as mock_sess,
+        patch("bot.discord_post.ERROR_WEBHOOK_URLS", [error_url]),
+        patch("bot.discord_post.WEBHOOK_URLS", [normal_url]),
+    ):
+        mock_sess.post.return_value = mock_resp
+        notify_error("エラーメッセージ")
+    posted_url = mock_sess.post.call_args[0][0]
+    assert posted_url == error_url
 
 
 def test_notify_ignores_request_exception():

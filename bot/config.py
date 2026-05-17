@@ -16,6 +16,11 @@ WEBHOOK_URLS: list[str] = [
 DISCORD_BOT_TOKEN   = os.getenv("DISCORD_BOT_TOKEN")
 # ギルドIDを設定するとスラッシュコマンドが即時反映（未設定=グローバル同期、最大1時間）
 DISCORD_GUILD_ID    = os.getenv("DISCORD_GUILD_ID")
+# エラー専用 Webhook。設定するとエラー通知が別チャンネルに届く（未設定=WEBHOOK_URLS に fallback）
+DISCORD_ERROR_WEBHOOK_URL = os.getenv("DISCORD_ERROR_WEBHOOK_URL")
+ERROR_WEBHOOK_URLS: list[str] = [
+    u.strip() for u in (DISCORD_ERROR_WEBHOOK_URL or "").split(",") if u.strip()
+]
 
 # ── プレイヤー設定 ─────────────────────────────────────────────────────────
 TEKKEN_ID  = os.getenv("TEKKEN_ID", "")

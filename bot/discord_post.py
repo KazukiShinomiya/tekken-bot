@@ -13,7 +13,7 @@ from typing import Any
 from urllib3.util.retry import Retry
 
 from bot.config import (
-    WEBHOOK_URLS, TEKKEN_ID,
+    WEBHOOK_URLS, ERROR_WEBHOOK_URLS, TEKKEN_ID,
     TIMEOUT_WEBHOOK, TIMEOUT_WEBHOOK_IMAGE, JST,
     DISCORD_EMBED_MAX_FIELDS,
     RETRY_TOTAL, RETRY_BACKOFF_FACTOR,
@@ -609,8 +609,15 @@ def notify(message: str) -> None:
 
 
 def notify_error(message: str) -> None:
-    """エラーを Discord Webhook に通知する。失敗しても例外は出さない。"""
-    notify(f"⚠️ {message}")
+    """エラーを Discord Webhook に通知する。失敗しても例外は出さない。
+    DISCORD_ERROR_WEBHOOK_URL が設定されていればそちらへ、未設定なら通常チャンネルへ。
+    """
+    targets = ERROR_WEBHOOK_URLS or WEBHOOK_URLS
+    for url in targets:
+        try:
+            _webhook_session.post(url, json={"content": f"⚠️ {message}"}, timeout=TIMEOUT_WEBHOOK)
+        except requests.RequestException as e:
+            logger.warning(f"[discord_post] エラー通知失敗: {e}")
 
 
 def post(
