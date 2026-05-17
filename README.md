@@ -212,6 +212,10 @@ OLLAMA_URL=http://localhost:11434
 OLLAMA_MODEL=qwen2.5:7b
 LOG_PATH=/app/data/tekken_bot.log
 RATING_GOAL=200000   # 目標レーティング（/tekken goal でも設定可）
+
+# オプション: エラー専用 Webhook（API 障害・DB エラーを別チャンネルに通知）
+# 未設定の場合は DISCORD_WEBHOOK_URL に通知される
+# DISCORD_ERROR_WEBHOOK_URL=https://discord.com/api/webhooks/...
 ```
 
 ### ローカルで実行
@@ -254,7 +258,7 @@ Discord Bot Token を設定することで、以下のスラッシュコマン�
 | `/tekken rival <name>` | ライバルの詳細分析（使用キャラ・累積レーティング・連続傾向） |
 | `/tekken chara <name>` | 特定キャラとの対戦成績（オートコンプリート対応） |
 | `/tekken top` | キャラ別対戦成績ランキング（全期間、試合数順） |
-| `/tekken stage` | ステージ別勝率一覧 |
+| `/tekken stage` | ステージ別勝率一覧（Arena / Fallen Destiny 等、名称付きで表示） |
 | `/tekken filter [chara] [date] [days]` | バトルログをキャラ名・日付で絞り込んで表示 |
 
 ### 🏆 記録・目標
@@ -294,7 +298,10 @@ tekken_bot/
 │   ├── analyzer.py      # ローカル LLM 分析（Ollama）
 │   ├── evaluator.py     # LLM コメント品質自動評価（0-100点、ハルシネーション検出）
 │   └── slash_commands.py  # Discord スラッシュコマンド（14コマンド）
-├── tests/               # pytest テストスイート（548テスト）
+├── tests/               # pytest テストスイート（549テスト）
+├── tools/
+│   ├── check_ewgf.py    # ewgf.gg API 疎通確認
+│   └── check_stages.py  # DB 内の stage_id 一覧表示（STAGE_NAMES 補完用）
 ├── SPEC.md              # 仕様書
 ├── Dockerfile
 ├── docker-compose.yml
