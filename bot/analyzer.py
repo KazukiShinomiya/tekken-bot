@@ -38,7 +38,7 @@ _FEW_SHOT_EXAMPLES = """
 <battle_data>
 日付: 2026/04/10 / プレイヤー: Player
 総合: 3勝7敗 (勝率30%)
-ランク戦: 3勝7敗 / クイック: 0勝0敗
+ランク戦: 3勝7敗
 ラウンド勝率: 38%
 レーティング変動: -280
 対戦キャラ別成績:
@@ -53,7 +53,7 @@ _FEW_SHOT_EXAMPLES = """
 <battle_data>
 日付: 2026/04/11 / プレイヤー: Player
 総合: 8勝3敗 (勝率73%)
-ランク戦: 8勝3敗 / クイック: 0勝0敗
+ランク戦: 8勝3敗
 ラウンド勝率: 68%
 レーティング変動: +420
 対戦キャラ別成績:
@@ -205,10 +205,12 @@ def _build_battle_data_section(
     lines = [
         f"日付: {date_str} / プレイヤー: {player_name}",
         f"総合: {wins}勝{losses}敗 (勝率{wr}%)",
-        f"ランク戦: {count_wins(ranked)}勝{count_losses(ranked)}敗 / "
-        f"クイック: {count_wins(quick)}勝{count_losses(quick)}敗",
-        f"ラウンド勝率: {stats['round_wr']}",
     ]
+    if ranked:
+        lines.append(f"ランク戦: {count_wins(ranked)}勝{count_losses(ranked)}敗")
+    if quick:
+        lines.append(f"クイック: {count_wins(quick)}勝{count_losses(quick)}敗")
+    lines.append(f"ラウンド勝率: {stats['round_wr']}")
 
     if stats["net_rating"] is not None:
         sign = "+" if stats["net_rating"] >= 0 else ""
