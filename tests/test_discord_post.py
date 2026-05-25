@@ -418,17 +418,17 @@ def test_quick_rank_distribution_single():
 
 
 def test_quick_rank_distribution_multiple():
-    """複数段位 → 多い順にスラッシュ区切りで返す。"""
+    """複数段位 → rank_id 昇順（低段位→高段位）にスラッシュ区切りで返す。"""
     battles = (
         [_quick_battle(won=True,  opp_rank=20)] * 4 +
         [_quick_battle(won=False, opp_rank=15)] * 2
     )
     result = _quick_rank_distribution(battles)
     assert "/" in result
-    # 多い段位が先頭に来る
+    # rank_id 昇順なので低い段位（15）が先頭に来る
     first, second = result.split(" / ", 1)
-    assert "×4" in first
-    assert "×2" in second
+    assert "×2" in first
+    assert "×4" in second
 
 
 def test_quick_rank_distribution_no_rank_data():
@@ -1257,15 +1257,15 @@ def test_quick_rank_chara_matrix_basic():
     assert "King" in result
 
 
-def test_quick_rank_chara_matrix_rank_order_descending():
-    """段位降順（強い相手が上）で表示される。"""
+def test_quick_rank_chara_matrix_rank_order_ascending():
+    """段位昇順（弱い相手が上）で表示される。"""
     battles = [
         _quick_battle(won=True,  opp_rank=15, opp_chara="Jin"),   # 臥龍（弱め）
         _quick_battle(won=False, opp_rank=25, opp_chara="Law"),   # 鉄拳王（強め）
     ]
     result = _quick_rank_chara_matrix(battles)
     assert result is not None
-    assert result.index("鉄拳王") < result.index("臥龍")
+    assert result.index("臥龍") < result.index("鉄拳王")
 
 
 def test_quick_rank_chara_matrix_winrate_order_ascending():

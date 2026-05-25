@@ -194,7 +194,7 @@ def _quick_rank_chara_matrix(battles: list[Battle]) -> str | None:
     """
     クイックマッチの相手段位×キャラ対戦成績を返す。
     opp_rank が不明な試合は除外。データなしは None を返す。
-    段位降順（強い相手から）、段位内は勝率昇順（苦手キャラから）で表示する。
+    段位昇順（弱い相手から）、段位内は勝率昇順（苦手キャラから）で表示する。
     """
     quick = [
         b for b in battles
@@ -210,7 +210,7 @@ def _quick_rank_chara_matrix(battles: list[Battle]) -> str | None:
         groups.setdefault(rank_id, {}).setdefault(chara, []).append(bool(b["won"]))
 
     lines = []
-    for rank_id in sorted(groups.keys(), reverse=True):
+    for rank_id in sorted(groups.keys()):
         chara_stats = groups[rank_id]
         rank_name   = _rank_name(rank_id) or f"Rank{rank_id}"
         rank_total  = sum(len(v) for v in chara_stats.values())
@@ -230,15 +230,19 @@ def _quick_rank_chara_matrix(battles: list[Battle]) -> str | None:
 
 def _quick_rank_distribution(quick_battles: list[Battle]) -> str:
     """クイックマッチの相手段位分布を `God×4 / Kishin×3` 形式で返す。データなしは空文字。"""
-    counts: Counter = Counter()
+    counts: dict[int | str, int] = {}
     for b in quick_battles:
         rank_id = b.get("opp_rank")
         if rank_id is not None:
-            name = _rank_name(rank_id) or (rank_id if isinstance(rank_id, str) else f"Rank{rank_id}")
-            counts[name] += 1
+            counts[rank_id] = counts.get(rank_id, 0) + 1
     if not counts:
         return ""
-    return " / ".join(f"{name}×{cnt}" for name, cnt in counts.most_common())
+    def _sort_key(rank_id: int | str) -> int:
+        return rank_id if isinstance(rank_id, int) else 999
+    return " / ".join(
+        f"{_rank_name(rid) or (rid if isinstance(rid, str) else f'Rank{rid}')}×{cnt}"
+        for rid, cnt in sorted(counts.items(), key=lambda x: _sort_key(x[0]))
+    )
 
 
 # ---------------------------------------------------------------------------
