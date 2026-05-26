@@ -764,6 +764,7 @@ def test_cmd_goal_show_existing():
     with (
         patch("main.get_players", return_value=[("Alice", "pid1")]),
         patch("bot.db.get_goal", return_value=180000),
+        patch("bot.db.get_current_rating", return_value=120000),
     ):
         asyncio.run(cmd_goal(interaction, rating=None, clear=False))
     msg = interaction.response.send_message.call_args[0][0]

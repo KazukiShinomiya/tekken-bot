@@ -254,16 +254,17 @@ def get_battles_since(since_ts: float, player_name: str | None = None) -> list[B
 # Prometheus Exporter 用集計クエリ
 # ---------------------------------------------------------------------------
 
-def get_current_rating() -> int | None:
+def get_current_rating(player_name: str | None = None) -> int | None:
     """最新バトルから現在レーティングを返す。なければ None。"""
+    pf, pp = _player_filter(player_name)
     with get_conn() as conn:
-        row = conn.execute("""
+        row = conn.execute(f"""
             SELECT rating_before + rating_change AS current_rating
             FROM battles
-            WHERE rating_before IS NOT NULL AND rating_change IS NOT NULL
+            WHERE rating_before IS NOT NULL AND rating_change IS NOT NULL {pf}
             ORDER BY battle_at DESC
             LIMIT 1
-        """).fetchone()
+        """, pp).fetchone()
     return int(row["current_rating"]) if row else None
 
 

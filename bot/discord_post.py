@@ -411,6 +411,19 @@ def _build_period_stats_top(battles: list[Battle]) -> list[dict]:
     return fields
 
 
+def _best_match(battles: list[Battle]) -> dict | None:
+    """最多ラウンド数（合計ラウンド数 = my_rounds + opp_rounds が最大）のバトルを返す。
+    4ラウンド以上の試合がなければ None。
+    """
+    def total_rounds(b: Battle) -> int:
+        return (b.get("my_rounds") or 0) + (b.get("opp_rounds") or 0)
+
+    candidates = [b for b in battles if total_rounds(b) >= 4]
+    if not candidates:
+        return None
+    return max(candidates, key=total_rounds)
+
+
 def _build_period_stats_bottom(battles: list[Battle], power_label: str) -> list[dict]:
     """週次・月次 Embed の共通下部フィールド（最多キャラ〜対戦成績）を構築する。"""
     top_chara, top_chara_count = get_most_common(battles, "my_chara")
@@ -428,7 +441,7 @@ def _build_period_stats_bottom(battles: list[Battle], power_label: str) -> list[
 
     latest = max(battles, key=lambda x: x["battle_at"])
     if latest.get("my_power"):
-        rank_name  = RANK_NAMES.get(latest.get("my_rank") or -1, "")
+        rank_name  = _rank_name(latest.get("my_rank"))
         power_str  = f"{latest['my_power']:,}"
         field_name = f"💥 {power_label}: {rank_name}" if rank_name else f"💥 {power_label}"
         fields.append({"name": field_name, "value": power_str, "inline": True})
@@ -453,6 +466,20 @@ def build_weekly_embed(
         _build_period_stats_top(battles)
         + _build_period_stats_bottom(battles, "週末鉄拳力")
     )
+
+    best = _best_match(battles)
+    if best:
+        my_r   = best.get("my_rounds") or 0
+        opp_r  = best.get("opp_rounds") or 0
+        result = "勝" if best.get("result") == "win" else "負"
+        opp    = best.get("opp_name") or "?"
+        chara  = best.get("opp_chara") or "?"
+        fields.append({
+            "name":   "🔥 今週のベストマッチ",
+            "value":  f"{result} vs {opp}（{chara}）{my_r}-{opp_r}",
+            "inline": False,
+        })
+
     return {
         "title":  f"📅 {display_name} 週次サマリー（{week_start_str} 週）",
         "color":  _embed_color(battles),

@@ -22,10 +22,19 @@ from discord import app_commands
 import bot.db as db
 import main as _bot_main
 from bot.config import DISCORD_BOT_TOKEN as BOT_TOKEN, DISCORD_GUILD_ID, JST, STAGE_NAMES
-from bot.graph import generate_rating_chart
+from bot.graph import generate_rating_chart, generate_winrate_chart
 from bot.stats import count_wins, count_losses, get_most_common, detect_winning_streak, detect_losing_streak
 
 logger = logging.getLogger(__name__)
+
+
+def _progress_bar(current: int, goal: int, width: int = 10) -> str:
+    """例: `██████░░░░ 60% (120,000 / 200,000)`"""
+    pct   = min(current / goal, 1.0) if goal > 0 else 0.0
+    filled = round(pct * width)
+    bar    = "█" * filled + "░" * (width - filled)
+    return f"{bar} {pct:.0%} ({current:,} / {goal:,})"
+
 
 intents = discord.Intents.default()
 client = discord.Client(intents=intents)
@@ -83,7 +92,8 @@ async def cmd_trend(interaction: discord.Interaction, days: int = 30) -> None:
 
         player_name, _ = players[0]
         battles = db.get_battles_since(since_ts, player_name=player_name)
-        chart   = generate_rating_chart(battles, player_name=player_name)
+        chart    = generate_rating_chart(battles, player_name=player_name)
+        wr_chart = generate_winrate_chart(battles, player_name=player_name)
 
         if chart is None:
             await interaction.followup.send(
@@ -97,7 +107,17 @@ async def cmd_trend(interaction: discord.Interaction, days: int = 30) -> None:
             color=0x5865F2,
         )
         embed.set_image(url="attachment://rating_trend.png")
-        await interaction.followup.send(embed=embed, file=file)
+
+        if wr_chart is not None:
+            wr_file  = discord.File(wr_chart, filename="winrate_trend.png")
+            wr_embed = discord.Embed(
+                title=f"🎯 {player_name} 勝率推移（直近{days}日・7試合ローリング）",
+                color=0x43B581,
+            )
+            wr_embed.set_image(url="attachment://winrate_trend.png")
+            await interaction.followup.send(embeds=[embed, wr_embed], files=[file, wr_file])
+        else:
+            await interaction.followup.send(embed=embed, file=file)
     except Exception as e:
         logger.error(f"[slash_commands] /tekken trend エラー: {e}")
         await interaction.followup.send(f"❌ エラーが発生しました: {e}")
@@ -454,22 +474,28 @@ async def cmd_goal(
 
     # 確認モード
     current_goal = db.get_goal(player_name)
-    if current_goal:
-        await interaction.response.send_message(
-            f"🎯 `{player_name}` の現在の目標レーティング: **{current_goal:,}**\n"
-            "解除するには `/tekken goal clear:True`、変更するには `/tekken goal rating:<数値>` を使ってください。"
-        )
-    else:
-        from bot.config import RATING_GOAL
-        if RATING_GOAL > 0:
-            await interaction.response.send_message(
-                f"🎯 目標レーティングは環境変数で **{RATING_GOAL:,}** に設定されています。\n"
-                "`/tekken goal rating:<数値>` でDB設定に上書きできます。"
+    from bot.config import RATING_GOAL
+    effective_goal = current_goal or (RATING_GOAL if RATING_GOAL > 0 else None)
+    if effective_goal:
+        current_rating = db.get_current_rating(player_name)
+        source = "DB設定" if current_goal else "環境変数"
+        if current_rating is not None:
+            bar = _progress_bar(current_rating, effective_goal)
+            msg = (
+                f"🎯 `{player_name}` の目標レーティング（{source}）: **{effective_goal:,}**\n"
+                f"```\n{bar}\n```"
+                "解除するには `/tekken goal clear:True`、変更するには `/tekken goal rating:<数値>` を使ってください。"
             )
         else:
-            await interaction.response.send_message(
-                "🎯 目標レーティングは未設定です。\n`/tekken goal rating:<数値>` で設定できます。"
+            msg = (
+                f"🎯 `{player_name}` の目標レーティング（{source}）: **{effective_goal:,}**\n"
+                "解除するには `/tekken goal clear:True`、変更するには `/tekken goal rating:<数値>` を使ってください。"
             )
+        await interaction.response.send_message(msg)
+    else:
+        await interaction.response.send_message(
+            "🎯 目標レーティングは未設定です。\n`/tekken goal rating:<数値>` で設定できます。"
+        )
 
 
 @tekken_group.command(name="stage", description="ステージ別勝率を確認する（全期間）")

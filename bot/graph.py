@@ -55,6 +55,60 @@ def generate_rating_chart(battles: list[Battle], player_name: str = "Player") ->
     return buf
 
 
+def generate_winrate_chart(
+    battles: list[Battle],
+    player_name: str = "Player",
+    window: int = 7,
+) -> io.BytesIO | None:
+    """
+    直近 `window` 試合の勝率ローリング平均グラフを PNG として返す。
+    勝率 50% を基準線として、上を緑・下を赤で塗りつぶす。
+    データが window 未満の場合は None を返す。
+    """
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        matplotlib.rcParams["font.family"] = "Noto Sans CJK JP"
+        import matplotlib.pyplot as plt
+    except ImportError:
+        logger.warning("[graph] matplotlib が未インストールのためグラフをスキップ")
+        return None
+
+    sorted_battles = sorted(battles, key=lambda x: x["battle_at"])
+    if len(sorted_battles) < window:
+        return None
+
+    wins = [1 if b.get("result") == "win" else 0 for b in sorted_battles]
+    dates = [datetime.fromtimestamp(b["battle_at"], JST) for b in sorted_battles]
+
+    rolling_wr = [
+        sum(wins[i : i + window]) / window
+        for i in range(len(wins) - window + 1)
+    ]
+    rolling_dates = dates[window - 1 :]
+
+    fig, ax = plt.subplots(figsize=(10, 4))
+    wr_pct = [w * 100 for w in rolling_wr]
+    ax.plot(rolling_dates, wr_pct, linewidth=2, color="#43B581")
+    ax.axhline(50, color="#888888", linewidth=1, linestyle="--", alpha=0.7)
+    ax.fill_between(rolling_dates, wr_pct, 50, where=[w >= 50 for w in wr_pct], alpha=0.25, color="#43B581")
+    ax.fill_between(rolling_dates, wr_pct, 50, where=[w < 50 for w in wr_pct], alpha=0.25, color="#ED4245")
+    ax.set_title(f"{player_name} 勝率推移（直近{window}試合ローリング平均）", fontsize=14)
+    ax.set_ylabel("勝率 (%)")
+    ax.set_ylim(0, 100)
+    import matplotlib.dates as mdates
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%m/%d"))
+    fig.autofmt_xdate(rotation=30)
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=100)
+    plt.close(fig)
+    buf.seek(0)
+    return buf
+
+
 def generate_chara_usage_chart(
     weekly_data: list[dict],
     player_name: str = "Player",
