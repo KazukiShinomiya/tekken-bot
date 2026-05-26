@@ -194,6 +194,7 @@ def _analyze_with_timeout(
     prev_battles: list[Battle] | None = None,
     rematch_data: dict | None = None,
     high_score_comments: list[str] | None = None,
+    prev_comment: str | None = None,
 ) -> str | None:
     """
     LLM 分析を別スレッドで実行し、TIMEOUT_LLM 秒以内に結果を返す。
@@ -203,7 +204,7 @@ def _analyze_with_timeout(
     pool = ThreadPoolExecutor(max_workers=1)
     future = pool.submit(
         analyzer.analyze, battles, date_str,
-        player_name, prev_battles, rematch_data, high_score_comments,
+        player_name, prev_battles, rematch_data, high_score_comments, prev_comment,
     )
     try:
         result = future.result(timeout=TIMEOUT_LLM)
@@ -287,12 +288,17 @@ def _run_for_player(player_name: str, polaris_id: str, today_str: str, date_str:
         logger.error(f"[{player_name}] Discord 投稿失敗: {e}")
 
     # LLM 分析（投稿後に実行することで Discord でのレスポンスタイムを改善）
-    # DB から高スコアコメントを取得して few-shot として活用する
+    # DB から高スコアコメントを few-shot として、前回コメントを継続コーチング用に取得する
     high_score_comments = db.get_high_score_comments(player_name=player_name)
+    today_start_ts = datetime.strptime(today_str, "%Y-%m-%d").replace(tzinfo=JST).timestamp()
+    prev_comment = db.get_latest_comment_before(today_start_ts, player_name=player_name)
+    if prev_comment:
+        logger.info(f"[{player_name}] 前回コメントを継続コーチング用に取得: {len(prev_comment)}文字")
     llm_comment = _analyze_with_timeout(
         today_battles, date_str, player_name=player_name,
         prev_battles=prev_battles, rematch_data=rematch_data or None,
         high_score_comments=high_score_comments or None,
+        prev_comment=prev_comment,
     )
 
     # LLM コメントを Embed フッターとして追記
@@ -392,7 +398,13 @@ def _run_weekly_for_player(
         discord_post.notify_error(msg)
 
     # LLM 分析（投稿後）
-    llm_comment = _analyze_with_timeout(battles, week_start_str, player_name=player_name)
+    # since_ts より前の最新コメントを継続コーチング用に取得する
+    prev_comment = db.get_latest_comment_before(since_ts, player_name=player_name)
+    if prev_comment:
+        logger.info(f"[{player_name}] 週次: 前回コメントを取得: {len(prev_comment)}文字")
+    llm_comment = _analyze_with_timeout(
+        battles, week_start_str, player_name=player_name, prev_comment=prev_comment,
+    )
 
     # LLM コメントを Embed フッターとして追記
     if llm_comment and post_result:

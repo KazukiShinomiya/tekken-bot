@@ -689,6 +689,18 @@ def save_llm_eval_score(
         )
 
 
+def get_latest_comment_before(before_ts: float, player_name: str | None = None) -> str | None:
+    """before_ts より前に保存された最新の LLM コメントを返す（継続コーチング用）。"""
+    pf, pp = _player_filter(player_name)
+    with get_conn() as conn:
+        row = conn.execute(f"""
+            SELECT comment FROM llm_eval_scores
+            WHERE saved_at < ? AND comment IS NOT NULL {pf}
+            ORDER BY saved_at DESC, id DESC LIMIT 1
+        """, (int(before_ts),) + pp).fetchone()
+    return row["comment"] if row else None
+
+
 def get_high_score_comments(
     player_name: str | None = None, min_score: int = 80, limit: int = 3
 ) -> list[str]:

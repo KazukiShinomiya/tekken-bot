@@ -371,6 +371,7 @@ def test_run_for_player_happy_path():
         patch("main._fire_rank_alerts"),
         patch("main.discord_post.post", return_value=mock_post_result) as mock_post,
         patch("bot.db.get_high_score_comments", return_value=[]),
+        patch("bot.db.get_latest_comment_before", return_value=None),
         patch("main._analyze_with_timeout", return_value=None),
         patch("main.discord_post.edit_llm_comment"),
         patch("main.discord_post.notify_error"),
@@ -432,6 +433,7 @@ def test_run_for_player_with_llm_comment():
         patch("main._fire_rank_alerts"),
         patch("main.discord_post.post", return_value=mock_post_result),
         patch("bot.db.get_high_score_comments", return_value=[]),
+        patch("bot.db.get_latest_comment_before", return_value=None),
         patch("main._analyze_with_timeout", return_value="素晴らしい"),
         patch("main.discord_post.edit_llm_comment") as mock_edit,
         patch("main.discord_post.notify_error"),
@@ -459,6 +461,7 @@ def test_run_for_player_llm_eval_score_saved():
         patch("main._fire_rank_alerts"),
         patch("main.discord_post.post", return_value=mock_post_result),
         patch("bot.db.get_high_score_comments", return_value=[]),
+        patch("bot.db.get_latest_comment_before", return_value=None),
         patch("main._analyze_with_timeout", return_value="良いコメント"),
         patch("main.discord_post.edit_llm_comment"),
         patch("main.discord_post.notify_error"),
@@ -520,6 +523,7 @@ def test_run_for_player_with_quick_battles():
         patch("main._fire_rank_alerts"),
         patch("main.discord_post.post", return_value=mock_post_result),
         patch("bot.db.get_high_score_comments", return_value=[]),
+        patch("bot.db.get_latest_comment_before", return_value=None),
         patch("main._analyze_with_timeout", return_value=None),
         patch("main.discord_post.edit_llm_comment"),
         patch("main.discord_post.notify_error"),
@@ -544,6 +548,7 @@ def test_run_for_player_post_discord_exception():
         patch("main._fire_rank_alerts"),
         patch("main.discord_post.post", side_effect=RuntimeError("webhook error")),
         patch("bot.db.get_high_score_comments", return_value=[]),
+        patch("bot.db.get_latest_comment_before", return_value=None),
         patch("main._analyze_with_timeout", return_value=None),
         patch("main.discord_post.edit_llm_comment"),
         patch("main.discord_post.notify_error"),
@@ -565,6 +570,7 @@ def test_run_weekly_for_player_returns_community_stats():
     with (
         patch("bot.db.get_battles_since", return_value=battles),
         patch("main.discord_post.post_weekly", return_value=mock_post_result),
+        patch("bot.db.get_latest_comment_before", return_value=None),
         patch("main._analyze_with_timeout", return_value=None),
         patch("main.discord_post.edit_llm_comment"),
         patch("main.discord_post.notify_error"),
@@ -583,6 +589,7 @@ def test_run_weekly_for_player_no_battles():
     with (
         patch("bot.db.get_battles_since", return_value=[]),
         patch("main.discord_post.post_weekly", return_value=mock_post_result),
+        patch("bot.db.get_latest_comment_before", return_value=None),
         patch("main._analyze_with_timeout", return_value=None),
         patch("main.discord_post.notify_error"),
     ):
@@ -598,6 +605,7 @@ def test_run_weekly_for_player_post_exception():
         patch("bot.db.get_battles_since", return_value=[_make_battle()]),
         patch("main.discord_post.post_weekly", side_effect=RuntimeError("webhook error")),
         patch("main.discord_post.notify_error") as mock_err,
+        patch("bot.db.get_latest_comment_before", return_value=None),
         patch("main._analyze_with_timeout", return_value=None),
     ):
         _run_weekly_for_player("Alice", 1000000.0, "2026/04/07")
@@ -612,6 +620,7 @@ def test_run_weekly_for_player_edits_llm_comment():
     with (
         patch("bot.db.get_battles_since", return_value=battles),
         patch("main.discord_post.post_weekly", return_value=mock_post_result),
+        patch("bot.db.get_latest_comment_before", return_value=None),
         patch("main._analyze_with_timeout", return_value="LLMコメント"),
         patch("main.discord_post.edit_llm_comment") as mock_edit,
         patch("main.discord_post.notify_error"),

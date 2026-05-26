@@ -1053,3 +1053,50 @@ def test_monthly_snapshot_limit(db):
 def test_get_monthly_snapshots_empty(db):
     """データなし → 空リスト。"""
     assert db.get_monthly_snapshots("Alice") == []
+
+
+# ---------------------------------------------------------------------------
+# get_latest_comment_before
+# ---------------------------------------------------------------------------
+
+def test_get_latest_comment_before_returns_comment(db):
+    """before_ts より前の最新コメントを返す。"""
+    db.save_llm_eval_score("2026-05-25", "Alice", 80, "Bryan対策が課題だ。")
+    result = db.get_latest_comment_before(before_ts=9999999999, player_name="Alice")
+    assert result == "Bryan対策が課題だ。"
+
+
+def test_get_latest_comment_before_excludes_after_ts(db):
+    """before_ts より後に保存されたコメントは除外される。"""
+    db.save_llm_eval_score("2026-05-25", "Alice", 80, "Bryan対策が課題だ。")
+    result = db.get_latest_comment_before(before_ts=0, player_name="Alice")
+    assert result is None
+
+
+def test_get_latest_comment_before_returns_most_recent(db):
+    """複数コメントがある場合、最後に挿入された（id が大きい）ものを返す。"""
+    db.save_llm_eval_score("2026-05-24", "Alice", 70, "古いコメント")
+    db.save_llm_eval_score("2026-05-25", "Alice", 85, "新しいコメント")
+    result = db.get_latest_comment_before(before_ts=9999999999, player_name="Alice")
+    assert result == "新しいコメント"
+
+
+def test_get_latest_comment_before_player_filter(db):
+    """player_name フィルタが機能する。"""
+    db.save_llm_eval_score("2026-05-25", "Alice", 80, "Aliceのコメント")
+    db.save_llm_eval_score("2026-05-25", "Bob",   80, "Bobのコメント")
+    result = db.get_latest_comment_before(before_ts=9999999999, player_name="Alice")
+    assert result == "Aliceのコメント"
+
+
+def test_get_latest_comment_before_none_when_no_comment(db):
+    """comment が NULL の行は除外される。"""
+    db.save_llm_eval_score("2026-05-25", "Alice", 80, None)
+    result = db.get_latest_comment_before(before_ts=9999999999, player_name="Alice")
+    assert result is None
+
+
+def test_get_latest_comment_before_no_data(db):
+    """データなし → None を返す。"""
+    result = db.get_latest_comment_before(before_ts=9999999999)
+    assert result is None

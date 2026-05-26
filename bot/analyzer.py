@@ -297,6 +297,8 @@ def _build_system_prompt(high_score_comments: list[str] | None = None) -> str:
 - データにない事実・数値・推測は述べない
 - 挨拶・記号・余計な説明は不要
 - 日本語150文字以内で回答する
+- <prev_coaching> に前回のコメントがある場合は、その指摘事項への進捗を一言評価する
+  （例: 前回Bryanが課題→今日も苦戦なら再フォーカス、今日対戦がなければ触れない）
 </constraints>
 
 <output_format>
@@ -311,10 +313,11 @@ def _build_user_message(
     player_name: str = "",
     prev_battles: list[Battle] | None = None,
     rematch_data: dict | None = None,
+    prev_comment: str | None = None,
 ) -> str:
     """
     今日の戦績データと事前計算済み洞察を含むユーザーメッセージ（動的）。
-    リクエスト毎に生成する。
+    prev_comment がある場合は <prev_coaching> タグで前回コメントを付与する。
     """
     stats    = _calculate_stats(battles)
     insights = _compute_coaching_insights(battles, prev_battles)
@@ -322,13 +325,18 @@ def _build_user_message(
     battle_data   = _build_battle_data_section(stats, date_str, player_name, insights, rematch_data)
     insights_text = _build_insights_section(insights, rematch_data)
 
-    return f"""<battle_data>
+    msg = f"""<battle_data>
 {battle_data}
 </battle_data>
 
 <insights>
 {insights_text}
 </insights>"""
+
+    if prev_comment:
+        msg += f"\n\n<prev_coaching>\n{prev_comment}\n</prev_coaching>"
+
+    return msg
 
 
 def _build_messages(
@@ -338,6 +346,7 @@ def _build_messages(
     prev_battles: list[Battle] | None = None,
     rematch_data: dict | None = None,
     high_score_comments: list[str] | None = None,
+    prev_comment: str | None = None,
 ) -> list[dict]:
     """
     Ollama Chat API 用の messages リストを構築する。
@@ -348,7 +357,7 @@ def _build_messages(
     return [
         {"role": "system", "content": _build_system_prompt(high_score_comments)},
         {"role": "user",   "content": _build_user_message(
-            battles, date_str, player_name, prev_battles, rematch_data,
+            battles, date_str, player_name, prev_battles, rematch_data, prev_comment,
         )},
     ]
 
@@ -422,9 +431,11 @@ def analyze(
     prev_battles: list[Battle] | None = None,
     rematch_data: dict | None = None,
     high_score_comments: list[str] | None = None,
+    prev_comment: str | None = None,
 ) -> str | None:
     """
     バトルデータをLLMで分析してコメントを返す。
+    prev_comment: 前回セッションのLLMコメント（継続コーチング用）。
     GEMINI_FIRST=true の場合は Gemini → Ollama の順で試みる（デフォルトは Ollama 優先）。
     失敗時は None を返す（投稿自体は続行）。
     """
@@ -436,6 +447,7 @@ def analyze(
         prev_battles=prev_battles,
         rematch_data=rematch_data,
         high_score_comments=high_score_comments,
+        prev_comment=prev_comment,
     )
     sys_prompt = messages[0]["content"]
     user_msg   = messages[1]["content"]

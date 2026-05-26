@@ -111,6 +111,35 @@ def test_build_user_message_with_rating_change():
     assert "+50" in msg
 
 
+def test_build_user_message_with_prev_comment_includes_tag():
+    """prev_comment がある場合、<prev_coaching> タグが含まれる。"""
+    battles = [_battle(True)]
+    msg = _build_user_message(battles, "2024/01/15", prev_comment="Bryan対策が課題だ。")
+    assert "<prev_coaching>" in msg
+    assert "Bryan対策が課題だ。" in msg
+
+
+def test_build_user_message_without_prev_comment_excludes_tag():
+    """prev_comment がない場合、<prev_coaching> タグは含まれない。"""
+    battles = [_battle(True)]
+    msg = _build_user_message(battles, "2024/01/15", prev_comment=None)
+    assert "<prev_coaching>" not in msg
+
+
+def test_build_system_prompt_references_prev_coaching():
+    """システムプロンプトに prev_coaching への言及がある。"""
+    prompt = _build_system_prompt()
+    assert "prev_coaching" in prompt
+
+
+def test_build_messages_passes_prev_comment():
+    """prev_comment が _build_messages 経由でユーザーメッセージに渡される。"""
+    battles = [_battle(True)]
+    msgs = _build_messages(battles, "2024/01/15", prev_comment="過去のコメント")
+    user_content = msgs[1]["content"]
+    assert "過去のコメント" in user_content
+
+
 # ---------------------------------------------------------------------------
 # _compute_coaching_insights
 # ---------------------------------------------------------------------------
