@@ -9,7 +9,7 @@ battles.db を読み込み、メトリクスを HTTP 経由で公開する。
 import logging
 import time
 import argparse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterator
 
 from prometheus_client import start_http_server, REGISTRY
@@ -184,6 +184,28 @@ class TekkenCollector:
         yield monthly_wins_g
         yield monthly_losses_g
         yield monthly_rating_g
+
+        # ── 9. 死活監視（ジョブ正常完了の心拍） ───────────────────────────
+        # ラベル名は `tekken_job`。Prometheus が scrape 時に付与する予約ラベル
+        # `job`（= job_name）との衝突（exported_job へのリネーム）を避けるため。
+        last_success_g = GaugeMetricFamily(
+            "tekken_last_success_timestamp",
+            "ジョブが最後に正常完了した UTC epoch 秒",
+            labels=["tekken_job"],
+        )
+        last_success_age_g = GaugeMetricFamily(
+            "tekken_last_success_age_seconds",
+            "ジョブが最後に正常完了してからの経過秒数",
+            labels=["tekken_job"],
+        )
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        for r in db.get_run_status():
+            job = r["job_name"]
+            last = int(r["last_success_at"])
+            last_success_g.add_metric([job], float(last))
+            last_success_age_g.add_metric([job], float(now_ts - last))
+        yield last_success_g
+        yield last_success_age_g
 
 
 def main() -> None:

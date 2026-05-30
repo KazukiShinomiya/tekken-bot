@@ -21,5 +21,8 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
 
-      - name: Run tests
-        run: python -m pytest tests/ -q
+      - name: Type check (mypy)
+        run: python -m mypy bot main.py exporter.py scheduler.py
+
+      - name: Run tests with coverage
+        run: python -m pytest tests/ -q --cov=bot --cov=main --cov-fail-under=90

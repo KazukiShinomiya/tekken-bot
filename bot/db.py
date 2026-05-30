@@ -154,6 +154,13 @@ def init_db() -> None:
             )
         """)
 
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS run_status (
+                job_name        TEXT PRIMARY KEY,   -- "daily" / "weekly" / "monthly"
+                last_success_at INTEGER NOT NULL    -- UTC epoch 秒
+            )
+        """)
+
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_battle_at ON battles(battle_at)"
         )
@@ -248,6 +255,35 @@ def get_battles_since(since_ts: float, player_name: str | None = None) -> list[B
     with get_conn() as conn:
         rows = _query_battles(conn, "battle_at >= ?", (int(since_ts),), player_name)
     return cast(list[Battle], [dict(r) for r in rows])
+
+
+# ---------------------------------------------------------------------------
+# 死活監視（ジョブ正常完了の心拍）
+# ---------------------------------------------------------------------------
+
+def record_run_success(job_name: str, ts: int | None = None) -> None:
+    """ジョブ（daily/weekly/monthly）の正常完了時刻を UTC epoch で記録する。
+
+    exporter が `tekken_last_success_timestamp` として公開し、一定時間更新が
+    途絶えたら Bot 停止とみなしてアラートを発火させるための心拍。
+    """
+    if ts is None:
+        ts = int(datetime.now(timezone.utc).timestamp())
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO run_status (job_name, last_success_at) VALUES (?, ?) "
+            "ON CONFLICT(job_name) DO UPDATE SET last_success_at = excluded.last_success_at",
+            (job_name, ts),
+        )
+
+
+def get_run_status() -> list[dict]:
+    """全ジョブの最終正常完了時刻を返す（exporter 用）。"""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT job_name, last_success_at FROM run_status ORDER BY job_name"
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 # ---------------------------------------------------------------------------

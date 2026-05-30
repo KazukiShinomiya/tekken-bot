@@ -12,6 +12,7 @@ Ollama（ローカルLLM）を使ってバトルデータを分析するモジ�
 import json
 import logging
 from datetime import datetime, timedelta
+from typing import Callable
 import requests
 
 from bot.config import (
@@ -453,14 +454,15 @@ def analyze(
     user_msg   = messages[1]["content"]
 
     # フォールバックチェーン: (ラベル, callable, キャッチする例外型)
-    ollama_chain = [
+    ProviderEntry = tuple[str, Callable[[], str | None], type[Exception]]
+    ollama_chain: list[ProviderEntry] = [
         (OLLAMA_MODEL, lambda: _call_ollama(OLLAMA_MODEL, messages), requests.RequestException),
     ]
     if OLLAMA_FALLBACK_MODEL:
         fb = OLLAMA_FALLBACK_MODEL
         ollama_chain.append((fb, lambda: _call_ollama(fb, messages), requests.RequestException))
 
-    gemini_chain = []
+    gemini_chain: list[ProviderEntry] = []
     if GEMINI_API_KEY:
         gemini_chain.append(("Gemini", lambda: _call_gemini(sys_prompt, user_msg), Exception))
 

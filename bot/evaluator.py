@@ -85,10 +85,12 @@ def _check_chara_validity(comment: str, battles: list[Battle]) -> dict:
     """
     battle_charas: set[str] = set()
     for b in battles:
-        if b.get("opp_chara"):
-            battle_charas.add(b["opp_chara"])
-        if b.get("my_chara"):
-            battle_charas.add(b["my_chara"])
+        opp = b.get("opp_chara")
+        if opp:
+            battle_charas.add(opp)
+        my = b.get("my_chara")
+        if my:
+            battle_charas.add(my)
 
     all_chara_names = set(CHARA_NAMES.values())
     non_battle_charas = all_chara_names - battle_charas

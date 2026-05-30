@@ -11,5 +11,12 @@ warn_unused_ignores = true
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["matplotlib.*", "discord.*", "bs4.*"]
+module = ["discord.*", "bs4.*"]
+ignore_errors = true
+
+# bot.graph は全面的に matplotlib 描画グルー。matplotlib のスタブはバージョン毎に
+# 厳格度が変わり（datetime を ArrayLike と認めない等）誤検出を生むため、
+# 上の matplotlib.* opt-out をこのモジュールにも延長する。
+[[tool.mypy.overrides]]
+module = ["bot.graph"]
 ignore_errors = true

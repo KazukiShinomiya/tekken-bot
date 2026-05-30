@@ -1,0 +1,43 @@
+groups:
+  - name: tekken_bot
+    rules:
+      # 日次ジョブが正常完了していない（Bot 停止・データ取得失敗の可能性）。
+      # 日次は 08:00 JST 実行。26h で 1 日分の猶予を持たせる。
+      - alert: TekkenDailyJobStale
+        expr: (time() - tekken_last_success_timestamp{tekken_job="daily"}) > 93600
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Tekken Bot の日次ジョブが 26 時間以上正常完了していない"
+          description: "最後の正常完了から {{ $value | humanizeDuration }} 経過。Bot 停止・データ取得失敗・投稿失敗の可能性がある。"
+
+      # 心拍メトリクスがそもそも存在しない（exporter 起動直後 or DB 未初期化）。
+      - alert: TekkenHeartbeatMissing
+        expr: absent(tekken_last_success_timestamp{tekken_job="daily"})
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Tekken Bot の日次心拍メトリクスが存在しない"
+          description: "tekken_last_success_timestamp{job=daily} が一度も出力されていない。日次ジョブが一度も成功していない可能性がある。"
+
+      # exporter のスクレイプ対象がダウン。
+      - alert: TekkenExporterDown
+        expr: up{job="tekken_exporter"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Tekken exporter がダウンしている"
+          description: "Prometheus が tekken_exporter (localhost:9877) をスクレイプできていない。"
+
+      # LLM コメントの品質が低下（ハルシネーション・長文化・改善提案欠落など）。
+      - alert: TekkenLLMScoreLow
+        expr: tekken_llm_eval_score < 60
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Tekken Bot の LLM 評価スコアが低い"
+          description: "最新の LLM コメント評価スコアが {{ $value }}/100。プロンプト・モデルの劣化を確認すること。"

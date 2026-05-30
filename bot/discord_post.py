@@ -206,6 +206,8 @@ def _quick_rank_chara_matrix(battles: list[Battle]) -> str | None:
     groups: dict[int, dict[str, list[bool]]] = {}
     for b in quick:
         rank_id = b["opp_rank"]
+        if rank_id is None:   # 上の内包表記で除外済みだが型を絞り込む
+            continue
         chara   = b.get("opp_chara") or UNKNOWN_CHARACTER
         groups.setdefault(rank_id, {}).setdefault(chara, []).append(bool(b["won"]))
 
@@ -411,7 +413,7 @@ def _build_period_stats_top(battles: list[Battle]) -> list[dict]:
     return fields
 
 
-def _best_match(battles: list[Battle]) -> dict | None:
+def _best_match(battles: list[Battle]) -> Battle | None:
     """最多ラウンド数（合計ラウンド数 = my_rounds + opp_rounds が最大）のバトルを返す。
     4ラウンド以上の試合がなければ None。
     """

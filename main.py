@@ -374,6 +374,9 @@ async def main(target_date: str | None = None) -> None:
             logger.info(f"[main] DB バックアップ完了: {dest.name}")
         except Exception as e:
             logger.warning(f"[main] DB バックアップ失敗: {e}")
+
+        # 死活監視の心拍を刻む（正常完了時のみ）
+        db.record_run_success("daily")
     finally:
         _main_lock.release()
 
@@ -457,6 +460,9 @@ async def weekly() -> None:
 
         # 2人以上のとき部内ランキングを投稿
         discord_post.post_community_weekly(community_stats, week_start_str)
+
+        # 死活監視の心拍を刻む（正常完了時のみ）
+        db.record_run_success("weekly")
     finally:
         _weekly_lock.release()
 
@@ -554,6 +560,9 @@ async def monthly(month: str | None = None) -> None:
             asyncio.to_thread(_run_monthly_for_player, name, target_year, target_month, month_str)
             for name, _ in players
         ))
+
+        # 死活監視の心拍を刻む（正常完了時のみ）
+        db.record_run_success("monthly")
     finally:
         _monthly_lock.release()
 

@@ -676,6 +676,7 @@ def test_main_no_players_exits():
         patch("main.fetcher.load_learned_chara_names"),
         patch("bot.db.get_unknown_chara_battles", return_value=[]),
         patch("main.get_players", return_value=[]),
+        patch("bot.db.record_run_success"),
         patch("main.sys.exit") as mock_exit,
     ):
         asyncio.run(_main_module.main())
@@ -697,9 +698,11 @@ def test_main_happy_path():
         patch("main.get_players", return_value=[("Alice", "pid_a")]),
         patch("main._run_for_player") as mock_run,
         patch("bot.db.backup_db", return_value=backup_mock),
+        patch("bot.db.record_run_success") as mock_heartbeat,
     ):
         asyncio.run(_main_module.main(target_date="2026-04-12"))
     mock_run.assert_called_once_with("Alice", "pid_a", "2026-04-12", "2026/04/12")
+    mock_heartbeat.assert_called_once_with("daily")
 
 
 def test_main_unknown_chara_logs_warning():
@@ -720,6 +723,7 @@ def test_main_unknown_chara_logs_warning():
         patch("main.get_players", return_value=[("Alice", "pid_a")]),
         patch("main._run_for_player"),
         patch("bot.db.backup_db", return_value=backup_mock),
+        patch("bot.db.record_run_success"),
     ):
         asyncio.run(_main_module.main(target_date="2026-04-12"))  # should not raise
 
@@ -737,6 +741,7 @@ def test_main_backup_failure_does_not_raise():
         patch("main.get_players", return_value=[("Alice", "pid_a")]),
         patch("main._run_for_player"),
         patch("bot.db.backup_db", side_effect=OSError("disk full")),
+        patch("bot.db.record_run_success"),
     ):
         asyncio.run(_main_module.main(target_date="2026-04-12"))  # should not raise
 
@@ -780,6 +785,7 @@ def test_weekly_happy_path():
         patch("main.get_players", return_value=[("Alice", "pid_a")]),
         patch("main._run_weekly_for_player", return_value=weekly_result),
         patch("main.discord_post.post_community_weekly") as mock_community,
+        patch("bot.db.record_run_success"),
     ):
         asyncio.run(_main_module.weekly())
     mock_community.assert_called_once()
@@ -980,6 +986,7 @@ def test_monthly_happy_path():
         patch("main.fetcher.load_learned_chara_names"),
         patch("main.get_players", return_value=[("Alice", "pid_a")]),
         patch("main._run_monthly_for_player") as mock_run,
+        patch("bot.db.record_run_success"),
     ):
         asyncio.run(_main_module.monthly(month="2026-03"))
     mock_run.assert_called_once()

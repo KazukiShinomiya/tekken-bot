@@ -1100,3 +1100,57 @@ def test_get_latest_comment_before_no_data(db):
     """データなし → None を返す。"""
     result = db.get_latest_comment_before(before_ts=9999999999)
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# 死活監視（run_status）
+# ---------------------------------------------------------------------------
+
+def test_init_db_creates_run_status_table(db):
+    """init_db() が run_status テーブルを作成することを確認。"""
+    with db.get_conn() as conn:
+        tables = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='run_status'"
+        ).fetchall()
+    assert len(tables) == 1
+
+
+def test_record_run_success_with_explicit_ts(db):
+    """明示した ts で正常完了時刻を記録できる。"""
+    db.record_run_success("daily", ts=1700000000)
+    rows = db.get_run_status()
+    assert rows == [{"job_name": "daily", "last_success_at": 1700000000}]
+
+
+def test_record_run_success_defaults_to_now(db):
+    """ts 省略時は現在時刻（UTC epoch）が記録される。"""
+    from datetime import datetime, timezone
+    before = int(datetime.now(timezone.utc).timestamp())
+    db.record_run_success("weekly")
+    after = int(datetime.now(timezone.utc).timestamp())
+    rows = db.get_run_status()
+    assert len(rows) == 1
+    assert rows[0]["job_name"] == "weekly"
+    assert before <= rows[0]["last_success_at"] <= after
+
+
+def test_record_run_success_upserts(db):
+    """同じ job_name は最新時刻で上書きされる（行は増えない）。"""
+    db.record_run_success("daily", ts=1700000000)
+    db.record_run_success("daily", ts=1700009999)
+    rows = db.get_run_status()
+    assert rows == [{"job_name": "daily", "last_success_at": 1700009999}]
+
+
+def test_get_run_status_multiple_jobs_sorted(db):
+    """複数ジョブが job_name 昇順で返る。"""
+    db.record_run_success("weekly", ts=2)
+    db.record_run_success("daily", ts=1)
+    db.record_run_success("monthly", ts=3)
+    rows = db.get_run_status()
+    assert [r["job_name"] for r in rows] == ["daily", "monthly", "weekly"]
+
+
+def test_get_run_status_empty(db):
+    """記録がなければ空リストを返す。"""
+    assert db.get_run_status() == []
