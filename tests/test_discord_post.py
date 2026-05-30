@@ -4,7 +4,8 @@ bot/discord_post.py の純粋関数テスト。
 
 import pytest
 from unittest.mock import MagicMock, patch
-from bot.discord_post import (
+# ビュー層（Embed 構築）は bot.embeds、I/O 層（Webhook 送信）は bot.discord_post。
+from bot.embeds import (
     _win_rate,
     _streak,
     _nemesis,
@@ -14,13 +15,15 @@ from bot.discord_post import (
     _scout_section,
     _opp_rank_label,
     _quick_rank_distribution,
-    _parse_webhook_id_token,
     _embed_color,
     build_community_weekly_embed,
     build_embed,
     build_weekly_embed,
     build_rank_change_embed,
     build_monthly_embed,
+)
+from bot.discord_post import (
+    _parse_webhook_id_token,
     post,
     post_weekly,
     post_monthly,
