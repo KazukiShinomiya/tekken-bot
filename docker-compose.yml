@@ -64,6 +64,9 @@ services:
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
       - TZ=Asia/Tokyo
+      # アラート通知先 Discord Webhook。.env に DISCORD_ALERT_WEBHOOK=... を定義する。
+      # 未設定なら空文字となり、コンタクトポイントは送信先なしで起動する（致命的エラーにはならない）。
+      - DISCORD_ALERT_WEBHOOK=${DISCORD_ALERT_WEBHOOK:-}
 
 volumes:
   prometheus_data:

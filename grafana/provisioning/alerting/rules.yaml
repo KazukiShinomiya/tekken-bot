@@ -1,0 +1,173 @@
+# Grafana アラートルールの provisioning 定義。
+# Prometheus データソース（uid: prometheus_ds）のメトリクスを評価し、discord-ops へ通知する。
+# Prometheus 側の prometheus/alerts.yml は Prometheus UI 表示用に存続させ、
+# 実際の Discord 通知はこちら（Grafana）が担う役割分担とする。
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: tekken_health
+    folder: Tekken Alerts
+    interval: 1m
+    rules:
+      # 日次ジョブが 26 時間（93600 秒）以上正常完了していない。
+      - uid: tekken_daily_stale
+        title: Tekken 日次ジョブ停止
+        condition: C
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: Tekken Bot の日次ジョブが 26 時間以上正常完了していない
+          description: tekken_last_success_age_seconds(daily) が閾値を超過。Bot 停止・データ取得失敗・投稿失敗の可能性。
+        # メトリクス欠損（exporter ダウン時）は exporter ルールが拾うため、ここでは発火させない。
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: prometheus_ds
+            model:
+              datasource:
+                type: prometheus
+                uid: prometheus_ds
+              editorMode: code
+              expr: tekken_last_success_age_seconds{tekken_job="daily"}
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              datasource:
+                type: __expr__
+                uid: __expr__
+              conditions:
+                - evaluator:
+                    params:
+                      - 93600
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - C
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              expression: A
+              refId: C
+              type: threshold
+
+      # exporter のスクレイプ対象がダウン（up == 0 または欠損）。
+      - uid: tekken_exporter_down
+        title: Tekken exporter ダウン
+        condition: C
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Tekken exporter がダウンしている
+          description: Prometheus が tekken_exporter (localhost:9877) をスクレイプできていない。
+        # スクレイプ対象が消えてメトリクスが欠損した場合も障害とみなす。
+        noDataState: Alerting
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: prometheus_ds
+            model:
+              datasource:
+                type: prometheus
+                uid: prometheus_ds
+              editorMode: code
+              expr: up{job="tekken_exporter"}
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              datasource:
+                type: __expr__
+                uid: __expr__
+              conditions:
+                - evaluator:
+                    params:
+                      - 1
+                    type: lt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - C
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              expression: A
+              refId: C
+              type: threshold
+
+      # LLM コメントの評価スコアが 60 未満（品質劣化）。
+      - uid: tekken_llm_score_low
+        title: Tekken LLM 評価スコア低下
+        condition: C
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: Tekken Bot の LLM 評価スコアが低い
+          description: 最新の LLM コメント評価スコアが 60/100 未満。プロンプト・モデルの劣化を確認すること。
+        # スコア未保存（評価がまだない）期間は発火させない。
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: prometheus_ds
+            model:
+              datasource:
+                type: prometheus
+                uid: prometheus_ds
+              editorMode: code
+              expr: tekken_llm_eval_score
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              datasource:
+                type: __expr__
+                uid: __expr__
+              conditions:
+                - evaluator:
+                    params:
+                      - 60
+                    type: lt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - C
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              expression: A
+              refId: C
+              type: threshold

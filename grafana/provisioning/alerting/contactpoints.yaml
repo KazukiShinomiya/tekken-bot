@@ -1,0 +1,20 @@
+# Grafana コンタクトポイント（通知先）の provisioning 定義。
+# Discord Webhook URL は docker-compose 経由で環境変数 DISCORD_ALERT_WEBHOOK として注入される
+# （実体は .env に置き、リポジトリにはコミットしない）。
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: discord-ops
+    receivers:
+      - uid: discord_ops_receiver
+        type: discord
+        settings:
+          url: ${DISCORD_ALERT_WEBHOOK}
+          # 障害通知は運用者向け。本文に要約と詳細を載せる。
+          message: |
+            {{ range .Alerts }}**{{ .Annotations.summary }}**
+            {{ .Annotations.description }}
+            {{ end }}
+        # 復旧時にも通知する（沈黙していた番兵が戻ったことを知らせる）。
+        disableResolveMessage: false

@@ -1,0 +1,13 @@
+# 通知ポリシー（ルーティング）の provisioning 定義。
+# すべての Tekken アラートを discord-ops コンタクトポイントへ送る単純なルート。
+apiVersion: 1
+
+policies:
+  - orgId: 1
+    receiver: discord-ops
+    group_by:
+      - alertname
+    group_wait: 30s
+    group_interval: 5m
+    # 未解決のまま続く障害を 4 時間ごとに再通知する。
+    repeat_interval: 4h
