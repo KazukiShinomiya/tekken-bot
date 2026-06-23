@@ -1,5 +1,12 @@
 apiVersion: 1
 
+# 既存 grafana_data ボリュームに自動生成 uid で登録済みの Prometheus を
+# 一度削除してから固定 uid で再作成する（uid 後付けによる
+# "data source not found" provisioning エラーを回避するため）。
+deleteDatasources:
+  - name: Prometheus
+    orgId: 1
+
 datasources:
   - name: Prometheus
     type: prometheus
