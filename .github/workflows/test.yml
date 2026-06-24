@@ -22,7 +22,29 @@ jobs:
         run: pip install -r requirements-dev.txt
 
       - name: Type check (mypy)
-        run: python -m mypy bot main.py exporter.py scheduler.py
+        run: |
+          set -o pipefail
+          echo "=== STEP: Type check (mypy) ===" | tee -a ci.log
+          python -m mypy bot main.py exporter.py scheduler.py 2>&1 | tee -a ci.log
 
       - name: Run tests with coverage
-        run: python -m pytest tests/ -q --cov=bot --cov=main --cov-fail-under=90
+        run: |
+          set -o pipefail
+          echo "=== STEP: Run tests with coverage ===" | tee -a ci.log
+          python -m pytest tests/ -q --cov=bot --cov=main --cov-fail-under=90 2>&1 | tee -a ci.log
+
+      - name: Notify Discord on failure
+        if: ${{ failure() }}
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_ERROR_WEBHOOK_URL }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          COMMIT_SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          [ -z "$WEBHOOK" ] && { echo "DISCORD_ERROR_WEBHOOK_URL 未設定のため通知スキップ"; exit 0; }
+          LOG=$(tail -c 1500 ci.log 2>/dev/null || echo "(ログ取得不可)")
+          jq -n --arg log "$LOG" --arg url "$RUN_URL" \
+                --arg sha "${COMMIT_SHA:0:7}" --arg msg "$COMMIT_MSG" \
+                '{embeds:[{title:"🔴 CI失敗", color:15158332,
+                  description:("**\($sha)** \($msg)\n```\n\($log)\n```\n🔗 [ログ全文](\($url))")}]}' \
+            | curl -sS -H "Content-Type: application/json" -d @- "$WEBHOOK"
