@@ -2,6 +2,10 @@
 # Prometheus データソース（uid: prometheus_ds）のメトリクスを評価し、discord-ops へ通知する。
 # Prometheus 側の prometheus/alerts.yml は Prometheus UI 表示用に存続させ、
 # 実際の Discord 通知はこちら（Grafana）が担う役割分担とする。
+#
+# 【閾値の二重管理について】各アラートの閾値（日次 93600 秒 / LLM 60 / up==0 / 心拍 30m）は
+# prometheus/alerts.yml と意図的にミラーしている。Prometheus UI とは独立した
+# 評価系のため自動同期はされない。閾値を変更する際は必ず両ファイルを揃えること。
 apiVersion: 1
 
 groups:
@@ -159,6 +163,63 @@ groups:
                     params:
                       - 60
                     type: lt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - C
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              expression: A
+              refId: C
+              type: threshold
+
+      # 心拍メトリクスがそもそも存在しない（日次が一度も成功していない／DB 未初期化）。
+      # tekken_daily_stale は noDataState=OK のためこのケースを拾えない。その穴を塞ぐルール。
+      # （Prometheus 側 TekkenHeartbeatMissing と同等。Discord 通知経路を Grafana 側にも持たせる）
+      - uid: tekken_heartbeat_missing
+        title: Tekken 心拍メトリクス欠損
+        condition: C
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: Tekken Bot の日次心拍メトリクスが存在しない
+          description: tekken_last_success_timestamp{tekken_job=daily} が一度も出力されていない。日次ジョブが一度も成功していない可能性がある。
+        # メトリクスが存在する平常時は absent() が NoData を返すため OK 扱い（沈黙）。
+        # メトリクス欠損時のみ absent() が 1 を返し、threshold gt 0 で発火する。
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: prometheus_ds
+            model:
+              datasource:
+                type: prometheus
+                uid: prometheus_ds
+              editorMode: code
+              expr: absent(tekken_last_success_timestamp{tekken_job="daily"})
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              datasource:
+                type: __expr__
+                uid: __expr__
+              conditions:
+                - evaluator:
+                    params:
+                      - 0
+                    type: gt
                   operator:
                     type: and
                   query:

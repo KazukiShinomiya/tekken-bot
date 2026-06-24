@@ -1,3 +1,7 @@
+# Prometheus ネイティブのアラートルール（Prometheus UI 表示用）。
+# 実際の Discord 通知は Grafana 側（grafana/provisioning/alerting/rules.yaml）が担う。
+# 両ファイルの閾値（93600 秒 / 60 / up==0 / for:30m）は意図的にミラーしている。
+# 自動同期はされないため、閾値変更時は必ず両ファイルを揃えること。
 groups:
   - name: tekken_bot
     rules:
