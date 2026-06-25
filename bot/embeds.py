@@ -109,6 +109,47 @@ def _matchup_matrix(battles: list[Battle]) -> str | None:
     return "\n".join(lines)
 
 
+def _rank_winrate_matrix(battles: list[Battle]) -> str | None:
+    """ランク戦を相手段位別に集計し、段位ごとの勝率を上位段位順に表示する。
+
+    格上に通用しているか／格下を取りこぼしていないかを一望するための分析軸。
+    opp_rank が取れたランク戦のみ対象。対象がなければ None。
+    勝率 > 50% → ✅、= 50% → ➖、< 50% → ❌
+    """
+    ranked = [
+        b for b in battles
+        if b.get("battle_type") == "ranked" and b.get("opp_rank") is not None
+    ]
+    if not ranked:
+        return None
+
+    agg: dict[int, list[int]] = {}
+    for b in ranked:
+        rank_id = b["opp_rank"]
+        if not isinstance(rank_id, int):
+            continue
+        agg.setdefault(rank_id, []).append(1 if b.get("won") else 0)
+    if not agg:
+        return None
+
+    lines = []
+    for rank_id in sorted(agg, reverse=True):  # 上位段位（格上）から
+        results = agg[rank_id]
+        n   = len(results)
+        wr  = sum(results) / n
+        pct = f"{wr * 100:.0f}%"
+        if wr > WIN_RATE_THRESHOLD:
+            icon = "✅"
+        elif wr < WIN_RATE_THRESHOLD:
+            icon = "❌"
+        else:
+            icon = "➖"
+        name = _rank_name(rank_id) or f"Rank{rank_id}"
+        lines.append(f"  {name:<10} {n}戦 {pct:>4} {icon}")
+
+    return "\n".join(lines)
+
+
 def _scout_section(battles: list[Battle], scout_data: dict[str, dict]) -> str | None:
     """
     リピート対戦相手のスカウトレポートを返す。
@@ -381,6 +422,32 @@ def _build_period_stats_top(battles: list[Battle]) -> list[dict]:
     return fields
 
 
+def _build_prev_comparison(
+    battles: list[Battle],
+    prev_battles: list[Battle],
+    label: str,
+) -> dict:
+    """前期間比較フィールド（前週比/前月比）を構築する。
+    勝利数差と、両期間でランク戦があればレーティング差分を表示する。
+    label は "前週" / "前月"。
+    """
+    total_w = count_wins(battles)
+    prev_w  = count_wins(prev_battles)
+    prev_l  = count_losses(prev_battles)
+    prev_rated = filter_rated_battles([b for b in prev_battles if b.get("battle_type") == "ranked"])
+    prev_net   = sum(b.get("rating_change") or 0 for b in prev_rated) if prev_rated else None
+    rated      = filter_rated_battles([b for b in battles if b.get("battle_type") == "ranked"])
+    net_rating = sum(b.get("rating_change") or 0 for b in rated) if rated else None
+    win_diff   = total_w - prev_w
+    sign_w     = "+" if win_diff >= 0 else ""
+    comparison = f"勝利数 {sign_w}{win_diff} | {label}: {prev_w}勝{prev_l}敗"
+    if prev_net is not None and net_rating is not None:
+        rating_diff = net_rating - prev_net
+        sign_r = "+" if rating_diff >= 0 else ""
+        comparison += f"\nレーティング差分 {sign_r}{rating_diff}"
+    return {"name": f"📊 {label}比", "value": comparison, "inline": False}
+
+
 def _best_match(battles: list[Battle]) -> Battle | None:
     """最多ラウンド数（合計ラウンド数 = my_rounds + opp_rounds が最大）のバトルを返す。
     4ラウンド以上の試合がなければ None。
@@ -427,21 +494,35 @@ def build_weekly_embed(
     battles: list[Battle],
     week_start_str: str,
     player_name: str | None = None,
+    prev_battles: list[Battle] | None = None,
 ) -> dict | None:
     """週次サマリーの Embed dict を返す。試合なしの場合は None。LLM コメントは含まない。"""
     if not battles:
         return None
     display_name = player_name or TEKKEN_ID
-    fields = (
-        _build_period_stats_top(battles)
-        + _build_period_stats_bottom(battles, "週末鉄拳力")
-    )
+    fields = _build_period_stats_top(battles)
+
+    # 前週比（レーティング変動フィールドの直後に挿入）
+    if prev_battles:
+        fields.append(_build_prev_comparison(battles, prev_battles, "前週"))
+
+    fields += _build_period_stats_bottom(battles, "週末鉄拳力")
+
+    # 相手段位別勝率（格上に通用しているか／格下を取りこぼしていないか）
+    rank_wr = _rank_winrate_matrix(battles)
+    if rank_wr:
+        fields.append({"name": "🏅 段位別勝率", "value": rank_wr[:1024], "inline": False})
+
+    # 今週の天敵（2 戦以上で最も負け越したキャラ）
+    nemesis = _nemesis(battles)
+    if nemesis:
+        fields.append({"name": "💀 今週の天敵", "value": nemesis, "inline": True})
 
     best = _best_match(battles)
     if best:
         my_r   = best.get("my_rounds") or 0
         opp_r  = best.get("opp_rounds") or 0
-        result = "勝" if best.get("result") == "win" else "負"
+        result = "勝" if best.get("won") else "負"
         opp    = best.get("opp_name") or "?"
         chara  = best.get("opp_chara") or "?"
         fields.append({
@@ -489,21 +570,7 @@ def build_monthly_embed(
 
     # 前月比（レーティング変動フィールドの直後に挿入）
     if prev_battles:
-        total_w = count_wins(battles)
-        prev_w  = count_wins(prev_battles)
-        prev_l  = count_losses(prev_battles)
-        prev_rated = filter_rated_battles([b for b in prev_battles if b.get("battle_type") == "ranked"])
-        prev_net   = sum(b.get("rating_change") or 0 for b in prev_rated) if prev_rated else None
-        rated      = filter_rated_battles([b for b in battles if b.get("battle_type") == "ranked"])
-        net_rating = sum(b.get("rating_change") or 0 for b in rated) if rated else None
-        win_diff   = total_w - prev_w
-        sign_w     = "+" if win_diff >= 0 else ""
-        comparison = f"勝利数 {sign_w}{win_diff} | 前月: {prev_w}勝{prev_l}敗"
-        if prev_net is not None and net_rating is not None:
-            rating_diff = net_rating - prev_net
-            sign_r = "+" if rating_diff >= 0 else ""
-            comparison += f"\nレーティング差分 {sign_r}{rating_diff}"
-        fields.append({"name": "📊 前月比", "value": comparison, "inline": False})
+        fields.append(_build_prev_comparison(battles, prev_battles, "前月"))
 
     fields += _build_period_stats_bottom(battles, "月末鉄拳力")
     return {

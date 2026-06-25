@@ -221,6 +221,27 @@ def test_get_battles_since_player_filter(db):
     assert len(bob)   == 1 and bob[0]["battle_id"]   == "b1"
 
 
+def test_get_battles_between_half_open_range(db):
+    """[start, end) の半開区間。start は含み end は含まない。"""
+    db.insert_battles([
+        _make_battle("b1", battle_at=1000),
+        _make_battle("b2", battle_at=2000),
+        _make_battle("b3", battle_at=3000),
+    ])
+    result = db.get_battles_between(2000, 3000)
+    ids = [r["battle_id"] for r in result]
+    assert ids == ["b2"]          # 2000 含む / 1000 除外 / 3000 除外（end は排他）
+
+
+def test_get_battles_between_player_filter(db):
+    """player_name でフィルタされる。"""
+    db.insert_battles([_make_battle("a1", battle_at=1500)], player_name="Alice")
+    db.insert_battles([_make_battle("b1", battle_at=1500)], player_name="Bob")
+
+    alice = db.get_battles_between(1000, 2000, player_name="Alice")
+    assert len(alice) == 1 and alice[0]["battle_id"] == "a1"
+
+
 # ---------------------------------------------------------------------------
 # 集計関数テスト
 # ---------------------------------------------------------------------------

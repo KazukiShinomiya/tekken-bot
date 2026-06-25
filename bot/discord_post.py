@@ -141,6 +141,7 @@ def post_weekly(
     battles: list[Battle],
     week_start_str: str,
     player_name: str | None = None,
+    prev_battles: list[Battle] | None = None,
 ) -> tuple[list[tuple[str, str]], dict] | None:
     """
     週次サマリーを全 Discord Webhook に Embed 形式で投稿。
@@ -149,7 +150,7 @@ def post_weekly(
     if not WEBHOOK_URLS:
         raise ValueError("DISCORD_WEBHOOK_URL が .env に設定されていません")
 
-    embed = build_weekly_embed(battles, week_start_str, player_name)
+    embed = build_weekly_embed(battles, week_start_str, player_name, prev_battles=prev_battles)
     if embed is None:
         logger.info(f"[discord_post][{player_name}] 今週の試合なし。週次投稿をスキップ。")
         return None

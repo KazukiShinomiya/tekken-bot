@@ -271,6 +271,17 @@ def get_battles_since(since_ts: float, player_name: str | None = None) -> list[B
     return cast(list[Battle], [dict(r) for r in rows])
 
 
+def get_battles_between(
+    start_ts: float, end_ts: float, player_name: str | None = None
+) -> list[Battle]:
+    """[start_ts, end_ts) の半開区間のバトルを返す（前週比など期間比較用）。"""
+    with get_conn() as conn:
+        rows = _query_battles(
+            conn, "battle_at >= ? AND battle_at < ?", (int(start_ts), int(end_ts)), player_name
+        )
+    return cast(list[Battle], [dict(r) for r in rows])
+
+
 # ---------------------------------------------------------------------------
 # 死活監視（ジョブ正常完了の心拍）
 # ---------------------------------------------------------------------------

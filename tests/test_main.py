@@ -569,6 +569,7 @@ def test_run_weekly_for_player_returns_community_stats():
     mock_post_result = ([("msg1", "https://discord.com/api/webhooks/1/tok")], {"title": "t"})
     with (
         patch("bot.db.get_battles_since", return_value=battles),
+        patch("bot.db.get_battles_between", return_value=[]),
         patch("main.discord_post.post_weekly", return_value=mock_post_result),
         patch("bot.db.get_latest_comment_before", return_value=None),
         patch("main._analyze_with_timeout", return_value=None),
@@ -588,6 +589,7 @@ def test_run_weekly_for_player_no_battles():
     mock_post_result = None
     with (
         patch("bot.db.get_battles_since", return_value=[]),
+        patch("bot.db.get_battles_between", return_value=[]),
         patch("main.discord_post.post_weekly", return_value=mock_post_result),
         patch("bot.db.get_latest_comment_before", return_value=None),
         patch("main._analyze_with_timeout", return_value=None),
@@ -603,6 +605,7 @@ def test_run_weekly_for_player_post_exception():
     """weekly 投稿が例外 → notify_error が呼ばれる。"""
     with (
         patch("bot.db.get_battles_since", return_value=[_make_battle()]),
+        patch("bot.db.get_battles_between", return_value=[]),
         patch("main.discord_post.post_weekly", side_effect=RuntimeError("webhook error")),
         patch("main.discord_post.notify_error") as mock_err,
         patch("bot.db.get_latest_comment_before", return_value=None),
@@ -619,6 +622,7 @@ def test_run_weekly_for_player_edits_llm_comment():
     mock_post_result = ([("msg1", "https://discord.com/api/webhooks/1/tok")], {"title": "t"})
     with (
         patch("bot.db.get_battles_since", return_value=battles),
+        patch("bot.db.get_battles_between", return_value=[]),
         patch("main.discord_post.post_weekly", return_value=mock_post_result),
         patch("bot.db.get_latest_comment_before", return_value=None),
         patch("main._analyze_with_timeout", return_value="LLMコメント"),

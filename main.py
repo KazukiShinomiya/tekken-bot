@@ -390,10 +390,18 @@ def _run_weekly_for_player(
     battles = db.get_battles_since(since_ts, player_name=player_name)
     logger.info(f"[{player_name}] 週間バトル: {len(battles)} 件")
 
+    # 前週（[since_ts-7日, since_ts)）を前週比用に取得
+    prev_battles = db.get_battles_between(
+        since_ts - 7 * 86400, since_ts, player_name=player_name
+    )
+    logger.info(f"[{player_name}] 前週バトル: {len(prev_battles)} 件")
+
     # Discord に即時投稿（LLM コメントなし）
     post_result = None
     try:
-        post_result = discord_post.post_weekly(battles, week_start_str, player_name=player_name)
+        post_result = discord_post.post_weekly(
+            battles, week_start_str, player_name=player_name, prev_battles=prev_battles
+        )
         logger.info(f"[{player_name}] 週次サマリー投稿完了。")
     except Exception as e:
         msg = f"[{player_name}] 週次サマリー投稿失敗: {e}"

@@ -78,7 +78,7 @@ def generate_winrate_chart(
     if len(sorted_battles) < window:
         return None
 
-    wins = [1 if b.get("result") == "win" else 0 for b in sorted_battles]
+    wins = [1 if b.get("won") else 0 for b in sorted_battles]
     dates = [datetime.fromtimestamp(b["battle_at"], JST) for b in sorted_battles]
 
     rolling_wr = [

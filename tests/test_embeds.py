@@ -9,6 +9,8 @@ from bot.embeds import (
     _nemesis,
     _rating_summary,
     _matchup_matrix,
+    _rank_winrate_matrix,
+    _best_match,
     _quick_rank_chara_matrix,
     _scout_section,
     _opp_rank_label,
@@ -591,6 +593,91 @@ def test_build_weekly_embed_quick_no_rank_omits_distribution():
     quick_field = next((f for f in result["fields"] if "クイック" in f["name"]), None)
     assert quick_field is not None
     assert "相手段位" not in quick_field["value"]
+
+
+def _ranked_battle(won: bool, opp_rank: int | None, opp_chara: str = "Jin",
+                   my_rounds: int = 3, opp_rounds: int = 1) -> dict:
+    """ランク戦バトル（opp_rank 付き）を生成するヘルパー。"""
+    b = _battle(won=won, opp_chara=opp_chara, battle_type="ranked",
+                my_rounds=my_rounds, opp_rounds=opp_rounds)
+    b["opp_rank"] = opp_rank
+    return b
+
+
+def test_rank_winrate_matrix_groups_by_rank():
+    """相手段位別に勝率を集計し、上位段位から並べる。"""
+    battles = [
+        _ranked_battle(won=True,  opp_rank=22),  # Fujin: 1勝
+        _ranked_battle(won=True,  opp_rank=20),  # Kishin: 1勝1敗
+        _ranked_battle(won=False, opp_rank=20),
+    ]
+    result = _rank_winrate_matrix(battles)
+    assert result is not None
+    lines = result.split("\n")
+    # 上位段位（22=Fujin）が先、(20=Kishin) が後
+    assert lines[0].index("戦") >= 0
+    fujin_i = next(i for i, l in enumerate(lines) if "戦" in l and "100%" in l)
+    kishin_i = next(i for i, l in enumerate(lines) if "50%" in l)
+    assert fujin_i < kishin_i  # 格上が先
+    assert "✅" in lines[fujin_i]   # 100% → 勝ち越し
+    assert "➖" in lines[kishin_i]  # 50% → 五分
+
+
+def test_rank_winrate_matrix_none_without_rank():
+    """opp_rank が取れないランク戦のみ → None。"""
+    assert _rank_winrate_matrix([_ranked_battle(won=True, opp_rank=None)]) is None
+
+
+def test_rank_winrate_matrix_excludes_quick():
+    """クイックマッチは段位別勝率の対象外。"""
+    assert _rank_winrate_matrix([_quick_battle(won=True, opp_rank=20)]) is None
+
+
+def test_build_weekly_embed_includes_rank_winrate():
+    """ランク戦に opp_rank があれば「段位別勝率」フィールドを含む。"""
+    battles = [
+        _ranked_battle(won=True,  opp_rank=22),
+        _ranked_battle(won=False, opp_rank=20),
+    ]
+    result = build_weekly_embed(battles, "2024/01/15")
+    assert result is not None
+    assert any("段位別勝率" in f["name"] for f in result["fields"])
+
+
+def test_build_weekly_embed_best_match_shows_win():
+    """回帰: 勝った試合がベストマッチなら「勝」と表示する（result→won 修正）。"""
+    battles = [_battle(won=True, my_rounds=3, opp_rounds=2)]  # 合計5R ≥ 4
+    result = build_weekly_embed(battles, "2024/01/15")
+    assert result is not None
+    best_field = next((f for f in result["fields"] if "ベストマッチ" in f["name"]), None)
+    assert best_field is not None
+    assert best_field["value"].startswith("勝")
+
+
+def test_best_match_won_flag():
+    """_best_match が返したバトルの won フラグが正しく勝敗に対応する。"""
+    won_battle = _battle(won=True, my_rounds=3, opp_rounds=2)
+    assert _best_match([won_battle]) is not None
+    assert _best_match([won_battle])["won"] is True
+
+
+def test_build_weekly_embed_includes_prev_comparison():
+    """prev_battles を渡すと「前週比」フィールドを含む。"""
+    battles = [_battle(won=True), _battle(won=True)]  # 今週 2勝0敗
+    prev = [_battle(won=False)]                        # 前週 0勝1敗
+    result = build_weekly_embed(battles, "2024/01/15", prev_battles=prev)
+    assert result is not None
+    comp = next((f for f in result["fields"] if "前週比" in f["name"]), None)
+    assert comp is not None
+    assert "勝利数 +2" in comp["value"]   # 今週2勝 - 前週0勝
+    assert "前週: 0勝1敗" in comp["value"]
+
+
+def test_build_weekly_embed_no_prev_comparison_when_absent():
+    """prev_battles 未指定なら前週比フィールドは無い。"""
+    result = build_weekly_embed([_battle(won=True)], "2024/01/15")
+    assert result is not None
+    assert not any("前週比" in f["name"] for f in result["fields"])
 
 
 def test_build_rank_change_embed_promotion():
