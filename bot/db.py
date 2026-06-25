@@ -5,6 +5,8 @@ SQLite によるバトル履歴の永続化モジュール。
 import json
 import sqlite3
 import logging
+from collections.abc import Iterator
+from contextlib import closing, contextmanager
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import cast
@@ -40,10 +42,22 @@ def _query_battles(
     return conn.execute(sql, params + pp).fetchall()
 
 
-def get_conn() -> sqlite3.Connection:
+@contextmanager
+def get_conn() -> Iterator[sqlite3.Connection]:
+    """接続を確実に閉じるコンテキストマネージャ。
+
+    `with conn:` はトランザクションの commit/rollback を行うだけで接続自体は
+    閉じない（sqlite3 の仕様）。ここで内側に `with conn:` を抱えつつ
+    finally で close することで、従来の commit/rollback 意味論を保ったまま
+    接続リーク（GC まで開きっぱなし）を断つ。呼び出し側は変更不要。
+    """
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
-    return conn
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
 
 def init_db() -> None:
@@ -480,7 +494,7 @@ def backup_db(keep: int = 7) -> Path:
     backup_dir.mkdir(parents=True, exist_ok=True)
 
     dest = backup_dir / f"battles_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
-    with sqlite3.connect(DB_PATH) as src, sqlite3.connect(dest) as dst:
+    with closing(sqlite3.connect(DB_PATH)) as src, closing(sqlite3.connect(dest)) as dst:
         src.backup(dst)
 
     backups = sorted(backup_dir.glob("battles_*.db"))
