@@ -55,6 +55,29 @@ def generate_rating_chart(battles: list[Battle], player_name: str = "Player") ->
     return buf
 
 
+def _rolling_winrate(
+    battles: list[Battle], window: int
+) -> tuple[list[datetime], list[float]] | None:
+    """時系列順に `window` 試合の勝率ローリング平均を計算する純関数（描画なし）。
+
+    返り値は (各窓の終端日時, 勝率[0.0〜1.0]) のタプル。
+    試合数が window 未満なら None。計算とPNG描画を分離してテスト可能にする。
+    """
+    sorted_battles = sorted(battles, key=lambda x: x["battle_at"])
+    if len(sorted_battles) < window:
+        return None
+
+    wins = [1 if b.get("won") else 0 for b in sorted_battles]
+    dates = [datetime.fromtimestamp(b["battle_at"], JST) for b in sorted_battles]
+
+    rolling_wr = [
+        sum(wins[i : i + window]) / window
+        for i in range(len(wins) - window + 1)
+    ]
+    rolling_dates = dates[window - 1 :]
+    return rolling_dates, rolling_wr
+
+
 def generate_winrate_chart(
     battles: list[Battle],
     player_name: str = "Player",
@@ -74,18 +97,10 @@ def generate_winrate_chart(
         logger.warning("[graph] matplotlib が未インストールのためグラフをスキップ")
         return None
 
-    sorted_battles = sorted(battles, key=lambda x: x["battle_at"])
-    if len(sorted_battles) < window:
+    rolled = _rolling_winrate(battles, window)
+    if rolled is None:
         return None
-
-    wins = [1 if b.get("won") else 0 for b in sorted_battles]
-    dates = [datetime.fromtimestamp(b["battle_at"], JST) for b in sorted_battles]
-
-    rolling_wr = [
-        sum(wins[i : i + window]) / window
-        for i in range(len(wins) - window + 1)
-    ]
-    rolling_dates = dates[window - 1 :]
+    rolling_dates, rolling_wr = rolled
 
     fig, ax = plt.subplots(figsize=(10, 4))
     wr_pct = [w * 100 for w in rolling_wr]

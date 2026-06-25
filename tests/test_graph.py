@@ -11,7 +11,12 @@ from unittest.mock import patch
 
 pytest.importorskip("matplotlib")
 
-from bot.graph import generate_chara_usage_chart, generate_rating_chart
+from bot.graph import (
+    generate_chara_usage_chart,
+    generate_rating_chart,
+    generate_winrate_chart,
+    _rolling_winrate,
+)
 
 
 def _battle(
@@ -32,6 +37,74 @@ def _battle(
 
 def _week_row(week: str, chara: str, cnt: int) -> dict:
     return {"week": week, "my_chara": chara, "cnt": cnt}
+
+
+# ---------------------------------------------------------------------------
+# _rolling_winrate（純関数・勝率計算）
+# ---------------------------------------------------------------------------
+
+def test_rolling_winrate_none_when_below_window():
+    """試合数が window 未満なら None。"""
+    assert _rolling_winrate([_battle(won=True)], window=7) is None
+
+
+def test_rolling_winrate_all_wins():
+    """全勝なら全窓 1.0。"""
+    battles = [_battle(battle_at=i, won=True) for i in range(7)]
+    rolled = _rolling_winrate(battles, window=7)
+    assert rolled is not None
+    _dates, wr = rolled
+    assert wr == [1.0]
+
+
+def test_rolling_winrate_all_losses():
+    """全敗なら全窓 0.0。"""
+    battles = [_battle(battle_at=i, won=False) for i in range(7)]
+    rolled = _rolling_winrate(battles, window=7)
+    assert rolled is not None
+    _dates, wr = rolled
+    assert wr == [0.0]
+
+
+def test_rolling_winrate_counts_wins_not_constant():
+    """回帰: won を正しく数え、全敗扱い（常に0%）にならない。
+
+    かつて b.get("result")=="win"（result カラムは存在しない）を読んでいたため
+    勝率系列が常に 0.0 になっていた。won を見ていることをこのテストで固定する。
+    """
+    # 4勝3敗（window=7）→ 勝率 4/7
+    wins = [True, True, False, True, False, True, False]
+    battles = [_battle(battle_at=i, won=w) for i, w in enumerate(wins)]
+    rolled = _rolling_winrate(battles, window=7)
+    assert rolled is not None
+    _dates, wr = rolled
+    assert wr == [4 / 7]
+    assert wr != [0.0]  # バグ時はここで 0.0 になっていた
+
+
+def test_rolling_winrate_sliding_window():
+    """窓がスライドし、窓ごとに異なる勝率を返す。"""
+    # 8試合: 最初の窓[0:7]=6勝, 次の窓[1:8]=5勝（先頭の勝ちが抜け末尾の負けが入る）
+    wins = [True, True, True, True, True, True, False, False]
+    battles = [_battle(battle_at=i, won=w) for i, w in enumerate(wins)]
+    rolled = _rolling_winrate(battles, window=7)
+    assert rolled is not None
+    dates, wr = rolled
+    assert wr == [6 / 7, 5 / 7]
+    assert len(dates) == 2
+
+
+def test_generate_winrate_chart_returns_png():
+    """7試合以上 → PNG（BytesIO）を返す。"""
+    battles = [_battle(battle_at=i, won=(i % 2 == 0)) for i in range(8)]
+    result = generate_winrate_chart(battles, player_name="TestPlayer")
+    assert isinstance(result, io.BytesIO)
+    assert result.read(8).startswith(b"\x89PNG")
+
+
+def test_generate_winrate_chart_none_below_window():
+    """window 未満 → None。"""
+    assert generate_winrate_chart([_battle()], window=7) is None
 
 
 # ---------------------------------------------------------------------------
