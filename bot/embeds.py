@@ -6,9 +6,10 @@ I/O（Webhook 送信）は bot.discord_post が担当する。このモジュー
 """
 
 from collections import Counter
+from datetime import datetime
 
 from bot.config import (
-    TEKKEN_ID, DISCORD_EMBED_MAX_FIELDS,
+    TEKKEN_ID, DISCORD_EMBED_MAX_FIELDS, JST,
     RANK_NAMES, RANK_NAMES_EN, UNKNOWN_CHARACTER,
     WIN_RATE_THRESHOLD, EMBED_COLOR_GOOD_WR, EMBED_COLOR_BAD_WR,
     SCOUT_TREND_THRESHOLD,
@@ -257,6 +258,77 @@ def _quick_rank_distribution(quick_battles: list[Battle]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# 週次サマリー（要約ビュー）専用ヘルパー
+# ---------------------------------------------------------------------------
+
+def _winrate_bar(wins: int, total: int, width: int = 10) -> str:
+    """勝率をテキストバー（█ 埋め / ░ 空き）で表す。total<=0 は空バー（ゼロ除算しない）。"""
+    if total <= 0:
+        return "░" * width
+    filled = max(0, min(width, round(wins / total * width)))
+    return "█" * filled + "░" * (width - filled)
+
+
+def _daily_sparkline(battles: list[Battle], week_start_str: str) -> str | None:
+    """週の各曜日の勝率を 1 行のスパークラインで返す。
+
+    week_start_str は "YYYY/MM/DD"（週の月曜）。パース不可なら None。
+    試合のない曜日は中黒（·）、ある曜日は勝率を ▁〜█ の高さで表す。
+    """
+    try:
+        start = datetime.strptime(week_start_str, "%Y/%m/%d").replace(tzinfo=JST)
+    except (ValueError, TypeError):
+        return None
+
+    bars   = " ▁▂▃▄▅▆▇█"
+    labels = "月火水木金土日"
+    by_day: dict[int, list[bool]] = {}
+    for b in battles:
+        ts = b.get("battle_at")
+        if ts is None:
+            continue
+        offset = (datetime.fromtimestamp(ts, JST).date() - start.date()).days
+        if 0 <= offset < 7:
+            by_day.setdefault(offset, []).append(bool(b["won"]))
+
+    cells = []
+    for d in range(7):
+        res = by_day.get(d)
+        if not res:
+            cells.append(f"{labels[d]}·")
+        else:
+            idx = round(sum(res) / len(res) * 8)
+            cells.append(f"{labels[d]}{bars[idx]}")
+    return " ".join(cells)
+
+
+def _affinity_highlight(battles: list[Battle]) -> str | None:
+    """2戦以上対戦したキャラを、得意（勝ち越し）と苦手（負け越し）に分けて返す。
+
+    各最大3キャラ。五分（=50%）はどちらにも含めない。対象がなければ None。
+    """
+    stats = aggregate_by_character(battles)
+    rows = [(c, sum(r), len(r)) for c, r in stats.items() if len(r) >= 2]
+    if not rows:
+        return None
+
+    strong = sorted((r for r in rows if r[1] / r[2] > WIN_RATE_THRESHOLD),
+                    key=lambda x: -x[1] / x[2])[:3]
+    weak   = sorted((r for r in rows if r[1] / r[2] < WIN_RATE_THRESHOLD),
+                    key=lambda x: x[1] / x[2])[:3]
+
+    def _fmt(items: list[tuple[str, int, int]]) -> str:
+        return " / ".join(f"{c} {w}-{n - w}" for c, w, n in items)
+
+    lines = []
+    if strong:
+        lines.append(f"得意  {_fmt(strong)}")
+    if weak:
+        lines.append(f"苦手  {_fmt(weak)}")
+    return "\n".join(lines) if lines else None
+
+
+# ---------------------------------------------------------------------------
 # Discord Embed ビルダー
 # ---------------------------------------------------------------------------
 
@@ -448,19 +520,6 @@ def _build_prev_comparison(
     return {"name": f"📊 {label}比", "value": comparison, "inline": False}
 
 
-def _best_match(battles: list[Battle]) -> Battle | None:
-    """最多ラウンド数（合計ラウンド数 = my_rounds + opp_rounds が最大）のバトルを返す。
-    4ラウンド以上の試合がなければ None。
-    """
-    def total_rounds(b: Battle) -> int:
-        return (b.get("my_rounds") or 0) + (b.get("opp_rounds") or 0)
-
-    candidates = [b for b in battles if total_rounds(b) >= 4]
-    if not candidates:
-        return None
-    return max(candidates, key=total_rounds)
-
-
 def _build_period_stats_bottom(battles: list[Battle], power_label: str) -> list[dict]:
     """週次・月次 Embed の共通下部フィールド（最多キャラ〜対戦成績）を構築する。"""
     top_chara, top_chara_count = get_most_common(battles, "my_chara")
@@ -490,51 +549,110 @@ def _build_period_stats_bottom(battles: list[Battle], power_label: str) -> list[
     return fields
 
 
+def _weekly_summary_lines(
+    battles: list[Battle],
+    week_start_str: str,
+    prev_battles: list[Battle] | None,
+) -> list[str]:
+    """週次サマリーの description（一望できる要約）を行リストで返す。
+
+    1行目: 純レート変動・通算成績・勝率バー
+    2行目: 前週比（prev あり）／最長連勝・連敗（prev なし）
+    3行目: 曜日別スパークライン（週開始日がパースできた場合）
+    """
+    sorted_b = sorted(battles, key=lambda x: x["battle_at"])
+    w, l = count_wins(battles), count_losses(battles)
+    total = w + l
+    rated = filter_rated_battles([b for b in battles if b.get("battle_type") == "ranked"])
+    net   = sum(b.get("rating_change") or 0 for b in rated) if rated else None
+    max_win, max_lose = calculate_streak(sorted_b)
+
+    def _streak_bits() -> list[str]:
+        bits = []
+        if max_win  >= 2: bits.append(f"最長{max_win}連勝")
+        if max_lose >= 2: bits.append(f"最長{max_lose}連敗")
+        return bits
+
+    lines: list[str] = []
+
+    head = ""
+    if net is not None:
+        head = f"**{'📈' if net >= 0 else '📉'} {'+' if net >= 0 else ''}{net}pt**　"
+    lines.append(f"{head}{w}勝{l}敗　`{_winrate_bar(w, total)}` **{_win_rate(battles)}**")
+
+    if prev_battles:
+        prev_w = count_wins(prev_battles)
+        diff_w = w - prev_w
+        comp = f"前週比 {'▲' if diff_w >= 0 else '▼'} 勝利数 {'+' if diff_w >= 0 else ''}{diff_w}"
+        prev_rated = filter_rated_battles([b for b in prev_battles if b.get("battle_type") == "ranked"])
+        prev_net   = sum(b.get("rating_change") or 0 for b in prev_rated) if prev_rated else None
+        if net is not None and prev_net is not None:
+            rdiff = net - prev_net
+            comp += f" ・ レート差 {'+' if rdiff >= 0 else ''}{rdiff}"
+        bits = _streak_bits()
+        if bits:
+            comp += " ・ " + " ".join(bits)
+        lines.append(comp)
+    else:
+        bits = _streak_bits()
+        if bits:
+            lines.append(" ・ ".join(bits))
+
+    spark = _daily_sparkline(battles, week_start_str)
+    if spark:
+        lines.append(f"日別 ▏{spark}")
+
+    return lines
+
+
 def build_weekly_embed(
     battles: list[Battle],
     week_start_str: str,
     player_name: str | None = None,
     prev_battles: list[Battle] | None = None,
 ) -> dict | None:
-    """週次サマリーの Embed dict を返す。試合なしの場合は None。LLM コメントは含まない。"""
+    """週次サマリーの Embed dict を返す。試合なしの場合は None。LLM コメントは含まない。
+
+    一望性を重視した要約ビュー: description に週の総括（成績・前週比・曜日別の波）、
+    フィールドは ランク／クイック／週末鉄拳力／相性ハイライト に絞る。
+    詳細な段位別勝率・トレンド等は月次サマリー側が担う。
+    """
     if not battles:
         return None
     display_name = player_name or TEKKEN_ID
-    fields = _build_period_stats_top(battles)
 
-    # 前週比（レーティング変動フィールドの直後に挿入）
-    if prev_battles:
-        fields.append(_build_prev_comparison(battles, prev_battles, "前週"))
+    description = "\n".join(_weekly_summary_lines(battles, week_start_str, prev_battles))[:4096]
 
-    fields += _build_period_stats_bottom(battles, "週末鉄拳力")
+    ranked = [b for b in battles if b.get("battle_type") == "ranked"]
+    quick  = [b for b in battles if b.get("battle_type") == "quick"]
 
-    # 相手段位別勝率（格上に通用しているか／格下を取りこぼしていないか）
-    rank_wr = _rank_winrate_matrix(battles)
-    if rank_wr:
-        fields.append({"name": "🏅 段位別勝率", "value": rank_wr[:1024], "inline": False})
+    fields: list[dict] = []
+    if ranked:
+        rw, rl = count_wins(ranked), count_losses(ranked)
+        fields.append({"name": "🏆 ランク", "value": f"{rw}勝{rl}敗 ({_win_rate(ranked)})", "inline": True})
+    if quick:
+        qw, ql = count_wins(quick), count_losses(quick)
+        qval = f"{qw}勝{ql}敗 ({_win_rate(quick)})"
+        dist = _quick_rank_distribution(quick)
+        if dist:
+            qval += f"\n相手段位: {dist}"
+        fields.append({"name": "⚡ クイック", "value": qval, "inline": True})
 
-    # 今週の天敵（2 戦以上で最も負け越したキャラ）
-    nemesis = _nemesis(battles)
-    if nemesis:
-        fields.append({"name": "💀 今週の天敵", "value": nemesis, "inline": True})
+    latest = max(battles, key=lambda x: x["battle_at"])
+    if latest.get("my_power"):
+        rank_name  = _rank_name(latest.get("my_rank"))
+        field_name = f"💥 週末鉄拳力: {rank_name}" if rank_name else "💥 週末鉄拳力"
+        fields.append({"name": field_name, "value": f"{latest['my_power']:,}", "inline": True})
 
-    best = _best_match(battles)
-    if best:
-        my_r   = best.get("my_rounds") or 0
-        opp_r  = best.get("opp_rounds") or 0
-        result = "勝" if best.get("won") else "負"
-        opp    = best.get("opp_name") or "?"
-        chara  = best.get("opp_chara") or "?"
-        fields.append({
-            "name":   "🔥 今週のベストマッチ",
-            "value":  f"{result} vs {opp}（{chara}）{my_r}-{opp_r}",
-            "inline": False,
-        })
+    affinity = _affinity_highlight(battles)
+    if affinity:
+        fields.append({"name": "🎯 相性ハイライト（得意↑ / 苦手↓）", "value": affinity[:1024], "inline": False})
 
     return {
-        "title":  f"📅 {display_name} 週次サマリー（{week_start_str} 週）",
-        "color":  _embed_color(battles),
-        "fields": fields[:DISCORD_EMBED_MAX_FIELDS],
+        "title":       f"📅 {display_name} 今週の振り返り（{week_start_str} 週）",
+        "color":       _embed_color(battles),
+        "description": description,
+        "fields":      fields[:DISCORD_EMBED_MAX_FIELDS],
     }
 
 

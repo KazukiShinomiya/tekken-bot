@@ -10,12 +10,14 @@ from bot.embeds import (
     _rating_summary,
     _matchup_matrix,
     _rank_winrate_matrix,
-    _best_match,
     _quick_rank_chara_matrix,
     _scout_section,
     _opp_rank_label,
     _quick_rank_distribution,
     _embed_color,
+    _winrate_bar,
+    _daily_sparkline,
+    _affinity_highlight,
     build_community_weekly_embed,
     build_embed,
     build_weekly_embed,
@@ -510,24 +512,12 @@ def test_build_weekly_embed_with_quick():
     assert any("クイック" in f["name"] for f in result["fields"])
 
 
-def test_build_weekly_embed_with_net_rating():
-    """ランク戦レーティングデータあり → レーティング変動フィールドが含まれる。"""
+def test_build_weekly_embed_net_rating_in_summary():
+    """ランク戦レーティングデータあり → サマリー(description)に純変動 pt が含まれる。"""
     b = _battle(True, battle_type="ranked", rating_before=10000, rating_change=200, battle_at=1000)
     result = build_weekly_embed([b], "2024/01/15")
     assert result is not None
-    assert any("レーティング変動" in f["name"] for f in result["fields"])
-
-
-def test_build_weekly_embed_with_trend():
-    """3戦以上のランク戦レーティングデータ → トレンドフィールドが含まれる。"""
-    battles = [
-        _battle(True,  battle_type="ranked", rating_before=10000, rating_change=100, battle_at=1000),
-        _battle(True,  battle_type="ranked", rating_before=10100, rating_change=80,  battle_at=2000),
-        _battle(False, battle_type="ranked", rating_before=10180, rating_change=-50, battle_at=3000),
-    ]
-    result = build_weekly_embed(battles, "2024/01/15")
-    assert result is not None
-    assert any("トレンド" in f["name"] for f in result["fields"])
+    assert "+200pt" in result["description"]
 
 
 def test_build_community_weekly_embed_returns_dict():
@@ -633,51 +623,107 @@ def test_rank_winrate_matrix_excludes_quick():
     assert _rank_winrate_matrix([_quick_battle(won=True, opp_rank=20)]) is None
 
 
-def test_build_weekly_embed_includes_rank_winrate():
-    """ランク戦に opp_rank があれば「段位別勝率」フィールドを含む。"""
-    battles = [
-        _ranked_battle(won=True,  opp_rank=22),
-        _ranked_battle(won=False, opp_rank=20),
-    ]
-    result = build_weekly_embed(battles, "2024/01/15")
-    assert result is not None
-    assert any("段位別勝率" in f["name"] for f in result["fields"])
-
-
-def test_build_weekly_embed_best_match_shows_win():
-    """回帰: 勝った試合がベストマッチなら「勝」と表示する（result→won 修正）。"""
-    battles = [_battle(won=True, my_rounds=3, opp_rounds=2)]  # 合計5R ≥ 4
-    result = build_weekly_embed(battles, "2024/01/15")
-    assert result is not None
-    best_field = next((f for f in result["fields"] if "ベストマッチ" in f["name"]), None)
-    assert best_field is not None
-    assert best_field["value"].startswith("勝")
-
-
-def test_best_match_won_flag():
-    """_best_match が返したバトルの won フラグが正しく勝敗に対応する。"""
-    won_battle = _battle(won=True, my_rounds=3, opp_rounds=2)
-    assert _best_match([won_battle]) is not None
-    assert _best_match([won_battle])["won"] is True
-
-
-def test_build_weekly_embed_includes_prev_comparison():
-    """prev_battles を渡すと「前週比」フィールドを含む。"""
+def test_build_weekly_embed_prev_comparison_in_summary():
+    """prev_battles を渡すと description に前週比（勝利数差）が含まれる。"""
     battles = [_battle(won=True), _battle(won=True)]  # 今週 2勝0敗
     prev = [_battle(won=False)]                        # 前週 0勝1敗
     result = build_weekly_embed(battles, "2024/01/15", prev_battles=prev)
     assert result is not None
-    comp = next((f for f in result["fields"] if "前週比" in f["name"]), None)
-    assert comp is not None
-    assert "勝利数 +2" in comp["value"]   # 今週2勝 - 前週0勝
-    assert "前週: 0勝1敗" in comp["value"]
+    assert "前週比" in result["description"]
+    assert "+2" in result["description"]   # 今週2勝 - 前週0勝
 
 
 def test_build_weekly_embed_no_prev_comparison_when_absent():
-    """prev_battles 未指定なら前週比フィールドは無い。"""
+    """prev_battles 未指定なら description に前週比は無い（最長連勝/連敗のみ）。"""
     result = build_weekly_embed([_battle(won=True)], "2024/01/15")
     assert result is not None
-    assert not any("前週比" in f["name"] for f in result["fields"])
+    assert "前週比" not in result["description"]
+
+
+def test_build_weekly_embed_summary_has_winrate_bar():
+    """description にテキスト勝率バー（█/░）が含まれる。"""
+    battles = [_battle(won=True), _battle(won=False)]
+    result = build_weekly_embed(battles, "2024/01/15")
+    assert result is not None
+    assert "█" in result["description"] or "░" in result["description"]
+
+
+def test_build_weekly_embed_has_affinity_highlight():
+    """2戦以上のキャラがあれば「相性ハイライト」フィールドを含む。"""
+    battles = [
+        _battle(won=True,  opp_chara="King"), _battle(won=True,  opp_chara="King"),
+        _battle(won=False, opp_chara="Jin"),  _battle(won=False, opp_chara="Jin"),
+    ]
+    result = build_weekly_embed(battles, "2024/01/15")
+    assert result is not None
+    affinity = next((f for f in result["fields"] if "相性" in f["name"]), None)
+    assert affinity is not None
+    assert "得意" in affinity["value"]
+    assert "苦手" in affinity["value"]
+
+
+def test_build_weekly_embed_field_count_is_small():
+    """週次は要約。フィールド数は 5 以下に収まる。"""
+    battles = [
+        _ranked_battle(won=True,  opp_rank=22),
+        _ranked_battle(won=False, opp_rank=20),
+        _quick_battle(won=True,   opp_rank=20),
+    ]
+    result = build_weekly_embed(battles, "2024/01/15")
+    assert result is not None
+    assert len(result["fields"]) <= 5
+
+
+def test_winrate_bar_full():
+    """全勝 → バーが全て埋まる。"""
+    assert _winrate_bar(10, 10, width=10) == "█" * 10
+
+
+def test_winrate_bar_empty_total():
+    """総数 0 → 空バー（ゼロ除算しない）。"""
+    assert _winrate_bar(0, 0, width=10) == "░" * 10
+
+
+def test_winrate_bar_half():
+    """5割 → 半分が埋まる。"""
+    bar = _winrate_bar(1, 2, width=10)
+    assert bar.count("█") == 5
+    assert bar.count("░") == 5
+
+
+def test_daily_sparkline_marks_days_with_battles():
+    """対戦のあった曜日にバー文字、無い曜日は中黒（·）。"""
+    monday = 1705244400  # 2024-01-15 (月) 付近 JST
+    battles = [
+        _battle(won=True,  battle_at=monday + 3600),       # 月
+        _battle(won=False, battle_at=monday + 86400 * 2),  # 水
+    ]
+    spark = _daily_sparkline(battles, "2024/01/15")
+    assert spark is not None
+    assert "月" in spark and "水" in spark
+    assert "·" in spark  # 試合のない曜日
+
+
+def test_daily_sparkline_invalid_date_returns_none():
+    """週開始日のパースに失敗したら None（描画をスキップ）。"""
+    assert _daily_sparkline([_battle(won=True)], "not-a-date") is None
+
+
+def test_affinity_highlight_splits_strong_and_weak():
+    """得意（勝ち越し）と苦手（負け越し）の両方を含む。"""
+    battles = [
+        _battle(won=True,  opp_chara="King"), _battle(won=True,  opp_chara="King"),
+        _battle(won=False, opp_chara="Jin"),  _battle(won=False, opp_chara="Jin"),
+    ]
+    text = _affinity_highlight(battles)
+    assert text is not None
+    assert "King" in text
+    assert "Jin" in text
+
+
+def test_affinity_highlight_none_when_no_repeat():
+    """2戦以上のキャラが無ければ None。"""
+    assert _affinity_highlight([_battle(won=True, opp_chara="King")]) is None
 
 
 def test_build_rank_change_embed_promotion():
