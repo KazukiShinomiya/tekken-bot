@@ -8,6 +8,19 @@
 - **デプロイ先**: `ubuntu@10.0.0.254:~/tekken_bot/`
 - **稼働状況**: SESSION_STATE.md に詳細あり
 
+## 設計原則
+
+旧 `aidlc-docs/constitution.md` から、コードに正解が無い「設計意図」のみを集約。
+版数・タイムアウト等の可変値はここに書かない（`config.py` / `pyproject.toml` が真実の源）。
+
+1. **Real-time First** — wank を優先データソースとし、ewgf.gg は wank 完全失敗時のフォールバックに限定する（ewgf は24時間遅延）
+2. **Fail Gracefully** — 各取得ステップが失敗しても Bot は止めない。LLM タイムアウト・API 障害・DB エラーはログに残し、次フェーズへ継続する
+3. **Multi-player Ready** — 単一 `POLARIS_ID` との後方互換を保ちつつ、`PLAYERS=Name:id,...` で複数名に対応する
+4. **Test Before Deploy** — デプロイ前に `python -m pytest tests/` の全通過を必須とする
+5. **No Silent Failures** — 例外は必ずログに残す。想定外のエラーは `#errors` チャンネルへの通知も検討する
+6. **Data Integrity Over Speed** — バトル ID の重複は `INSERT OR IGNORE` で無視し既存データを壊さない。DB 変更は `ALTER TABLE` を使い、テーブル再作成はしない
+7. **Story Over Data** — 投稿は人の言葉（LLM コメント）を最前面に。日次投稿は description 冒頭へコメントを置き、乾燥したデータ羅列より「展開の伝わりやすさ」を優先する（US-501 で確定）
+
 ## プレイヤー情報
 
 | 項目 | 値 |
@@ -74,5 +87,15 @@ wank HTML のみ（最終フォールバック）
 
 - **CHARA_NAMES**: 1-indexed（Paul=1）。Season 2 で Zafina 以降シフト済み
 - **タイムゾーン**: コンテナは `TZ=Asia/Tokyo`、スケジューラは JST 表記
-- **テスト**: `python -m pytest tests/` で 120 テスト全通過を確認してからデプロイ
+- **テスト**: `python -m pytest tests/` で全テスト通過を確認してからデプロイ（件数は増えるため固定しない）
 - **NAS ローカル変更**: `git stash` してから `git pull` する
+
+## 用語定義
+
+| 用語 | 定義 |
+|------|------|
+| Polaris ID | wank / ewgf.gg でプレイヤーを識別する ID（例: `66aidNN9JQ2T`） |
+| Battle | 1回の対戦を表す dict（`Battle` TypedDict, `bot/models.py`） |
+| Daily job | 毎日 08:00 JST に実行される戦績取得・投稿処理 |
+| Weekly job | 毎週月曜起算・日曜 21:00 JST 実行の週次サマリー |
+| Scout | リピート対戦相手の wank プロフィール取得（キャッシュあり） |
