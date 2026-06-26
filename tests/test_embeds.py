@@ -9,7 +9,7 @@ from bot.embeds import (
     _nemesis,
     _rating_summary,
     _matchup_matrix,
-    _rank_winrate_matrix,
+    _rank_winrate_breakdown,
     _quick_rank_chara_matrix,
     _scout_section,
     _opp_rank_label,
@@ -594,33 +594,74 @@ def _ranked_battle(won: bool, opp_rank: int | None, opp_chara: str = "Jin",
     return b
 
 
-def test_rank_winrate_matrix_groups_by_rank():
-    """相手段位別に勝率を集計し、上位段位から並べる。"""
+def test_rank_winrate_breakdown_groups_and_orders_by_rank():
+    """相手段位別に勝率を集計し、上位段位（格上）から並べる。"""
     battles = [
-        _ranked_battle(won=True,  opp_rank=22),  # Fujin: 1勝
-        _ranked_battle(won=True,  opp_rank=20),  # Kishin: 1勝1敗
+        _ranked_battle(won=True,  opp_rank=23),  # 鬼神: 1勝
+        _ranked_battle(won=True,  opp_rank=20),  # 戦帝: 1勝1敗
         _ranked_battle(won=False, opp_rank=20),
     ]
-    result = _rank_winrate_matrix(battles)
+    for b in battles:
+        b["my_rank"] = 22  # 雷神
+    result = _rank_winrate_breakdown(battles)
     assert result is not None
     lines = result.split("\n")
-    # 上位段位（22=Fujin）が先、(20=Kishin) が後
-    assert lines[0].index("戦") >= 0
-    fujin_i = next(i for i, l in enumerate(lines) if "戦" in l and "100%" in l)
-    kishin_i = next(i for i, l in enumerate(lines) if "50%" in l)
-    assert fujin_i < kishin_i  # 格上が先
-    assert "✅" in lines[fujin_i]   # 100% → 勝ち越し
-    assert "➖" in lines[kishin_i]  # 50% → 五分
+    kishin_i = next(i for i, l in enumerate(lines) if "鬼神" in l)
+    sentei_i = next(i for i, l in enumerate(lines) if "戦帝" in l)
+    assert kishin_i < sentei_i  # 格上（23）が先
+    assert "✅" in lines[kishin_i]   # 100% → 勝ち越し
+    assert "➖" in lines[sentei_i]   # 50% → 五分
 
 
-def test_rank_winrate_matrix_none_without_rank():
-    """opp_rank が取れないランク戦のみ → None。"""
-    assert _rank_winrate_matrix([_ranked_battle(won=True, opp_rank=None)]) is None
+def test_rank_winrate_breakdown_marks_above_and_below():
+    """自分の段位を基準に格上🔺 / 格下🔻 を付ける。"""
+    battles = [
+        _ranked_battle(won=False, opp_rank=23),  # 鬼神（格上）
+        _ranked_battle(won=True,  opp_rank=20),  # 戦帝（格下）
+    ]
+    for b in battles:
+        b["my_rank"] = 22  # 雷神
+    result = _rank_winrate_breakdown(battles)
+    assert result is not None
+    lines = result.split("\n")
+    assert "🔺" in next(l for l in lines if "鬼神" in l)
+    assert "🔻" in next(l for l in lines if "戦帝" in l)
 
 
-def test_rank_winrate_matrix_excludes_quick():
-    """クイックマッチは段位別勝率の対象外。"""
-    assert _rank_winrate_matrix([_quick_battle(won=True, opp_rank=20)]) is None
+def test_rank_winrate_breakdown_includes_quick():
+    """クイックマッチも対象に含む（旧ランク戦専用版との違い）。"""
+    b = _quick_battle(won=False, opp_rank=23)
+    b["my_rank"] = 22
+    result = _rank_winrate_breakdown([b])
+    assert result is not None
+    assert "鬼神" in result
+
+
+def test_rank_winrate_breakdown_self_rank_label():
+    """同段の相手には (自分) を付ける。"""
+    b = _ranked_battle(won=True, opp_rank=22)
+    b["my_rank"] = 22
+    result = _rank_winrate_breakdown([b])
+    assert result is not None
+    assert "自分" in result
+
+
+def test_rank_winrate_breakdown_none_without_rank():
+    """opp_rank が取れない試合のみ → None。"""
+    assert _rank_winrate_breakdown([_quick_battle(won=True, opp_rank=None)]) is None
+
+
+def test_build_weekly_embed_includes_rank_breakdown():
+    """opp_rank がある試合があれば「段位別勝率」フィールドを含む。"""
+    battles = [
+        _quick_battle(won=False, opp_rank=23),
+        _ranked_battle(won=True,  opp_rank=20),
+    ]
+    for b in battles:
+        b["my_rank"] = 22
+    result = build_weekly_embed(battles, "2024/01/15")
+    assert result is not None
+    assert any("段位別勝率" in f["name"] for f in result["fields"])
 
 
 def test_build_weekly_embed_prev_comparison_in_summary():

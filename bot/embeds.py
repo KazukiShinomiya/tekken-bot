@@ -110,28 +110,36 @@ def _matchup_matrix(battles: list[Battle]) -> str | None:
     return "\n".join(lines)
 
 
-def _rank_winrate_matrix(battles: list[Battle]) -> str | None:
-    """ランク戦を相手段位別に集計し、段位ごとの勝率を上位段位順に表示する。
+def _rank_winrate_breakdown(battles: list[Battle]) -> str | None:
+    """相手段位別の勝率を、格上🔺 / 格下🔻 マーカー付きで返す。
 
-    格上に通用しているか／格下を取りこぼしていないかを一望するための分析軸。
-    opp_rank が取れたランク戦のみ対象。対象がなければ None。
+    opp_rank が取れた全試合（クイック・ランク両方）が対象。クイックは自分より
+    大きく上下する相手と当たるため、「負けたが相手は格上だった」という文脈を
+    振り返りに残すのが狙い。自分の段位は最新試合の my_rank を基準にする。
+    対象がなければ None。上位段位（格上）から順に並べる。
     勝率 > 50% → ✅、= 50% → ➖、< 50% → ❌
     """
-    ranked = [
-        b for b in battles
-        if b.get("battle_type") == "ranked" and b.get("opp_rank") is not None
-    ]
-    if not ranked:
-        return None
-
     agg: dict[int, list[int]] = {}
-    for b in ranked:
-        rank_id = b["opp_rank"]
+    for b in battles:
+        rank_id = b.get("opp_rank")
         if not isinstance(rank_id, int):
             continue
         agg.setdefault(rank_id, []).append(1 if b.get("won") else 0)
     if not agg:
         return None
+
+    # 自分の段位 = 最新試合の my_rank（格上／格下の基準。取れなければマーカー省略）
+    latest  = max(battles, key=lambda x: x["battle_at"])
+    my_rank = latest.get("my_rank")
+
+    def _marker(rank_id: int) -> str:
+        if not isinstance(my_rank, int):
+            return ""
+        if rank_id > my_rank:
+            return "🔺"
+        if rank_id < my_rank:
+            return "🔻"
+        return "(自分)"
 
     lines = []
     for rank_id in sorted(agg, reverse=True):  # 上位段位（格上）から
@@ -145,8 +153,10 @@ def _rank_winrate_matrix(battles: list[Battle]) -> str | None:
             icon = "❌"
         else:
             icon = "➖"
-        name = _rank_name(rank_id) or f"Rank{rank_id}"
-        lines.append(f"  {name:<10} {n}戦 {pct:>4} {icon}")
+        name   = _rank_name(rank_id) or f"Rank{rank_id}"
+        marker = _marker(rank_id)
+        label  = f"{name}{marker}" if marker else name
+        lines.append(f"  {label:<12} {n}戦 {pct:>4} {icon}")
 
     return "\n".join(lines)
 
@@ -643,6 +653,10 @@ def build_weekly_embed(
         rank_name  = _rank_name(latest.get("my_rank"))
         field_name = f"💥 週末鉄拳力: {rank_name}" if rank_name else "💥 週末鉄拳力"
         fields.append({"name": field_name, "value": f"{latest['my_power']:,}", "inline": True})
+
+    rank_breakdown = _rank_winrate_breakdown(battles)
+    if rank_breakdown:
+        fields.append({"name": "🏅 段位別勝率（🔺格上 / 🔻格下）", "value": rank_breakdown[:1024], "inline": False})
 
     affinity = _affinity_highlight(battles)
     if affinity:
