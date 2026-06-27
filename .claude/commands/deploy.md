@@ -2,11 +2,16 @@
 
 ## 手順
 
-### 1. テスト
+### 1. テスト（CI 同等検査）
+CI（`.github/workflows/test.yml`）と同じ検査をローカルで先行実行し、
+コミット前に mypy／カバレッジ失敗を捕まえる。
+
 ```bash
-cd E:/work/tekken_bot && python -m pytest tests/ -q
+cd E:/work/tekken_bot && python -m mypy bot main.py exporter.py scheduler.py
+cd E:/work/tekken_bot && python -m pytest tests/ -q --cov=bot --cov=main --cov-fail-under=90
 ```
-失敗したら中止してユーザーに報告する。
+いずれか失敗したら中止してユーザーに報告する。
+（push 段では `.githooks/pre-push` が同検査を再度強制する＝二重の防壁）
 
 ### 2. 変更確認
 ```bash
