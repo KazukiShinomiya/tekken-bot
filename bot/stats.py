@@ -54,6 +54,41 @@ def aggregate_by_character(battles: list[Battle]) -> dict[str, list[bool]]:
     return result
 
 
+def aggregate_by_my_character(battles: list[Battle]) -> dict[str, list[bool]]:
+    """自分の使用キャラ別に勝敗をグループ化して返す（クイックの練習ログ用）。"""
+    result: dict[str, list[bool]] = {}
+    for b in battles:
+        c = b.get("my_chara") or UNKNOWN_CHARACTER
+        result.setdefault(c, []).append(bool(b["won"]))
+    return result
+
+
+def round_quality(battles: list[Battle]) -> dict[str, int | None]:
+    """ラウンド単位の試合の質を集計して返す。
+
+    Returns:
+        round_wr_pct: ラウンド勝率(%)。ラウンド情報が皆無なら None
+        sweep_wins:   完封勝ち（相手の取得ラウンド 0）
+        sweep_losses: 完封負け（自分の取得ラウンド 0）
+        close_games:  フルラウンド接戦（合計 5 ラウンド以上）
+    """
+    total_my  = sum(b.get("my_rounds", 0) or 0 for b in battles)
+    total_opp = sum(b.get("opp_rounds", 0) or 0 for b in battles)
+    total_r   = total_my + total_opp
+    # 完封は勝者側にラウンドがあることを条件にする（ラウンド情報欠損の試合を誤カウントしない）
+    sweep_wins   = sum(1 for b in battles
+                       if b["won"] and (b.get("my_rounds") or 0) > 0 and (b.get("opp_rounds") or 0) == 0)
+    sweep_losses = sum(1 for b in battles
+                       if not b["won"] and (b.get("opp_rounds") or 0) > 0 and (b.get("my_rounds") or 0) == 0)
+    close_games  = sum(1 for b in battles if (b.get("my_rounds") or 0) + (b.get("opp_rounds") or 0) >= 5)
+    return {
+        "round_wr_pct": round(total_my / total_r * 100) if total_r else None,
+        "sweep_wins":   sweep_wins,
+        "sweep_losses": sweep_losses,
+        "close_games":  close_games,
+    }
+
+
 def get_most_common(battles: list[Battle], key: str) -> tuple[str, int]:
     """
     バトルリストから指定キーの最多値と出現回数を返す。

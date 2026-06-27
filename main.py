@@ -408,22 +408,25 @@ def _run_weekly_for_player(
         logger.error(msg)
         discord_post.notify_error(msg)
 
-    # LLM 分析（投稿後）
-    # since_ts より前の最新コメントを継続コーチング用に取得する
-    prev_comment = db.get_latest_comment_before(since_ts, player_name=player_name)
-    if prev_comment:
-        logger.info(f"[{player_name}] 週次: 前回コメントを取得: {len(prev_comment)}文字")
-    llm_comment = _analyze_with_timeout(
-        battles, week_start_str, player_name=player_name, prev_comment=prev_comment,
-    )
+    # LLM 分析（投稿後）。コーチングが意味を持つのは真剣勝負のランク戦のみ。
+    # ランク戦が無ければ Ollama 呼び出し自体をスキップする。
+    ranked = [b for b in battles if b.get("battle_type") == "ranked"]
+    llm_comment = None
+    if ranked:
+        # since_ts より前の最新コメントを継続コーチング用に取得する
+        prev_comment = db.get_latest_comment_before(since_ts, player_name=player_name)
+        if prev_comment:
+            logger.info(f"[{player_name}] 週次: 前回コメントを取得: {len(prev_comment)}文字")
+        llm_comment = _analyze_with_timeout(
+            ranked, week_start_str, player_name=player_name, prev_comment=prev_comment,
+        )
 
-    # LLM コメントを Embed フッターとして追記
+    # LLM コメントをランク戦 Embed の冒頭へ追記（post_result はランク戦投稿）
     if llm_comment and post_result:
         message_ids, embed = post_result
         discord_post.edit_llm_comment(message_ids, embed, llm_comment)
         logger.info(f"[{player_name}] 週次LLMコメント追記完了。")
 
-    ranked = [b for b in battles if b.get("battle_type") == "ranked"]
     rated  = filter_rated_battles(ranked)
     return {
         "name":       player_name,

@@ -455,6 +455,58 @@ def test_post_weekly_continues_when_chara_chart_raises():
     assert result is not None
 
 
+def _quick_full_battle(battle_at: int = 2000, won: bool = True) -> dict:
+    """クイック種別の完全なバトルデータ。"""
+    b = _full_battle(battle_at=battle_at, won=won)
+    b["battle_type"] = "quick"
+    b["rating_change"] = None
+    b["opp_rank"] = 20
+    return b
+
+
+def test_post_weekly_quick_only_returns_none_but_posts():
+    """クイックのみ → クイック投稿は行うが、LLM 追記対象（ランク）が無いので None を返す。"""
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status.return_value = None
+    mock_resp.json.return_value = {"id": "q_only"}
+
+    battles = [_quick_full_battle(), _quick_full_battle(battle_at=2100, won=False)]
+    with (
+        patch("bot.discord_post.WEBHOOK_URLS", ["https://discord.com/api/webhooks/1/tok"]),
+        patch("bot.discord_post._webhook_session") as mock_sess,
+        patch("bot.graph.generate_chara_usage_chart", return_value=None),
+        patch("bot.db.get_weekly_my_chara_counts", return_value=[]),
+    ):
+        mock_sess.post.return_value = mock_resp
+        result = post_weekly(battles, "2024/01/15")
+
+    assert result is None             # ランク戦が無いので LLM 追記対象なし
+    assert mock_sess.post.called      # だがクイック投稿は実行されている
+
+
+def test_post_weekly_posts_both_rank_and_quick():
+    """ランク＋クイック → 2 つの Embed を別々に投稿し、ランク結果を返す。"""
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status.return_value = None
+    mock_resp.json.return_value = {"id": "both"}
+
+    battles = [_full_battle(), _quick_full_battle()]
+    with (
+        patch("bot.discord_post.WEBHOOK_URLS", ["https://discord.com/api/webhooks/1/tok"]),
+        patch("bot.discord_post._webhook_session") as mock_sess,
+        patch("bot.graph.generate_chara_usage_chart", return_value=None),
+        patch("bot.db.get_weekly_my_chara_counts", return_value=[]),
+    ):
+        mock_sess.post.return_value = mock_resp
+        result = post_weekly(battles, "2024/01/15")
+
+    assert result is not None
+    _, rank_embed = result
+    assert "ランク戦" in rank_embed["title"]
+    # ランク・クイックで計 2 回（Webhook 1 件 × Embed 2 種）投稿される
+    assert mock_sess.post.call_count == 2
+
+
 def test_post_rank_change_no_webhook_urls():
     """WEBHOOK_URLS 未設定 → 何も送信しない（例外も出さない）。"""
     with (

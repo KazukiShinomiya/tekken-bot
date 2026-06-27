@@ -18,11 +18,13 @@ from bot.embeds import (
     _winrate_bar,
     _daily_sparkline,
     _affinity_highlight,
+    _my_chara_fields,
     build_community_weekly_embed,
     build_embed,
-    build_weekly_embed,
-    build_rank_change_embed,
+    build_rank_weekly_embed,
+    build_quick_weekly_embed,
     build_monthly_embed,
+    build_rank_change_embed,
 )
 
 
@@ -56,6 +58,24 @@ def _quick_battle(won: bool, opp_rank: int | None = None, opp_chara: str = "Jin"
     b = _battle(won=won, opp_chara=opp_chara, battle_type="quick")
     b["opp_rank"] = opp_rank
     return b
+
+
+def _make_quick_mychara(my_chara: str, won: bool) -> dict:
+    """自キャラ指定のクイックバトルを生成するヘルパー（使用キャラ別集計用）。"""
+    b = _battle(won=won, my_chara=my_chara, battle_type="quick")
+    return b
+
+
+def _make_quick_round(won: bool, my_rounds: int, opp_rounds: int) -> dict:
+    """ラウンド数指定のクイックバトルを生成するヘルパー（ラウンドの質用）。"""
+    return _battle(won=won, my_rounds=my_rounds, opp_rounds=opp_rounds, battle_type="quick")
+
+
+def _make_quick_mychara_full(my_chara: str, won: bool, opp_chara: str,
+                             my_rounds: int, opp_rounds: int) -> dict:
+    """自キャラ・相手キャラ・ラウンドを指定したクイックバトル（キャラ別ブロック用）。"""
+    return _battle(won=won, my_chara=my_chara, opp_chara=opp_chara,
+                   my_rounds=my_rounds, opp_rounds=opp_rounds, battle_type="quick")
 
 
 def test_win_rate_all_wins():
@@ -316,26 +336,52 @@ def test_build_embed_win_color_vs_loss_color():
     assert embed_win["color"] != embed_lose["color"]
 
 
-def test_build_weekly_embed_returns_dict():
-    battles = [_battle(True)]
-    embed = build_weekly_embed(battles, "2024/01/15")
+def test_build_rank_weekly_embed_returns_dict():
+    battles = [_battle(True, battle_type="ranked")]
+    embed = build_rank_weekly_embed(battles, "2024/01/15")
     assert embed is not None
     assert isinstance(embed, dict)
+    assert "ランク戦" in embed["title"]
 
 
-def test_build_weekly_embed_none_on_empty():
-    assert build_weekly_embed([], "2024/01/15") is None
+def test_build_quick_weekly_embed_returns_dict():
+    battles = [_battle(True, battle_type="quick")]
+    embed = build_quick_weekly_embed(battles, "2024/01/15")
+    assert embed is not None
+    assert isinstance(embed, dict)
+    assert "クイック" in embed["title"]
 
 
-def test_build_weekly_embed_contains_week():
-    battles = [_battle(True)]
-    embed = build_weekly_embed(battles, "2024/01/15")
+def test_build_rank_weekly_embed_none_on_empty():
+    assert build_rank_weekly_embed([], "2024/01/15") is None
+
+
+def test_build_quick_weekly_embed_none_on_empty():
+    assert build_quick_weekly_embed([], "2024/01/15") is None
+
+
+def test_build_rank_weekly_embed_none_when_only_quick():
+    """クイックしかなければランク戦 Embed は None（投稿スキップ）。"""
+    assert build_rank_weekly_embed([_battle(True, battle_type="quick")], "2024/01/15") is None
+
+
+def test_build_quick_weekly_embed_none_when_only_ranked():
+    """ランク戦しかなければクイック Embed は None（投稿スキップ）。"""
+    assert build_quick_weekly_embed([_battle(True, battle_type="ranked")], "2024/01/15") is None
+
+
+def test_build_rank_weekly_embed_contains_week():
+    embed = build_rank_weekly_embed([_battle(True, battle_type="ranked")], "2024/01/15")
     assert "2024/01/15" in str(embed)
 
 
-def test_build_weekly_embed_contains_player_name():
-    battles = [_battle(True)]
-    embed = build_weekly_embed(battles, "2024/01/15", player_name="Alice")
+def test_build_rank_weekly_embed_contains_player_name():
+    embed = build_rank_weekly_embed([_battle(True, battle_type="ranked")], "2024/01/15", player_name="Alice")
+    assert "Alice" in str(embed)
+
+
+def test_build_quick_weekly_embed_contains_player_name():
+    embed = build_quick_weekly_embed([_battle(True, battle_type="quick")], "2024/01/15", player_name="Alice")
     assert "Alice" in str(embed)
 
 
@@ -501,23 +547,34 @@ def test_build_embed_with_chart():
     assert result["image"]["url"] == "attachment://rating.png"
 
 
-def test_build_weekly_embed_with_quick():
-    """クイックマッチがある → クイック欄が含まれる。"""
+def test_rank_quick_embeds_are_separated():
+    """ランクとクイックは別 Embed に完全分離される。"""
     battles = [
         _battle(True,  battle_type="ranked"),
         _battle(False, battle_type="quick"),
     ]
-    result = build_weekly_embed(battles, "2024/01/15")
-    assert result is not None
-    assert any("クイック" in f["name"] for f in result["fields"])
+    rank  = build_rank_weekly_embed(battles, "2024/01/15")
+    quick = build_quick_weekly_embed(battles, "2024/01/15")
+    assert rank is not None and quick is not None
+    # ランク Embed にクイック要素は混ざらない（タイトルのみで判定）
+    assert "ランク戦" in rank["title"]
+    assert "クイック" in quick["title"]
 
 
-def test_build_weekly_embed_net_rating_in_summary():
+def test_build_rank_weekly_embed_net_rating_in_summary():
     """ランク戦レーティングデータあり → サマリー(description)に純変動 pt が含まれる。"""
     b = _battle(True, battle_type="ranked", rating_before=10000, rating_change=200, battle_at=1000)
-    result = build_weekly_embed([b], "2024/01/15")
+    result = build_rank_weekly_embed([b], "2024/01/15")
     assert result is not None
     assert "+200pt" in result["description"]
+
+
+def test_build_quick_weekly_embed_no_net_rating():
+    """クイックはレートを持たない → サマリーに pt 表記は出ない。"""
+    b = _battle(True, battle_type="quick", rating_change=200, battle_at=1000)
+    result = build_quick_weekly_embed([b], "2024/01/15")
+    assert result is not None
+    assert "pt" not in result["description"]
 
 
 def test_build_community_weekly_embed_returns_dict():
@@ -558,31 +615,15 @@ def test_build_community_weekly_embed_medals():
     assert "🥉" in desc
 
 
-def test_build_weekly_embed_quick_includes_rank_distribution():
-    """クイックマッチに opp_rank があれば Embed の クイック フィールドに相手段位を表示する。"""
+def test_build_quick_weekly_embed_omits_rank_distribution():
+    """相手段位分布は段位別勝率と冗長なため、クイック Embed には出さない。"""
     battles = [
-        _quick_battle(won=True,  opp_rank=20),   # Kishin
-        _quick_battle(won=False, opp_rank=20),   # Kishin
-        _quick_battle(won=True,  opp_rank=22),   # Fujin
+        _quick_battle(won=True,  opp_rank=20),
+        _quick_battle(won=False, opp_rank=22),
     ]
-    result = build_weekly_embed(battles, "2024/01/15")
+    result = build_quick_weekly_embed(battles, "2024/01/15")
     assert result is not None
-    quick_field = next((f for f in result["fields"] if "クイック" in f["name"]), None)
-    assert quick_field is not None
-    assert "相手段位" in quick_field["value"]
-
-
-def test_build_weekly_embed_quick_no_rank_omits_distribution():
-    """opp_rank がない場合は相手段位を表示しない。"""
-    battles = [
-        _quick_battle(won=True,  opp_rank=None),
-        _quick_battle(won=False, opp_rank=None),
-    ]
-    result = build_weekly_embed(battles, "2024/01/15")
-    assert result is not None
-    quick_field = next((f for f in result["fields"] if "クイック" in f["name"]), None)
-    assert quick_field is not None
-    assert "相手段位" not in quick_field["value"]
+    assert not any("相手段位分布" in f["name"] for f in result["fields"])
 
 
 def _ranked_battle(won: bool, opp_rank: int | None, opp_chara: str = "Jin",
@@ -651,51 +692,51 @@ def test_rank_winrate_breakdown_none_without_rank():
     assert _rank_winrate_breakdown([_quick_battle(won=True, opp_rank=None)]) is None
 
 
-def test_build_weekly_embed_includes_rank_breakdown():
-    """opp_rank がある試合があれば「段位別勝率」フィールドを含む。"""
+def test_build_rank_weekly_embed_includes_rank_breakdown():
+    """ランク戦に opp_rank があれば「段位別勝率」フィールドを含む。"""
     battles = [
-        _quick_battle(won=False, opp_rank=23),
+        _ranked_battle(won=False, opp_rank=23),
         _ranked_battle(won=True,  opp_rank=20),
     ]
     for b in battles:
         b["my_rank"] = 22
-    result = build_weekly_embed(battles, "2024/01/15")
+    result = build_rank_weekly_embed(battles, "2024/01/15")
     assert result is not None
     assert any("段位別勝率" in f["name"] for f in result["fields"])
 
 
-def test_build_weekly_embed_prev_comparison_in_summary():
+def test_build_rank_weekly_embed_prev_comparison_in_summary():
     """prev_battles を渡すと description に前週比（勝利数差）が含まれる。"""
-    battles = [_battle(won=True), _battle(won=True)]  # 今週 2勝0敗
+    battles = [_battle(won=True), _battle(won=True)]  # 今週 2勝0敗（ranked）
     prev = [_battle(won=False)]                        # 前週 0勝1敗
-    result = build_weekly_embed(battles, "2024/01/15", prev_battles=prev)
+    result = build_rank_weekly_embed(battles, "2024/01/15", prev_battles=prev)
     assert result is not None
     assert "前週比" in result["description"]
     assert "+2" in result["description"]   # 今週2勝 - 前週0勝
 
 
-def test_build_weekly_embed_no_prev_comparison_when_absent():
+def test_build_rank_weekly_embed_no_prev_comparison_when_absent():
     """prev_battles 未指定なら description に前週比は無い（最長連勝/連敗のみ）。"""
-    result = build_weekly_embed([_battle(won=True)], "2024/01/15")
+    result = build_rank_weekly_embed([_battle(won=True)], "2024/01/15")
     assert result is not None
     assert "前週比" not in result["description"]
 
 
-def test_build_weekly_embed_summary_has_winrate_bar():
+def test_build_rank_weekly_embed_summary_has_winrate_bar():
     """description にテキスト勝率バー（█/░）が含まれる。"""
     battles = [_battle(won=True), _battle(won=False)]
-    result = build_weekly_embed(battles, "2024/01/15")
+    result = build_rank_weekly_embed(battles, "2024/01/15")
     assert result is not None
     assert "█" in result["description"] or "░" in result["description"]
 
 
-def test_build_weekly_embed_has_affinity_highlight():
+def test_build_rank_weekly_embed_has_affinity_highlight():
     """2戦以上のキャラがあれば「相性ハイライト」フィールドを含む。"""
     battles = [
         _battle(won=True,  opp_chara="King"), _battle(won=True,  opp_chara="King"),
         _battle(won=False, opp_chara="Jin"),  _battle(won=False, opp_chara="Jin"),
     ]
-    result = build_weekly_embed(battles, "2024/01/15")
+    result = build_rank_weekly_embed(battles, "2024/01/15")
     assert result is not None
     affinity = next((f for f in result["fields"] if "相性" in f["name"]), None)
     assert affinity is not None
@@ -703,16 +744,81 @@ def test_build_weekly_embed_has_affinity_highlight():
     assert "苦手" in affinity["value"]
 
 
-def test_build_weekly_embed_field_count_is_small():
+def test_build_quick_weekly_embed_field_count_is_small():
     """週次は要約。フィールド数は 5 以下に収まる。"""
     battles = [
-        _ranked_battle(won=True,  opp_rank=22),
-        _ranked_battle(won=False, opp_rank=20),
         _quick_battle(won=True,   opp_rank=20),
+        _quick_battle(won=False,  opp_rank=22),
     ]
-    result = build_weekly_embed(battles, "2024/01/15")
+    result = build_quick_weekly_embed(battles, "2024/01/15")
     assert result is not None
     assert len(result["fields"]) <= 5
+
+
+# --- A: 使用キャラ別（自分） / B: ラウンドの質 -----------------------------
+
+def test_my_chara_fields_groups_by_my_chara_in_usage_order():
+    """自分の使用キャラごとに1フィールドを立て、使用数の多い順に並べる。"""
+    battles = (
+        [_make_quick_mychara("Reina", won=True)] * 5
+        + [_make_quick_mychara("Lee", won=False)] * 3
+    )
+    fields = _my_chara_fields(battles)
+    assert len(fields) == 2
+    assert "Reina" in fields[0]["name"]   # 使用数が多い Reina が先
+    assert "Lee"   in fields[1]["name"]
+
+
+def test_my_chara_fields_excludes_low_sample_charas():
+    """min_battles 未満のキャラはノイズとして除外する。"""
+    battles = (
+        [_make_quick_mychara("Reina", won=True)] * 5
+        + [_make_quick_mychara("Lee", won=False)] * 1   # 1戦のみ → 除外
+    )
+    fields = _my_chara_fields(battles)
+    assert len(fields) == 1
+    assert "Reina" in fields[0]["name"]
+
+
+def test_my_chara_fields_empty():
+    assert _my_chara_fields([]) == []
+
+
+def test_my_chara_fields_value_has_round_quality_and_affinity():
+    """キャラフィールドの value にラウンドの質と相性が含まれる。"""
+    battles = [
+        _make_quick_mychara_full("Lee", won=True,  opp_chara="King", my_rounds=3, opp_rounds=0),
+        _make_quick_mychara_full("Lee", won=True,  opp_chara="King", my_rounds=3, opp_rounds=1),
+        _make_quick_mychara_full("Lee", won=False, opp_chara="Jin",  my_rounds=0, opp_rounds=3),
+    ]
+    fields = _my_chara_fields(battles)
+    assert len(fields) == 1
+    val = fields[0]["value"]
+    assert "完封" in val and "接戦" in val   # ラウンドの質
+    assert "得意" in val or "苦手" in val      # 相性（キャラ別）
+
+
+def test_build_quick_weekly_embed_has_my_chara_fields():
+    """クイック Embed に使用キャラ別フィールド（🥊）が含まれる。"""
+    battles = [_make_quick_mychara("Lee", won=(i % 2 == 0)) for i in range(4)]
+    result = build_quick_weekly_embed(battles, "2024/01/15")
+    assert result is not None
+    assert any(f["name"].startswith("🥊") for f in result["fields"])
+
+
+def test_build_quick_weekly_embed_round_quality_not_in_summary():
+    """ラウンドの質はキャラ別へ一本化したので description には出さない。"""
+    battles = [_make_quick_round(won=True, my_rounds=3, opp_rounds=0) for _ in range(3)]
+    result = build_quick_weekly_embed(battles, "2024/01/15")
+    assert result is not None
+    assert "完封" not in result["description"]
+
+
+def test_build_rank_weekly_embed_no_round_quality_in_summary():
+    """ランク Embed のサマリーにはラウンドの質を出さない（クイック専用）。"""
+    result = build_rank_weekly_embed([_battle(won=True, battle_type="ranked")], "2024/01/15")
+    assert result is not None
+    assert "完封" not in result["description"]
 
 
 def test_winrate_bar_full():

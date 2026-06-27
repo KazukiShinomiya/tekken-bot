@@ -21,7 +21,7 @@ from bot.config import (
 )
 from bot.models import Battle
 from bot.embeds import (
-    build_embed, build_weekly_embed, build_monthly_embed,
+    build_embed, build_rank_weekly_embed, build_quick_weekly_embed, build_monthly_embed,
     build_rank_change_embed, build_community_weekly_embed,
 )
 
@@ -144,18 +144,24 @@ def post_weekly(
     prev_battles: list[Battle] | None = None,
 ) -> tuple[list[tuple[str, str]], dict] | None:
     """
-    週次サマリーを全 Discord Webhook に Embed 形式で投稿。
-    成功時は ([(message_id, webhook_url), ...], embed) を返す。試合なし・全失敗時は None。
+    週次サマリーをランク戦・クイックの2つの Embed に分けて全 Discord Webhook に投稿。
+    ランク戦・クイックそれぞれ該当試合が無ければその投稿はスキップする。
+
+    LLM コメントはランク戦にのみ追記するため、ランク戦投稿の
+    ([(message_id, webhook_url), ...], rank_embed) を返す。
+    ランク戦が無い（クイックのみ／試合なし）場合は None を返す。
     """
     if not WEBHOOK_URLS:
         raise ValueError("DISCORD_WEBHOOK_URL が .env に設定されていません")
 
-    embed = build_weekly_embed(battles, week_start_str, player_name, prev_battles=prev_battles)
-    if embed is None:
+    rank_embed  = build_rank_weekly_embed(battles, week_start_str, player_name, prev_battles=prev_battles)
+    quick_embed = build_quick_weekly_embed(battles, week_start_str, player_name, prev_battles=prev_battles)
+
+    if rank_embed is None and quick_embed is None:
         logger.info(f"[discord_post][{player_name}] 今週の試合なし。週次投稿をスキップ。")
         return None
 
-    # キャラ使用率グラフ生成
+    # キャラ使用率グラフ生成（クイック投稿に添付。クイックが無ければランク投稿へ）
     chara_chart = None
     try:
         from bot.graph import generate_chara_usage_chart
@@ -165,8 +171,18 @@ def post_weekly(
     except Exception as e:
         logger.warning(f"[discord_post] キャラグラフ生成失敗（スキップ）: {e}")
 
-    results = _send_to_webhooks(embed, chara_chart, filename="chara_usage.png", log_label="週次投稿")
-    return (results, embed) if results else None
+    rank_result = None
+    if rank_embed is not None:
+        rank_chart = chara_chart if quick_embed is None else None
+        rank_result = _send_to_webhooks(
+            rank_embed, rank_chart, filename="chara_usage.png", log_label="週次ランク投稿"
+        )
+    if quick_embed is not None:
+        _send_to_webhooks(
+            quick_embed, chara_chart, filename="chara_usage.png", log_label="週次クイック投稿"
+        )
+
+    return (rank_result, rank_embed) if rank_result else None
 
 
 def post_monthly(

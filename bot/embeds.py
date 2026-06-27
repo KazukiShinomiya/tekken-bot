@@ -18,7 +18,7 @@ from bot.models import Battle
 from bot.stats import (
     calculate_streak, aggregate_by_character, count_wins, count_losses,
     filter_rated_battles, detect_momentum, predict_rating_trend,
-    get_most_common,
+    get_most_common, round_quality,
 )
 
 
@@ -563,19 +563,27 @@ def _weekly_summary_lines(
     battles: list[Battle],
     week_start_str: str,
     prev_battles: list[Battle] | None,
+    *,
+    include_rating: bool,
 ) -> list[str]:
     """週次サマリーの description（一望できる要約）を行リストで返す。
 
-    1行目: 純レート変動・通算成績・勝率バー
+    include_rating=True（ランク戦）: 1行目に純レート変動、前週比にレート差を含める。
+    include_rating=False（クイック）: レートを持たないので勝敗のみで構成する。
+
+    1行目: 純レート変動（ランク）・通算成績・勝率バー
     2行目: 前週比（prev あり）／最長連勝・連敗（prev なし）
     3行目: 曜日別スパークライン（週開始日がパースできた場合）
     """
     sorted_b = sorted(battles, key=lambda x: x["battle_at"])
     w, l = count_wins(battles), count_losses(battles)
     total = w + l
-    rated = filter_rated_battles([b for b in battles if b.get("battle_type") == "ranked"])
-    net   = sum(b.get("rating_change") or 0 for b in rated) if rated else None
     max_win, max_lose = calculate_streak(sorted_b)
+
+    net: int | None = None
+    if include_rating:
+        rated = filter_rated_battles([b for b in battles if b.get("battle_type") == "ranked"])
+        net   = sum(b.get("rating_change") or 0 for b in rated) if rated else None
 
     def _streak_bits() -> list[str]:
         bits = []
@@ -594,11 +602,12 @@ def _weekly_summary_lines(
         prev_w = count_wins(prev_battles)
         diff_w = w - prev_w
         comp = f"前週比 {'▲' if diff_w >= 0 else '▼'} 勝利数 {'+' if diff_w >= 0 else ''}{diff_w}"
-        prev_rated = filter_rated_battles([b for b in prev_battles if b.get("battle_type") == "ranked"])
-        prev_net   = sum(b.get("rating_change") or 0 for b in prev_rated) if prev_rated else None
-        if net is not None and prev_net is not None:
-            rdiff = net - prev_net
-            comp += f" ・ レート差 {'+' if rdiff >= 0 else ''}{rdiff}"
+        if include_rating and net is not None:
+            prev_rated = filter_rated_battles([b for b in prev_battles if b.get("battle_type") == "ranked"])
+            prev_net   = sum(b.get("rating_change") or 0 for b in prev_rated) if prev_rated else None
+            if prev_net is not None:
+                rdiff = net - prev_net
+                comp += f" ・ レート差 {'+' if rdiff >= 0 else ''}{rdiff}"
         bits = _streak_bits()
         if bits:
             comp += " ・ " + " ".join(bits)
@@ -615,56 +624,117 @@ def _weekly_summary_lines(
     return lines
 
 
-def build_weekly_embed(
+def _my_chara_fields(
+    battles: list[Battle], top_n: int = 4, min_battles: int = 3
+) -> list[dict]:
+    """自分の使用キャラごとに「戦績・ラウンドの質・相性」を1フィールドにまとめて返す。
+
+    使用数の多い順。合算では像がぼけるため、相性・ラウンド質をキャラ単位へ下ろす。
+    min_battles 未満のキャラは少数試行のノイズとして除外する。
+    """
+    groups: dict[str, list[Battle]] = {}
+    for b in battles:
+        groups.setdefault(b.get("my_chara") or UNKNOWN_CHARACTER, []).append(b)
+
+    fields: list[dict] = []
+    for mc, bs in sorted(groups.items(), key=lambda x: -len(x[1]))[:top_n]:
+        if len(bs) < min_battles:
+            continue
+        cw, cl = count_wins(bs), count_losses(bs)
+        name   = f"🥊 {mc}  {cw}勝{cl}敗 ({_win_rate(bs)})"
+
+        rq = round_quality(bs)
+        rq_bits = []
+        if rq["round_wr_pct"] is not None:
+            rq_bits.append(f"ラウンド {rq['round_wr_pct']}%")
+        rq_bits.append(f"完封 {rq['sweep_wins']}勝{rq['sweep_losses']}敗")
+        rq_bits.append(f"接戦 {rq['close_games']}")
+        body = [f"`{_winrate_bar(cw, cw + cl, width=8)}`  " + " ・ ".join(rq_bits)]
+
+        affinity = _affinity_highlight(bs)
+        if affinity:
+            body.append(affinity.replace("\n", " ／ "))
+
+        fields.append({"name": name[:256], "value": "\n".join(body)[:1024], "inline": False})
+    return fields
+
+
+def build_rank_weekly_embed(
     battles: list[Battle],
     week_start_str: str,
     player_name: str | None = None,
     prev_battles: list[Battle] | None = None,
 ) -> dict | None:
-    """週次サマリーの Embed dict を返す。試合なしの場合は None。LLM コメントは含まない。
+    """ランク戦のみの週次振り返り Embed を返す。ランク戦が無ければ None。
 
-    一望性を重視した要約ビュー: description に週の総括（成績・前週比・曜日別の波）、
-    フィールドは ランク／クイック／週末鉄拳力／相性ハイライト に絞る。
-    詳細な段位別勝率・トレンド等は月次サマリー側が担う。
+    レートを持つランク戦に特化: 純レート変動・前週比（レート差含む）・段位別勝率・
+    相性・週末鉄拳力。LLM コメントは呼び出し側が後追いで追記する。
     """
-    if not battles:
+    ranked = [b for b in battles if b.get("battle_type") == "ranked"]
+    if not ranked:
         return None
     display_name = player_name or TEKKEN_ID
+    prev_ranked  = [b for b in (prev_battles or []) if b.get("battle_type") == "ranked"] or None
 
-    description = "\n".join(_weekly_summary_lines(battles, week_start_str, prev_battles))[:4096]
-
-    ranked = [b for b in battles if b.get("battle_type") == "ranked"]
-    quick  = [b for b in battles if b.get("battle_type") == "quick"]
+    description = "\n".join(
+        _weekly_summary_lines(ranked, week_start_str, prev_ranked, include_rating=True)
+    )[:4096]
 
     fields: list[dict] = []
-    if ranked:
-        rw, rl = count_wins(ranked), count_losses(ranked)
-        fields.append({"name": "🏆 ランク", "value": f"{rw}勝{rl}敗 ({_win_rate(ranked)})", "inline": True})
-    if quick:
-        qw, ql = count_wins(quick), count_losses(quick)
-        qval = f"{qw}勝{ql}敗 ({_win_rate(quick)})"
-        dist = _quick_rank_distribution(quick)
-        if dist:
-            qval += f"\n相手段位: {dist}"
-        fields.append({"name": "⚡ クイック", "value": qval, "inline": True})
 
-    latest = max(battles, key=lambda x: x["battle_at"])
+    latest = max(ranked, key=lambda x: x["battle_at"])
     if latest.get("my_power"):
         rank_name  = _rank_name(latest.get("my_rank"))
         field_name = f"💥 週末鉄拳力: {rank_name}" if rank_name else "💥 週末鉄拳力"
         fields.append({"name": field_name, "value": f"{latest['my_power']:,}", "inline": True})
 
-    rank_breakdown = _rank_winrate_breakdown(battles)
+    rank_breakdown = _rank_winrate_breakdown(ranked)
     if rank_breakdown:
         fields.append({"name": "🏅 段位別勝率（🔺格上 / 🔻格下）", "value": rank_breakdown[:1024], "inline": False})
 
-    affinity = _affinity_highlight(battles)
+    affinity = _affinity_highlight(ranked)
     if affinity:
         fields.append({"name": "🎯 相性ハイライト（得意↑ / 苦手↓）", "value": affinity[:1024], "inline": False})
 
     return {
-        "title":       f"📅 {display_name} 今週の振り返り（{week_start_str} 週）",
-        "color":       _embed_color(battles),
+        "title":       f"📅 {display_name} 今週のランク戦（{week_start_str} 週）",
+        "color":       _embed_color(ranked),
+        "description": description,
+        "fields":      fields[:DISCORD_EMBED_MAX_FIELDS],
+    }
+
+
+def build_quick_weekly_embed(
+    battles: list[Battle],
+    week_start_str: str,
+    player_name: str | None = None,
+    prev_battles: list[Battle] | None = None,
+) -> dict | None:
+    """クイックのみの週次振り返り Embed を返す。クイックが無ければ None。
+
+    練習場としての色を出す: 概要は週全体の一望、その下に使用キャラごとの統計ブロック
+    （戦績・ラウンドの質・相性）を積む。合算では消える「どのキャラで苦戦したか」を残す。
+    クイックはレートを持たないため純レート/トレンド/LLM コメントは載せない。
+    """
+    quick = [b for b in battles if b.get("battle_type") == "quick"]
+    if not quick:
+        return None
+    display_name = player_name or TEKKEN_ID
+    prev_quick   = [b for b in (prev_battles or []) if b.get("battle_type") == "quick"] or None
+
+    description = "\n".join(
+        _weekly_summary_lines(quick, week_start_str, prev_quick, include_rating=False)
+    )[:4096]
+
+    fields: list[dict] = _my_chara_fields(quick)
+
+    rank_breakdown = _rank_winrate_breakdown(quick)
+    if rank_breakdown:
+        fields.append({"name": "🏅 段位別勝率（🔺格上 / 🔻格下）", "value": rank_breakdown[:1024], "inline": False})
+
+    return {
+        "title":       f"⚡ {display_name} 今週のクイック（{week_start_str} 週）",
+        "color":       _embed_color(quick),
         "description": description,
         "fields":      fields[:DISCORD_EMBED_MAX_FIELDS],
     }

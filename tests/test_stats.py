@@ -6,6 +6,7 @@ from bot.stats import (
     calculate_streak, aggregate_by_character,
     predict_rating_trend, detect_momentum,
     detect_winning_streak, detect_losing_streak,
+    aggregate_by_my_character, round_quality,
 )
 
 
@@ -287,3 +288,58 @@ def test_predict_rating_trend_returns_empty_on_exception():
     with patch("numpy.polyfit", side_effect=ValueError("bad fit")):
         result = predict_rating_trend(battles)
     assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# aggregate_by_my_character
+# ---------------------------------------------------------------------------
+
+def test_aggregate_by_my_character_groups_results():
+    battles = [
+        {"won": True,  "my_chara": "Lee"},
+        {"won": False, "my_chara": "Lee"},
+        {"won": True,  "my_chara": "King"},
+    ]
+    result = aggregate_by_my_character(battles)
+    assert result["Lee"] == [True, False]
+    assert result["King"] == [True]
+
+
+def test_aggregate_by_my_character_missing_chara_uses_unknown():
+    from bot.config import UNKNOWN_CHARACTER
+    result = aggregate_by_my_character([{"won": True}])
+    assert result[UNKNOWN_CHARACTER] == [True]
+
+
+def test_aggregate_by_my_character_empty():
+    assert aggregate_by_my_character([]) == {}
+
+
+# ---------------------------------------------------------------------------
+# round_quality
+# ---------------------------------------------------------------------------
+
+def test_round_quality_counts_sweeps_and_close():
+    battles = [
+        {"won": True,  "my_rounds": 3, "opp_rounds": 0},  # 完封勝ち
+        {"won": False, "my_rounds": 0, "opp_rounds": 3},  # 完封負け
+        {"won": True,  "my_rounds": 3, "opp_rounds": 2},  # 接戦
+    ]
+    rq = round_quality(battles)
+    assert rq["sweep_wins"] == 1
+    assert rq["sweep_losses"] == 1
+    assert rq["close_games"] == 1
+    # ラウンド勝率 = 自分6 / 合計11 ≒ 55%
+    assert rq["round_wr_pct"] == round(6 / 11 * 100)
+
+
+def test_round_quality_none_when_no_round_data():
+    rq = round_quality([{"won": True}, {"won": False}])
+    assert rq["round_wr_pct"] is None
+    assert rq["sweep_wins"] == 0
+
+
+def test_round_quality_empty():
+    rq = round_quality([])
+    assert rq["round_wr_pct"] is None
+    assert rq["close_games"] == 0
