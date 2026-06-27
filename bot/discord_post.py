@@ -182,7 +182,9 @@ def post_weekly(
             quick_embed, chara_chart, filename="chara_usage.png", log_label="週次クイック投稿"
         )
 
-    return (rank_result, rank_embed) if rank_result else None
+    if rank_result and rank_embed is not None:
+        return (rank_result, rank_embed)
+    return None
 
 
 def post_monthly(
