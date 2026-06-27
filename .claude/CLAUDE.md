@@ -63,6 +63,21 @@ wsl bash -c "ssh -i ~/.ssh/tekken_deploy ubuntu@10.0.0.254 'docker logs -f tekke
 
 `/deploy` コマンドでこの手順を自動実行できる。
 
+### pre-push フック（再発防止の仕組み）
+
+赤い状態の push を git レベルで物理的に拒否する防壁。`.githooks/pre-push` が
+CI（`.github/workflows/test.yml`）と同一の **mypy → pytest(`--cov-fail-under=90`)**
+を push 直前に実行し、いずれか失敗すれば push を中止する。
+
+クローンごとに一度だけ有効化が必要:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+検査内容は必ず CI と一致させること（CI が真実の源）。緊急回避の
+`git push --no-verify` は原則使わない。
+
 ## インフラ
 
 - **NAS**: Raspberry Pi 系 Ubuntu 24.04 aarch64 / 10.0.0.254

@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+#
+# push 前に CI と同一の検査を実行し、赤い状態の push を物理的に拒否する防壁。
+# 検査内容は必ず .github/workflows/test.yml と一致させること（CI が真実の源）。
+#
+# 有効化（クローンごとに一度だけ）:
+#     git config core.hooksPath .githooks
+#
+# 緊急回避（原則使うな）:
+#     git push --no-verify
+#
+set -uo pipefail
+
+echo "[pre-push] CI 同等検査を開始する（mypy → pytest+coverage）"
+
+echo "[pre-push] (1/2) mypy 型検査"
+if ! python -m mypy bot main.py exporter.py scheduler.py; then
+    echo "[pre-push] ❌ mypy 失敗。push を中止する。修正してから再度 push せよ。" >&2
+    exit 1
+fi
+
+echo "[pre-push] (2/2) pytest + カバレッジ(>=90%)"
+if ! python -m pytest tests/ -q --cov=bot --cov=main --cov-fail-under=90; then
+    echo "[pre-push] ❌ テスト/カバレッジ失敗。push を中止する。" >&2
+    exit 1
+fi
+
+echo "[pre-push] ✅ 全検査通過。push を許可する。"
