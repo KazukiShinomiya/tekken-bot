@@ -15,7 +15,8 @@
       "Bash(pip install*)"
     ],
     "ask": [
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(git commit:*)"
     ]
   },
   "hooks": {
@@ -25,7 +26,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python -c \"import sys,json; d=json.load(sys.stdin); c=d.get('tool_input',{}).get('command',''); risky=('git push' in c) or ('docker compose' in c and ' up' in c) or ('--build' in c); print(json.dumps({'hookSpecificOutput':{'hookEventName':'PreToolUse','permissionDecision':'ask','permissionDecisionReason':'irreversible/outward op (push/deploy): confirm full context read and explicit user approval'}})) if risky else None\""
+            "command": "python -c \"import sys,json; d=json.load(sys.stdin); c=d.get('tool_input',{}).get('command',''); risky=any(s in c for s in ('git push','git commit','git reset --hard','git rebase','git clean','git checkout --','git branch -D','rm -rf','rm -r','rm -f')) or ('docker compose' in c and ' up' in c) or ('--build' in c); print(json.dumps({'hookSpecificOutput':{'hookEventName':'PreToolUse','permissionDecision':'ask','permissionDecisionReason':'irreversible op (commit/push/deploy/reset/rm): NO fabricated consent -- confirm full-context read and EXPLICIT user approval before proceeding'}})) if risky else None\""
           }
         ]
       }
