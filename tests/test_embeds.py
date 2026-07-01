@@ -798,50 +798,6 @@ def test_my_chara_fields_value_has_round_quality_and_affinity():
     assert "得意" in val or "苦手" in val      # 相性（キャラ別）
 
 
-def test_my_chara_fields_prev_week_comparison_when_chara_continues():
-    """前週にも使ったキャラには前週比（勝率の推移）を1行加える。"""
-    battles = [                                    # 今週 Lee 2勝1敗 → 67%
-        _make_quick_mychara("Lee", won=True),
-        _make_quick_mychara("Lee", won=True),
-        _make_quick_mychara("Lee", won=False),
-    ]
-    prev = [                                       # 前週 Lee 1勝1敗 → 50%
-        _make_quick_mychara("Lee", won=True),
-        _make_quick_mychara("Lee", won=False),
-    ]
-    fields = _my_chara_fields(battles, prev)
-    val = fields[0]["value"]
-    assert "前週 50% → 今週 67%" in val
-    assert "▲" in val                              # 上昇
-    assert "先週1勝1敗" in val
-
-
-def test_my_chara_fields_prev_week_marks_new_chara():
-    """前週に使っていないキャラは「今週から」と示す。"""
-    battles = [_make_quick_mychara("Lee", won=True) for _ in range(3)]
-    prev    = [_make_quick_mychara("Reina", won=True) for _ in range(3)]
-    fields  = _my_chara_fields(battles, prev)
-    assert "🆕 今週から（先週は使用なし）" in fields[0]["value"]
-
-
-def test_my_chara_fields_no_prev_comparison_when_prev_is_none():
-    """prev_battles=None なら前週比行は一切出さない（後方互換）。"""
-    battles = [_make_quick_mychara("Lee", won=True) for _ in range(3)]
-    fields  = _my_chara_fields(battles)
-    val = fields[0]["value"]
-    assert "前週" not in val and "今週から" not in val
-
-
-def test_build_quick_weekly_embed_wires_prev_to_chara_fields():
-    """クイック Embed は prev_battles をキャラ別フィールドの前週比へ通す。"""
-    battles = [_make_quick_mychara("Lee", won=(i % 2 == 0)) for i in range(3)]
-    prev    = [_make_quick_mychara("Lee", won=False) for _ in range(3)]
-    result  = build_quick_weekly_embed(battles, "2024/01/15", prev_battles=prev)
-    assert result is not None
-    lee_field = next(f for f in result["fields"] if f["name"].startswith("🥊"))
-    assert "前週" in lee_field["value"]
-
-
 def test_build_quick_weekly_embed_has_my_chara_fields():
     """クイック Embed に使用キャラ別フィールド（🥊）が含まれる。"""
     battles = [_make_quick_mychara("Lee", won=(i % 2 == 0)) for i in range(4)]

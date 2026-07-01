@@ -625,27 +625,16 @@ def _weekly_summary_lines(
 
 
 def _my_chara_fields(
-    battles: list[Battle],
-    prev_battles: list[Battle] | None = None,
-    top_n: int = 4,
-    min_battles: int = 3,
+    battles: list[Battle], top_n: int = 4, min_battles: int = 3
 ) -> list[dict]:
     """自分の使用キャラごとに「戦績・ラウンドの質・相性」を1フィールドにまとめて返す。
 
     使用数の多い順。合算では像がぼけるため、相性・ラウンド質をキャラ単位へ下ろす。
     min_battles 未満のキャラは少数試行のノイズとして除外する。
-
-    prev_battles を渡すと、各キャラに前週比（勝率の推移）を1行加える。練習場として
-    の成長を可視化する狙い。前週にそのキャラが無ければ「今週から」と示す。前週データ
-    そのものが無い（None）場合は前週比行を一切出さない（後方互換）。
     """
     groups: dict[str, list[Battle]] = {}
     for b in battles:
         groups.setdefault(b.get("my_chara") or UNKNOWN_CHARACTER, []).append(b)
-
-    prev_groups: dict[str, list[Battle]] = {}
-    for b in (prev_battles or []):
-        prev_groups.setdefault(b.get("my_chara") or UNKNOWN_CHARACTER, []).append(b)
 
     fields: list[dict] = []
     for mc, bs in sorted(groups.items(), key=lambda x: -len(x[1]))[:top_n]:
@@ -661,21 +650,6 @@ def _my_chara_fields(
         rq_bits.append(f"完封 {rq['sweep_wins']}勝{rq['sweep_losses']}敗")
         rq_bits.append(f"接戦 {rq['close_games']}")
         body = [f"`{_winrate_bar(cw, cw + cl, width=8)}`  " + " ・ ".join(rq_bits)]
-
-        if prev_battles:
-            prev_bs = prev_groups.get(mc)
-            if prev_bs:
-                pw, pl   = count_wins(prev_bs), count_losses(prev_bs)
-                cur_pct  = cw / len(bs) * 100
-                prev_pct = pw / len(prev_bs) * 100
-                diff     = cur_pct - prev_pct
-                arrow    = "▲" if diff >= 0 else "▼"
-                body.append(
-                    f"📈 前週 {prev_pct:.0f}% → 今週 {cur_pct:.0f}%"
-                    f"（{arrow}{abs(diff):.0f}pt / 先週{pw}勝{pl}敗）"
-                )
-            else:
-                body.append("🆕 今週から（先週は使用なし）")
 
         affinity = _affinity_highlight(bs)
         if affinity:
@@ -752,7 +726,7 @@ def build_quick_weekly_embed(
         _weekly_summary_lines(quick, week_start_str, prev_quick, include_rating=False)
     )[:4096]
 
-    fields: list[dict] = _my_chara_fields(quick, prev_quick)
+    fields: list[dict] = _my_chara_fields(quick)
 
     rank_breakdown = _rank_winrate_breakdown(quick)
     if rank_breakdown:
