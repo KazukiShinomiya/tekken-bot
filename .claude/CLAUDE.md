@@ -21,15 +21,11 @@
 6. **Data Integrity Over Speed** — バトル ID の重複は `INSERT OR IGNORE` で無視し既存データを壊さない。DB 変更は `ALTER TABLE` を使い、テーブル再作成はしない
 7. **Story Over Data** — 投稿は人の言葉（LLM コメント）を最前面に。日次投稿は description 冒頭へコメントを置き、乾燥したデータ羅列より「展開の伝わりやすさ」を優先する（US-501 で確定）
 
-## 協働の鉄則（AI エージェント向け・最優先）
+## 協働の鉄則
 
-**ユーザーの承認・決定を代弁・捏造しない**。設計判断・GO サイン・仕様の合意は、ユーザーが実際に発した言葉に対してのみ「合意済み」と記録する。「進めておけ」式の開放的指示でも、判断が要る分岐に来たら必ず問い、返答を待つ。承認の有無が曖昧なまま既成事実（コミット・実装・SESSION_STATE 追記）を積み上げない。これは人格演技・効率より上位の制約だ（2026-06-29 の「ユーザー回答捏造」事故を受けて明文化）。
-
-**ツール出力も捏造しない**（同じ病の別ベクトル）。実行していないツールの結果を地の文で書かない。「動いたはず」「こう返るはず」で語らない。報告・判断は必ず実際のツール戻り値に基づく（2026-07-01 の「未実行 Read の出力を捏造し、それが引き継ぎ警告を塗り潰していた」事故を受けて明文化）。
-
-**空・想定外のツール出力は即ハードストップ**。出力が空／壊れて返ったら、期待値で埋めて前進せず、まず疎通を決定的単一値（終了コード・生バイト・件数）で裏取りする。tool 障害を「創作」で回避しない。
-
-**不可逆・外向き操作の前に全文脈を実読**。commit・push・デプロイ・削除・上書きは取り消しにくい。実行前に必ず一拍置き、関連文脈（特に SESSION_STATE 末尾の引き継ぎ）を実読で確認し、ユーザーの明示承認を得てから動く。自分の索敵が済む前に承認を求めない（不完全な文脈で得た承認は真の承認ではない）。※commit・push・deploy・`git reset --hard`・`rm -rf` 等の不可逆操作は `.claude/settings.json` の PreToolUse フック＋ask 権限でハーネス強制の確認を入れてある。捏造した承認が git 履歴・削除といった「永続的な事実」へ変わる出口を物理封鎖し、実際のユーザー承認プロンプト無しには通れないようにするのが狙い（2026-07-02 に commit/reset/rm へ拡張）。
+誠実さの原則（ユーザー承認・ツール出力を捏造しない／不可逆操作は確認する）は
+グローバル `~/.claude/CLAUDE.md` と `.claude/settings.json` の PreToolUse フックが担う。
+ここでは重複させない。
 
 ## プレイヤー情報
 
@@ -45,14 +41,18 @@
 bot/
   fetcher.py      -- データ取得（wank HTML → バルクAPI → ewgf.gg フォールバック）
   db.py           -- SQLite 永続化（data/battles.db）
-  analyzer.py     -- Ollama LLM コメント生成（qwen2.5:7b）
-  discord_post.py -- Discord Webhook 投稿・メッセージ整形
+  analyzer.py     -- LLM コメント生成（Ollama、完全失敗時 Gemini フォールバック。モデルは config.py）
+  evaluator.py    -- LLM コメントの品質をルールベース自動評価（ハルシネーション検出）
+  embeds.py       -- Discord Embed 整形（ビュー層・純粋関数。日次/週次/月次/vs 等）
+  discord_post.py -- Discord Webhook 送信（I/O 層）
   stats.py        -- 統計集計（キャラ別・時間帯別・連勝連敗）
   graph.py        -- レーティンググラフ（PNG 生成）
+  models.py       -- Battle 等の TypedDict 定義
+  exceptions.py   -- 例外定義
   config.py       -- 環境変数一元管理
-  slash_commands.py -- Discord スラッシュコマンド（/tekken today/weekly/status）
+  slash_commands.py -- Discord スラッシュコマンド（/tekken today/weekly/status/trend/vs/chara/top/rival/filter）
 main.py           -- メイン処理（データ取得 → 分析 → Discord 投稿）
-scheduler.py      -- cron 代替スケジューラ（毎日 08:00 JST / 日曜 21:00 JST）
+scheduler.py      -- cron 代替スケジューラ（毎日 08:00 / 日曜 21:00 / 毎月1日 09:00 JST）
 exporter.py       -- Prometheus メトリクス（port 9877）
 ```
 
