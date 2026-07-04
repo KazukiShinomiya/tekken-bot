@@ -34,6 +34,7 @@ Thumbs.db
 
 # Claude Code セッションファイル（個人設定は除外、プロジェクト設定は管理）
 .claude/settings.local.json
+.claude/prompt_audit.log
 SESSION_STATE.md
 
 # labo連携用作業ファイル（内部IP等を含む可能性があるため除外）

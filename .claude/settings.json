@@ -20,6 +20,16 @@
     ]
   },
   "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -c \"import sys,json,os,datetime,pathlib; raw=sys.stdin.buffer.read().decode('utf-8','replace'); d=json.loads(raw); base=os.environ.get('CLAUDE_PROJECT_DIR') or '.'; log=pathlib.Path(base)/'.claude'/'prompt_audit.log'; rec={'ts':datetime.datetime.now().isoformat(),'raw':d}; open(log,'a',encoding='utf-8').write(json.dumps(rec,ensure_ascii=False)+chr(10))\""
+          }
+        ]
+      }
+    ],
     "SessionStart": [
       {
         "matcher": "startup|resume|clear",
