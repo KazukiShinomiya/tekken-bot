@@ -118,13 +118,19 @@ def _rank_winrate_breakdown(battles: list[Battle]) -> str | None:
     振り返りに残すのが狙い。自分の段位は最新試合の my_rank を基準にする。
     対象がなければ None。上位段位（格上）から順に並べる。
     勝率 > 50% → ✅、= 50% → ➖、< 50% → ❌
+    opp_power が取れた段位には平均鉄拳力を併記し、同段位でも「どれくらいの
+    地力の相手だったか」の文脈を残す。取れなければ省略する。
     """
     agg: dict[int, list[int]] = {}
+    powers: dict[int, list[int]] = {}
     for b in battles:
         rank_id = b.get("opp_rank")
         if not isinstance(rank_id, int):
             continue
         agg.setdefault(rank_id, []).append(1 if b.get("won") else 0)
+        p = b.get("opp_power")
+        if isinstance(p, int) and p > 0:
+            powers.setdefault(rank_id, []).append(p)
     if not agg:
         return None
 
@@ -156,7 +162,12 @@ def _rank_winrate_breakdown(battles: list[Battle]) -> str | None:
         name   = _rank_name(rank_id) or f"Rank{rank_id}"
         marker = _marker(rank_id)
         label  = f"{name}{marker}" if marker else name
-        lines.append(f"  {label:<12} {n}戦 {pct:>4} {icon}")
+        line   = f"  {label:<12} {n}戦 {pct:>4} {icon}"
+        ps = powers.get(rank_id)
+        if ps:
+            avg_k = round(sum(ps) / len(ps) / 1000)
+            line += f" (平均鉄拳力 {avg_k}k)"
+        lines.append(line)
 
     return "\n".join(lines)
 

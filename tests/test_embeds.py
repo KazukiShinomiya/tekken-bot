@@ -678,6 +678,27 @@ def test_rank_winrate_breakdown_includes_quick():
     assert "鬼神" in result
 
 
+def test_rank_winrate_breakdown_appends_avg_power():
+    """opp_power が取れた段位には平均鉄拳力を併記する。"""
+    b1 = _ranked_battle(won=True, opp_rank=22)
+    b2 = _ranked_battle(won=False, opp_rank=22)
+    b1["opp_power"] = 200000
+    b2["opp_power"] = 210000
+    b1["my_rank"] = b2["my_rank"] = 22
+    result = _rank_winrate_breakdown([b1, b2])
+    assert result is not None
+    assert "平均鉄拳力 205k" in result
+
+
+def test_rank_winrate_breakdown_omits_power_when_absent():
+    """opp_power が無ければ平均鉄拳力の併記を省く（既存挙動を壊さない）。"""
+    b = _ranked_battle(won=True, opp_rank=22)
+    b["my_rank"] = 22
+    result = _rank_winrate_breakdown([b])
+    assert result is not None
+    assert "平均鉄拳力" not in result
+
+
 def test_rank_winrate_breakdown_self_rank_label():
     """同段の相手には (自分) を付ける。"""
     b = _ranked_battle(won=True, opp_rank=22)
