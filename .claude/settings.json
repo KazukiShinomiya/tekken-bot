@@ -30,17 +30,6 @@
         ]
       }
     ],
-    "SessionStart": [
-      {
-        "matcher": "startup|resume|clear",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python -c \"import json,os,pathlib; base=os.environ.get('CLAUDE_PROJECT_DIR') or '.'; p=pathlib.Path(base)/'SESSION_STATE.md'; t=p.read_text(encoding='utf-8') if p.exists() else ''; print(json.dumps({'hookSpecificOutput':{'hookEventName':'SessionStart','additionalContext':t}}))\""
-          }
-        ]
-      }
-    ],
     "PreToolUse": [
       {
         "matcher": "Bash",
