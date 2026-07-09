@@ -158,7 +158,7 @@ battles: battle_type, game_version, stage_id,
 Ollama が完全に応答しない場合のみ、**Gemini 2.0 Flash**（無料枠）を最終フォールバックとして使用する（`GEMINI_API_KEY` 設定時のみ有効）。フォールバック順:
 
 ```
-gemma3:4b（プライマリ）→ OLLAMA_FALLBACK_MODEL → Gemini 2.0 Flash → コメントなし
+OLLAMA_MODEL（プライマリ）→ OLLAMA_FALLBACK_MODEL → Gemini 2.0 Flash → コメントなし
 ```
 
 ### 5. LLM コーチングモード（ハルシネーション抑止 + 自動評価）
@@ -304,12 +304,13 @@ tekken_bot/
 │   ├── fetcher.py       # データ取得（wank HTML + バルクAPI / ewgf.gg フォールバック）
 │   ├── db.py            # SQLite 永続化（battles・goals・月次スナップショット等）
 │   ├── stats.py         # 共通統計計算（連勝・キャラ別集計・トレンド予測）
-│   ├── discord_post.py  # Discord 投稿・Embed 整形（日次・週次・月次・段位変化・部内ランキング）
+│   ├── embeds.py        # Discord Embed 整形（ビュー層・純粋関数。日次・週次・月次・vs 等）
+│   ├── discord_post.py  # Discord Webhook 送信（I/O 層）
 │   ├── graph.py         # matplotlib グラフ生成（レーティング推移・キャラ使用率）
 │   ├── analyzer.py      # ローカル LLM 分析（Ollama）
 │   ├── evaluator.py     # LLM コメント品質自動評価（0-100点、ハルシネーション検出）
 │   └── slash_commands.py  # Discord スラッシュコマンド（14コマンド）
-├── tests/               # pytest テストスイート（556テスト）
+├── tests/               # pytest テストスイート（カバレッジ90%以上をCIで強制）
 ├── tools/
 │   ├── check_ewgf.py    # ewgf.gg API 疎通確認
 │   └── check_stages.py  # DB 内の stage_id 一覧表示（STAGE_NAMES 補完用）

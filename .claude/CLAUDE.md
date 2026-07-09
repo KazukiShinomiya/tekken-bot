@@ -50,7 +50,7 @@ bot/
   models.py       -- Battle 等の TypedDict 定義
   exceptions.py   -- 例外定義
   config.py       -- 環境変数一元管理
-  slash_commands.py -- Discord スラッシュコマンド（/tekken today/weekly/status/trend/vs/chara/top/rival/filter）
+  slash_commands.py -- Discord スラッシュコマンド（/tekken today/weekly/monthly/status/trend/vs/chara/top/rival/filter/records/goal/stage/help）
 main.py           -- メイン処理（データ取得 → 分析 → Discord 投稿）
 scheduler.py      -- cron 代替スケジューラ（毎日 08:00 / 日曜 21:00 / 毎月1日 09:00 JST）
 exporter.py       -- Prometheus メトリクス（port 9877）
