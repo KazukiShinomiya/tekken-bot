@@ -74,7 +74,7 @@ STAGE_NAMES: dict[int, str] = {
     300:  "Yakushima",
     400:  "Coliseum of Fate",
     500:  "Rebel Hangar",
-    # 600: 未確認（DB に1件あり。対戦ログと照合して特定後に更新してください）
+    # 600: 名称未確認（DB に1件あり。下方の 1700 系コメント参照）
     700:  "Fallen Destiny",
     # 800: 対戦なし（未確認）
     900:  "Descent into Subconscious",
@@ -85,8 +85,11 @@ STAGE_NAMES: dict[int, str] = {
     1400: "Secluded Training Ground",
     1500: "Elegant Palace",
     1600: "Midnight Siege",
-    # 1700, 1800/1801, 1900, 2200: Season 2/3 DLC ステージ（未確認）
-    # 対戦日時を wank.wavu.wiki の履歴と照合して特定後に追記してください
+    # 600, 1700, 1800/1801, 1900, 2200: 名称未確認の DLC 系ステージ。
+    # 2026-07-09 調査: TK8-thing（フォーク含む）・ewgf-gg 実装とも 1600 番までしか
+    # 収録せず、wank の対戦履歴ページはステージ名を表示しない＝外部ソースでは特定不能。
+    # ゲーム内リプレイで該当対戦（例: 600 は 2026-03-12 21:08 JST vs hiiragi の Paul 戦）の
+    # ステージを実機確認して追記する。推測での記入は禁止（CHARA_NAMES の教訓）。
 }
 
 
@@ -177,33 +180,46 @@ RANK_NAMES: dict[int, str] = {
 }
 
 # wank バルクAPI が英語文字列で rank を返す場合の日本語変換テーブル
+# 対応は「同じ段位番号」で取る（訳語の類似で対応させない。Fighter は3番なので勇士、
+# 闘士は5番 Combatant）。出典: ewgf-gg/ewgfgg-backend tekken_enums.json と
+# elgonio/TK8-thing enums.py（両者一致、2026-07-09 照合）
 RANK_NAMES_EN: dict[str, str] = {
-    "Beginner":           "入門生",
-    "1st Dan":            "初段",
-    "2nd Dan":            "二段",
-    "Warrior":            "勇士",
-    "Fighter":            "闘士",
-    "Combatant":          "策士",
-    "Brawler":            "餓狼",
-    "Ranger":             "荒鷲",
-    "Cavalry":            "猛象",
-    "Warlord":            "剛拳",
-    "Vanquisher":         "邪拳",
-    "Destroyer":          "戒拳",
-    "Eliminator":         "修羅",
-    "Garyu":              "臥龍",
-    "Shinryu":            "真龍",
-    "Tenryu":             "天龍",
-    "Mighty Ruler":       "拳帝",
-    "Flame Ruler":        "炎帝",
-    "Battle Ruler":       "戦帝",
-    "Fujin":              "風神",
-    "Raijin":             "雷神",
-    "Kishin":             "鬼神",
-    "Bushin":             "武神",
-    "Tekken King":        "鉄拳王",
-    "Tekken Emperor":     "鉄拳覇皇",
-    "Tekken God":         "鉄拳神",
-    "Tekken God Supreme": "鉄拳神極",
-    "True Tekken God":    "破壊神",
+    "Beginner":               "入門生",    # 0
+    "1st Dan":                "初段",      # 1
+    "2nd Dan":                "二段",      # 2
+    "Fighter":                "勇士",      # 3
+    "Strategist":             "策士",      # 4
+    "Combatant":              "闘士",      # 5
+    "Brawler":                "餓狼",      # 6
+    "Ranger":                 "荒鷲",      # 7
+    "Cavalry":                "猛象",      # 8
+    "Warrior":                "剛拳",      # 9
+    "Assailant":              "邪拳",      # 10
+    "Dominator":              "戒拳",      # 11
+    "Vanquisher":             "修羅",      # 12
+    "Destroyer":              "羅刹",      # 13
+    "Eliminator":             "羅傑",      # 14
+    "Garyu":                  "臥龍",      # 15
+    "Shinryu":                "真龍",      # 16
+    "Tenryu":                 "天龍",      # 17
+    "Mighty Ruler":           "拳帝",      # 18
+    "Flame Ruler":            "炎帝",      # 19
+    "Battle Ruler":           "戦帝",      # 20
+    "Fujin":                  "風神",      # 21
+    "Raijin":                 "雷神",      # 22
+    "Kishin":                 "鬼神",      # 23
+    "Bushin":                 "武神",      # 24
+    "Tekken King":            "鉄拳王",    # 25
+    "Tekken Emperor":         "鉄拳覇皇",  # 26
+    "Tekken God":             "鉄拳神",    # 27
+    "Tekken God Supreme":     "鉄拳神極",  # 28
+    "God of Destruction":     "破壊神",    # 29
+    "God of Destruction I":   "破壊神壱",  # 30
+    "God of Destruction II":  "破壊神弐",  # 31
+    "God of Destruction III": "破壊神参",  # 32
+    "God of Destruction IV":  "破壊神肆",  # 33
+    "God of Destruction V":   "破壊神伍",  # 34
+    "God of Destruction VI":  "破壊神陸",  # 35
+    "God of Destruction VII": "破壊神漆",  # 36
+    "God of Destruction ∞":   "破壊神∞",  # 37
 }
