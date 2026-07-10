@@ -713,6 +713,68 @@ def test_rank_winrate_breakdown_none_without_rank():
     assert _rank_winrate_breakdown([_quick_battle(won=True, opp_rank=None)]) is None
 
 
+def test_rank_winrate_breakdown_normalizes_english_ranks():
+    """ewgf 由来の英語文字列 rank（クイック実データの形式）も番号へ正規化して集計する。
+
+    従来は int 前提で文字列を黙って捨てており、クイック週次の段位別勝率が
+    まるごと欠損していた（2026-07-10 発見）。
+    """
+    b1 = _quick_battle(won=True,  opp_rank="Kishin")   # 鬼神 23
+    b2 = _quick_battle(won=False, opp_rank="Fujin")    # 風神 21
+    b1["my_rank"] = b2["my_rank"] = "Raijin"           # 雷神 22
+    result = _rank_winrate_breakdown([b1, b2])
+    assert result is not None
+    lines  = result.split("\n")
+    kishin = next(l for l in lines if "鬼神" in l)
+    fujin  = next(l for l in lines if "風神" in l)
+    assert "🔺" in kishin                              # 文字列 my_rank でも格上判定が働く
+    assert "🔻" in fujin
+    assert lines.index(kishin) < lines.index(fujin)    # 番号ベースの降順ソートが効く
+
+
+def test_rank_winrate_breakdown_ignores_unknown_rank_string():
+    """表に無い未知の段位文字列は集計対象外（誤った番号に化けない）。"""
+    assert _rank_winrate_breakdown([_quick_battle(won=True, opp_rank="Warlord")]) is None
+
+
+def test_my_chara_fields_includes_rank_breakdown():
+    """キャラブロックに相手段位別の内訳が載る（段位不問のクイックで
+    「このキャラが梯子のどこまで通用したか」を見るため）。"""
+    battles = []
+    for won, rank in [(True, "Kishin"), (True, "Kishin"), (False, "Fujin")]:
+        b = _quick_battle(won=won, opp_rank=rank)
+        b["my_chara"] = "Lee"
+        battles.append(b)
+    fields = _my_chara_fields(battles)
+    assert len(fields) == 1
+    assert "相手段位別" in fields[0]["value"]
+    assert "鬼神" in fields[0]["value"]
+    assert "風神" in fields[0]["value"]
+
+
+def test_my_chara_fields_omits_rank_breakdown_without_ranks():
+    """opp_rank が皆無なら段位内訳の見出しごと省く。"""
+    battles = [_make_quick_mychara("Lee", True) for _ in range(3)]
+    fields = _my_chara_fields(battles)
+    assert len(fields) == 1
+    assert "相手段位別" not in fields[0]["value"]
+
+
+def test_build_quick_weekly_embed_rank_field_with_string_ranks():
+    """実データ形式（英語文字列 rank）でも段位別勝率フィールドとキャラ別段位内訳が欠損しない。"""
+    battles = []
+    for i in range(3):
+        b = _quick_battle(won=True, opp_rank="Tekken King")
+        b["my_chara"] = "Lee"
+        battles.append(b)
+    result = build_quick_weekly_embed(battles, "2024/01/15")
+    assert result is not None
+    assert any("段位別勝率" in f["name"] for f in result["fields"])
+    chara_field = next(f for f in result["fields"] if "Lee" in f["name"])
+    assert "相手段位別" in chara_field["value"]
+    assert "鉄拳王" in chara_field["value"]
+
+
 def test_build_rank_weekly_embed_includes_rank_breakdown():
     """ランク戦に opp_rank があれば「段位別勝率」フィールドを含む。"""
     battles = [

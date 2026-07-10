@@ -10,7 +10,7 @@ from datetime import datetime
 
 from bot.config import (
     TEKKEN_ID, DISCORD_EMBED_MAX_FIELDS, JST,
-    RANK_NAMES, RANK_NAMES_EN, UNKNOWN_CHARACTER,
+    RANK_NAMES, RANK_NAMES_EN, RANK_IDS_EN, UNKNOWN_CHARACTER,
     WIN_RATE_THRESHOLD, EMBED_COLOR_GOOD_WR, EMBED_COLOR_BAD_WR,
     SCOUT_TREND_THRESHOLD,
 )
@@ -33,6 +33,16 @@ def _rank_name(rank_id: int | str | None) -> str:
     if isinstance(rank_id, int):
         return RANK_NAMES.get(rank_id, "")
     return RANK_NAMES_EN.get(rank_id, rank_id)
+
+
+def _rank_id(rank: int | str | None) -> int | None:
+    """rank 値を段位番号へ正規化する。wank は整数・ewgf は英語文字列で返す。
+    未知の文字列（表に無い段位名）は None。"""
+    if isinstance(rank, int):
+        return rank
+    if isinstance(rank, str):
+        return RANK_IDS_EN.get(rank)
+    return None
 
 
 def _win_rate(battles: list[Battle]) -> str:
@@ -124,8 +134,8 @@ def _rank_winrate_breakdown(battles: list[Battle]) -> str | None:
     agg: dict[int, list[int]] = {}
     powers: dict[int, list[int]] = {}
     for b in battles:
-        rank_id = b.get("opp_rank")
-        if not isinstance(rank_id, int):
+        rank_id = _rank_id(b.get("opp_rank"))
+        if rank_id is None:
             continue
         agg.setdefault(rank_id, []).append(1 if b.get("won") else 0)
         p = b.get("opp_power")
@@ -136,7 +146,7 @@ def _rank_winrate_breakdown(battles: list[Battle]) -> str | None:
 
     # 自分の段位 = 最新試合の my_rank（格上／格下の基準。取れなければマーカー省略）
     latest  = max(battles, key=lambda x: x["battle_at"])
-    my_rank = latest.get("my_rank")
+    my_rank = _rank_id(latest.get("my_rank"))
 
     def _marker(rank_id: int) -> str:
         if not isinstance(my_rank, int):
@@ -638,9 +648,9 @@ def _weekly_summary_lines(
 def _my_chara_fields(
     battles: list[Battle], top_n: int = 4, min_battles: int = 3
 ) -> list[dict]:
-    """自分の使用キャラごとに「戦績・ラウンドの質・相性」を1フィールドにまとめて返す。
+    """自分の使用キャラごとに「戦績・ラウンドの質・相性・相手段位別」を1フィールドにまとめて返す。
 
-    使用数の多い順。合算では像がぼけるため、相性・ラウンド質をキャラ単位へ下ろす。
+    使用数の多い順。合算では像がぼけるため、相性・ラウンド質・段位内訳をキャラ単位へ下ろす。
     min_battles 未満のキャラは少数試行のノイズとして除外する。
     """
     groups: dict[str, list[Battle]] = {}
@@ -665,6 +675,12 @@ def _my_chara_fields(
         affinity = _affinity_highlight(bs)
         if affinity:
             body.append(affinity.replace("\n", " ／ "))
+
+        # クイックは段位不問＝このキャラが梯子のどこまで通用したかが学びになる
+        # （US: 2026-07-10 ユーザー提起「段位ごとにサブキャラとの結果が学び」）
+        rank_lines = _rank_winrate_breakdown(bs)
+        if rank_lines:
+            body.append("🏅 相手段位別\n" + rank_lines)
 
         fields.append({"name": name[:256], "value": "\n".join(body)[:1024], "inline": False})
     return fields

@@ -39,6 +39,13 @@ def test_rank_names_en_has_no_stale_entries():
     assert set(RANK_NAMES_EN) == set(RANK_LADDER_EN)
 
 
+def test_rank_ids_en_maps_to_ladder_position():
+    """RANK_IDS_EN（EN→番号の逆引き）が梯子の位置と一致する（段位比較・ソートの基盤）。"""
+    from bot.config import RANK_IDS_EN
+    for i, en in enumerate(RANK_LADDER_EN):
+        assert RANK_IDS_EN[en] == i, f"{en} は {i} 番であるべき"
+
+
 def test_validate_config_no_errors():
     """WEBHOOK_URL と POLARIS_ID が設定済み → エラーなし。"""
     with (

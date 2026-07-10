@@ -223,3 +223,8 @@ RANK_NAMES_EN: dict[str, str] = {
     "God of Destruction VII": "破壊神漆",  # 36
     "God of Destruction ∞":   "破壊神∞",  # 37
 }
+
+# 段位番号の逆引き（EN 文字列 → 番号）。wank は整数・ewgf は英語文字列で rank を
+# 返すため、段位の比較・ソートはこの表で番号へ正規化してから行う
+_RANK_IDS_BY_JP = {jp: num for num, jp in RANK_NAMES.items()}
+RANK_IDS_EN: dict[str, int] = {en: _RANK_IDS_BY_JP[jp] for en, jp in RANK_NAMES_EN.items()}
