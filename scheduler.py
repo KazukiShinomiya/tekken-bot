@@ -58,6 +58,15 @@ schedule.every().day.at("09:00").do(monthly_check_job)
 logger.info("スケジューラ起動。毎日 08:00 JST に前日分を投稿、毎週日曜 21:00 JST に週次サマリー、毎月1日 09:00 JST に月次サマリーを実行します。")
 logger.info(f"現在時刻: {datetime.now(JST).isoformat()}")
 
+# 起動時キャッチアップ: スケジュール時刻にコンテナが停止していた日の投稿を救済する
+from bot.catchup import run_catch_up
+try:
+    executed = run_catch_up()
+    if executed:
+        logger.info(f"[scheduler] キャッチアップ完了: {', '.join(executed)}")
+except Exception as e:
+    logger.error(f"[scheduler] キャッチアップで予期しないエラー: {e}")
+
 while True:
     schedule.run_pending()
     time.sleep(30)

@@ -222,6 +222,80 @@ def _analyze_with_timeout(
         return None
 
 
+def _save_eval_score(today_str: str, player_name: str, score: int, comment: str) -> None:
+    """LLM 評価スコアを DB に保存する。失敗しても処理は止めない。"""
+    try:
+        db.save_llm_eval_score(today_str, player_name, score, comment)
+        logger.info(f"[{player_name}] LLM評価スコア: {score}/100")
+    except Exception as e:
+        logger.warning(f"[{player_name}] LLM評価スコア保存失敗: {e}")
+
+
+def _generate_validated_comment(
+    today_battles: list[Battle],
+    date_str: str,
+    today_str: str,
+    player_name: str,
+    prev_battles: list[Battle],
+    rematch_data: dict,
+    high_score_comments: list[str],
+    prev_comment: str | None,
+) -> tuple[str | None, dict | None]:
+    """LLM コメントを生成し、投稿前に品質ゲートを通す。
+
+    未対戦キャラへの言及（ハルシネーション）を検出したら1回だけ再生成し、
+    それでも残る場合はコメントを破棄する（スコアは観測用に記録だけ残す）。
+    評価器自体の失敗ではコメントを止めない（Fail Gracefully）。
+
+    Returns:
+        (投稿するコメント or None, その評価結果 or None)
+    """
+    from bot.evaluator import evaluate_comment
+
+    def generate() -> str | None:
+        return _analyze_with_timeout(
+            today_battles, date_str, player_name=player_name,
+            prev_battles=prev_battles, rematch_data=rematch_data or None,
+            high_score_comments=high_score_comments or None,
+            prev_comment=prev_comment,
+        )
+
+    comment = generate()
+    if not comment:
+        return None, None
+    try:
+        result = evaluate_comment(comment, today_battles)
+    except Exception as e:
+        logger.warning(f"[{player_name}] LLM評価失敗（コメントはそのまま採用）: {e}")
+        return comment, None
+
+    hallucinated = result["details"]["chara_valid"]["hallucinated"]
+    if not hallucinated:
+        return comment, result
+
+    logger.warning(
+        f"[{player_name}] 未対戦キャラへの言及を検出（{', '.join(hallucinated)}）。再生成する。"
+    )
+    comment = generate()
+    if not comment:
+        return None, None
+    try:
+        result = evaluate_comment(comment, today_battles)
+    except Exception as e:
+        logger.warning(f"[{player_name}] LLM評価失敗（コメントはそのまま採用）: {e}")
+        return comment, None
+
+    hallucinated = result["details"]["chara_valid"]["hallucinated"]
+    if hallucinated:
+        logger.warning(
+            f"[{player_name}] 再生成後も未対戦キャラへの言及が残存（{', '.join(hallucinated)}）。"
+            "コメントを破棄する。"
+        )
+        _save_eval_score(today_str, player_name, result["score"], comment)
+        return None, None
+    return comment, result
+
+
 def _run_for_player(player_name: str, polaris_id: str, today_str: str, date_str: str) -> None:
     """1プレイヤー分のバトル取得・保存・投稿を実行する。"""
     logger.info(f"[{player_name}] 処理開始")
@@ -294,11 +368,9 @@ def _run_for_player(player_name: str, polaris_id: str, today_str: str, date_str:
     prev_comment = db.get_latest_comment_before(today_start_ts, player_name=player_name)
     if prev_comment:
         logger.info(f"[{player_name}] 前回コメントを継続コーチング用に取得: {len(prev_comment)}文字")
-    llm_comment = _analyze_with_timeout(
-        today_battles, date_str, player_name=player_name,
-        prev_battles=prev_battles, rematch_data=rematch_data or None,
-        high_score_comments=high_score_comments or None,
-        prev_comment=prev_comment,
+    llm_comment, eval_result = _generate_validated_comment(
+        today_battles, date_str, today_str, player_name,
+        prev_battles, rematch_data, high_score_comments, prev_comment,
     )
 
     # LLM コメントを Embed フッターとして追記
@@ -307,15 +379,9 @@ def _run_for_player(player_name: str, polaris_id: str, today_str: str, date_str:
         discord_post.edit_llm_comment(message_ids, embed, llm_comment)
         logger.info(f"[{player_name}] LLMコメント追記完了。")
 
-    # LLM コメントの品質を自動評価してDBに保存
-    if llm_comment:
-        try:
-            from bot.evaluator import evaluate_comment
-            eval_result = evaluate_comment(llm_comment, today_battles)
-            db.save_llm_eval_score(today_str, player_name, eval_result["score"], llm_comment)
-            logger.info(f"[{player_name}] LLM評価スコア: {eval_result['score']}/100")
-        except Exception as e:
-            logger.warning(f"[{player_name}] LLM評価スコア保存失敗: {e}")
+    # LLM コメントの品質評価スコアをDBに保存
+    if llm_comment and eval_result:
+        _save_eval_score(today_str, player_name, eval_result["score"], llm_comment)
 
 
 async def main(target_date: str | None = None) -> None:

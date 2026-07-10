@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from main import (
     _analyze_with_timeout, _compute_opponent_data, _fire_alerts, _fire_rank_alerts,
-    get_players, setup_logging, _fetch_scout_data,
+    get_players, setup_logging, _fetch_scout_data, _generate_validated_comment,
     _run_for_player, run_main_sync, run_weekly_sync, run_monthly_sync,
 )
 
@@ -465,7 +465,10 @@ def test_run_for_player_llm_eval_score_saved():
         patch("main._analyze_with_timeout", return_value="良いコメント"),
         patch("main.discord_post.edit_llm_comment"),
         patch("main.discord_post.notify_error"),
-        patch("bot.evaluator.evaluate_comment", return_value={"score": 80}) as mock_eval,
+        patch(
+            "bot.evaluator.evaluate_comment",
+            return_value={"score": 80, "details": {"chara_valid": {"hallucinated": []}}},
+        ) as mock_eval,
         patch("bot.db.save_llm_eval_score") as mock_save_score,
     ):
         _run_for_player("Alice", "pid_alice", "2026-04-10", "2026/04/10")
@@ -554,6 +557,94 @@ def test_run_for_player_post_discord_exception():
         patch("main.discord_post.notify_error"),
     ):
         _run_for_player("Alice", "pid_alice", "2026-04-10", "2026/04/10")  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# _generate_validated_comment（投稿前品質ゲート）
+# ---------------------------------------------------------------------------
+
+def _eval_result(score: int = 80, hallucinated: list[str] | None = None) -> dict:
+    return {"score": score, "details": {"chara_valid": {"hallucinated": hallucinated or []}}}
+
+
+def _call_validated_comment() -> tuple:
+    return _generate_validated_comment(
+        [_make_battle()], "2026/04/10", "2026-04-10", "Alice", [], {}, [], None,
+    )
+
+
+def test_validated_comment_clean_first_try():
+    """ハルシネーションなし → 1回の生成でそのまま採用。"""
+    with (
+        patch("main._analyze_with_timeout", return_value="良い試合。対策しよう。") as mock_gen,
+        patch("bot.evaluator.evaluate_comment", return_value=_eval_result(80)),
+    ):
+        comment, result = _call_validated_comment()
+    assert comment == "良い試合。対策しよう。"
+    assert result["score"] == 80
+    mock_gen.assert_called_once()
+
+
+def test_validated_comment_none_when_generation_fails():
+    """生成が None（タイムアウト等）→ (None, None) を返し評価しない。"""
+    with (
+        patch("main._analyze_with_timeout", return_value=None),
+        patch("bot.evaluator.evaluate_comment") as mock_eval,
+    ):
+        assert _call_validated_comment() == (None, None)
+    mock_eval.assert_not_called()
+
+
+def test_validated_comment_regenerates_on_hallucination():
+    """未対戦キャラを検出 → 1回だけ再生成し、クリーンなら採用。"""
+    with (
+        patch(
+            "main._analyze_with_timeout",
+            side_effect=["飛鳥対策が光る", "良い試合。対策しよう。"],
+        ) as mock_gen,
+        patch(
+            "bot.evaluator.evaluate_comment",
+            side_effect=[_eval_result(40, ["Asuka"]), _eval_result(80)],
+        ),
+    ):
+        comment, result = _call_validated_comment()
+    assert comment == "良い試合。対策しよう。"
+    assert result["score"] == 80
+    assert mock_gen.call_count == 2
+
+
+def test_validated_comment_dropped_when_hallucination_persists():
+    """再生成後もハルシネーション残存 → コメントを破棄、スコアだけ記録する。"""
+    with (
+        patch("main._analyze_with_timeout", side_effect=["飛鳥対策", "また飛鳥"]),
+        patch(
+            "bot.evaluator.evaluate_comment",
+            side_effect=[_eval_result(40, ["Asuka"]), _eval_result(40, ["Asuka"])],
+        ),
+        patch("bot.db.save_llm_eval_score") as mock_save,
+    ):
+        assert _call_validated_comment() == (None, None)
+    mock_save.assert_called_once_with("2026-04-10", "Alice", 40, "また飛鳥")
+
+
+def test_validated_comment_none_when_regeneration_fails():
+    """再生成が None → 元のハルシネーションコメントは破棄され (None, None)。"""
+    with (
+        patch("main._analyze_with_timeout", side_effect=["飛鳥対策", None]),
+        patch("bot.evaluator.evaluate_comment", return_value=_eval_result(40, ["Asuka"])),
+    ):
+        assert _call_validated_comment() == (None, None)
+
+
+def test_validated_comment_kept_when_evaluator_raises():
+    """評価器が例外 → コメントは止めずそのまま採用（Fail Gracefully）。"""
+    with (
+        patch("main._analyze_with_timeout", return_value="良い試合。対策しよう。"),
+        patch("bot.evaluator.evaluate_comment", side_effect=RuntimeError("eval error")),
+    ):
+        comment, result = _call_validated_comment()
+    assert comment == "良い試合。対策しよう。"
+    assert result is None
 
 
 # ---------------------------------------------------------------------------
