@@ -697,6 +697,26 @@ wank HTML のみ（最終フォールバック）
 - **（将来）** RPi 5 16GB 導入後: gemma4:e4b に移行（`ollama pull gemma4:e4b` → `.env` の `OLLAMA_MODEL` 変更）
 - **（将来）** LLM 評価の継続運用: `tools/eval_comment.py --runs 5` を週1回（`tekken_llm_eval_score` は日次自動保存済み）
 
+### 完了（2026-07-09 段位EN変換の番号ずれ修正・CI Secret・docs同期）
+
+- [x] **段位EN→日本語変換の系統的ずれを発見・修正**（commit `c31415d`・NAS反映済み）: RANK_NAMES_EN が訳語の類似で対応付けられ 3〜14番帯が全てずれていた（Destroyer=13番羅刹 等）。TK8-thing・ewgf-gg 実装・攻略サイト群の三点照合で番号ベースへ全面修正、S3 破壊神段位（30〜37）を追補、梯子全体のピンテスト2件で再発防止。既存DB実データ4種は新旧同訳で表示影響なし
+- [x] CI Secret `DISCORD_ERROR_WEBHOOK_URL` を NAS の `DISCORD_ALERT_WEBHOOK` から流用設定（値は画面非表示で転送・形式検証済み。差し替えは `gh secret set` でいつでも可）
+- [x] dotfiles ドリフト解消（キー順のみの差・意味的同一を JSON 比較で確認、dotfiles `acb52fa`）
+- [x] 古いローカル battles.db 2本（root 3/14・data/ 4/30）を `bot/backups/` へ規約名で移動、作業DBは `bot/battles.db` に一本化。labo/ は意図的追加（`d3ae28f`）ゆえ残置
+- [x] 第2波: CHARA_NAMES を ewgf 実装と照合し健全を確認（0〜42完全一致＋自動照合機構あり）。クイック全411戦=ewgf・ランク全97戦=wank の本番実態を確認（wank はクイック非収録＝BATTLE_TYPES に漏れ経路なし）
+- [x] docs 同期（commit `a3f804d`）: README の凍結値（gemma3:4b・556テスト）解除と embeds.py 追加、.env.example の死に変数 CHARA_ID 削除＋DISCORD_GUILD_ID/DISCORD_ALERT_WEBHOOK 追記、CLAUDE.md コマンド列挙を14個へ。NAS の .env にも CHARA_ID が残存（無害・読まれない。次回 .env 触るとき掃除）
+- [x] STAGE_NAMES 未確認6ステージ: 外部ソース枯渇を確認（TK8-thing・ewgf-gg とも1600番まで）。ゲーム内リプレイの実機確認をユーザーへ依頼（対象対戦リストは SESSION_STATE 参照）
+
+### 完了（2026-07-10 起動時キャッチアップ・LLMコメント投稿前品質ゲート）
+
+「改良案を提案して→とりあえずやってみましょ」から提案①②を即日実装・デプロイまで完遂（commit `4e999f0`・push・NAS反映済み）。
+
+- [x] **① 起動時キャッチアップ**（新規 `bot/catchup.py`＋`scheduler.py` 配線）: コンテナがスケジュール時刻に停止していた日のジョブ欠落を、起動時に `run_status` の心拍と直近スケジュール時刻の照合で救済。集計対象が実行時刻相対のため猶予はジョブごと——**daily=日内 / weekly=同じ日曜のみ（週を跨ぐと集計対象が変わるため救済しない）/ monthly=月内**。run_status に記録が無いジョブは初回セットアップと区別できないため対象外。1ジョブ失敗でも残りは継続（Fail Gracefully）
+- [x] **② 投稿前品質ゲート**（`main.py` `_generate_validated_comment`）: 従来「投稿後に採点・保存のみ」だった evaluator を投稿前へ移動。未対戦キャラへの言及（ハルシネーション）検出→1回だけ再生成→残存なら**コメント破棄**（スコアは観測用に DB 記録のみ）。評価器自体の例外ではコメントを止めない。既存テスト1件のモック形状更新＋新規20テスト
+- [x] 検証: **644 tests / cov 96% / mypy 0**・pre-push フック通過。キャッチアップ判定は「今朝08:00停止→10:30復帰」シナリオの実挙動確認で daily のみ検出を確認
+- [x] NAS デプロイ・起動ログ確認: Bot ログイン完了・`[catchup] 取り逃したジョブなし。`（当日 daily は実行済みなので正しい判定）。`health: starting` 表示は healthcheck interval=1h ゆえ初回判定が起動1時間後になる仕様で正常
+- [ ] 未着手の残提案: 夜の「セッション速報」投稿（プレイ終了検知でその夜に投稿）/ DB バックアップのオフ NAS 化 / NAS .env の CHARA_ID 掃除 / Dependabot 導入
+
 ---
 
 ## データ取得アーキテクチャ（2026-03-15 更新済み）
