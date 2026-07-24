@@ -21,7 +21,8 @@ load_dotenv()
 
 from bot.config import (
     PLAYERS as PLAYERS_ENV, POLARIS_ID as POLARIS_ID_ENV, TEKKEN_ID as TEKKEN_ID_ENV,
-    LOG_PATH, JST, TIMEOUT_LLM, TIMEOUT_API, RATING_GOAL, RANK_NAMES, validate_config,
+    LOG_PATH, JST, TIMEOUT_LLM, TIMEOUT_API, RATING_GOAL, RANK_NAMES,
+    normalize_rank, validate_config,
 )
 import bot.db as db
 import bot.fetcher as fetcher
@@ -175,7 +176,8 @@ def _fire_rank_alerts(today_battles: list[Battle], today_str: str, player_name: 
     if not today_battles:
         return
     latest = max(today_battles, key=lambda x: x["battle_at"])
-    current_rank = latest.get("my_rank")
+    # ewgf.gg 由来は英語段位名で入るため段位番号へ正規化してから比較する
+    current_rank = normalize_rank(latest.get("my_rank"))
     if current_rank is None:
         return
     prev_rank = db.get_last_rank_before_date(today_str, player_name=player_name)

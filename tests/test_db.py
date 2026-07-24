@@ -836,6 +836,24 @@ def test_get_last_rank_before_date_no_player_filter(db):
     assert result == 25
 
 
+def test_get_last_rank_before_date_accepts_english_rank(db):
+    """ewgf.gg 由来の英語段位名（文字列）でも段位番号を返す（int() で落ちない）。"""
+    b = _make_battle("rr7", battle_at=int(datetime(2024, 1, 14, 12, 0, 0, tzinfo=JST).timestamp()))
+    b["my_rank"] = "Raijin"  # type: ignore[typeddict-item]
+    db.insert_battles([b], "Alice")
+    result = db.get_last_rank_before_date("2024-01-15", player_name="Alice")
+    assert result == 22
+
+
+def test_get_last_rank_before_date_unknown_rank_string_returns_none(db):
+    """表にない段位名は例外にせず None を返す。"""
+    b = _make_battle("rr8", battle_at=int(datetime(2024, 1, 14, 12, 0, 0, tzinfo=JST).timestamp()))
+    b["my_rank"] = "Unknown Rank"  # type: ignore[typeddict-item]
+    db.insert_battles([b], "Alice")
+    result = db.get_last_rank_before_date("2024-01-15", player_name="Alice")
+    assert result is None
+
+
 # ---------------------------------------------------------------------------
 # get_battles_in_month
 # ---------------------------------------------------------------------------

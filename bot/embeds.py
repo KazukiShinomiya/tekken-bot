@@ -10,7 +10,7 @@ from datetime import datetime
 
 from bot.config import (
     TEKKEN_ID, DISCORD_EMBED_MAX_FIELDS, JST,
-    RANK_NAMES, RANK_NAMES_EN, RANK_IDS_EN, UNKNOWN_CHARACTER,
+    RANK_NAMES, RANK_NAMES_EN, normalize_rank, UNKNOWN_CHARACTER,
     WIN_RATE_THRESHOLD, EMBED_COLOR_GOOD_WR, EMBED_COLOR_BAD_WR,
     SCOUT_TREND_THRESHOLD,
 )
@@ -38,11 +38,7 @@ def _rank_name(rank_id: int | str | None) -> str:
 def _rank_id(rank: int | str | None) -> int | None:
     """rank 値を段位番号へ正規化する。wank は整数・ewgf は英語文字列で返す。
     未知の文字列（表に無い段位名）は None。"""
-    if isinstance(rank, int):
-        return rank
-    if isinstance(rank, str):
-        return RANK_IDS_EN.get(rank)
-    return None
+    return normalize_rank(rank)
 
 
 def _win_rate(battles: list[Battle]) -> str:

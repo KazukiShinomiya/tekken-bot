@@ -46,6 +46,24 @@ def test_rank_ids_en_maps_to_ladder_position():
         assert RANK_IDS_EN[en] == i, f"{en} は {i} 番であるべき"
 
 
+def test_normalize_rank_handles_mixed_sources():
+    """wank(int) / ewgf(EN 文字列) / 数字文字列 のいずれも段位番号へ揃う。"""
+    from bot.config import normalize_rank
+    assert normalize_rank(22) == 22
+    assert normalize_rank("Raijin") == 22
+    assert normalize_rank("22") == 22
+    assert normalize_rank(0) == 0
+    assert normalize_rank("Beginner") == 0
+
+
+def test_normalize_rank_returns_none_for_unusable():
+    """None・未知の段位名・bool は None（例外にしない）。"""
+    from bot.config import normalize_rank
+    assert normalize_rank(None) is None
+    assert normalize_rank("Unknown Rank") is None
+    assert normalize_rank(True) is None
+
+
 def test_validate_config_no_errors():
     """WEBHOOK_URL と POLARIS_ID が設定済み → エラーなし。"""
     with (

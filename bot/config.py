@@ -228,3 +228,17 @@ RANK_NAMES_EN: dict[str, str] = {
 # 返すため、段位の比較・ソートはこの表で番号へ正規化してから行う
 _RANK_IDS_BY_JP = {jp: num for num, jp in RANK_NAMES.items()}
 RANK_IDS_EN: dict[str, int] = {en: _RANK_IDS_BY_JP[jp] for en, jp in RANK_NAMES_EN.items()}
+
+
+def normalize_rank(rank: int | str | None) -> int | None:
+    """rank 値を段位番号へ正規化する。wank は整数・ewgf は英語文字列で返すため、
+    DB には両方の型が混在する。未知の文字列（表に無い段位名）は None。"""
+    if isinstance(rank, bool):  # bool は int のサブクラス。段位ではないので弾く
+        return None
+    if isinstance(rank, int):
+        return rank
+    if isinstance(rank, str):
+        if rank in RANK_IDS_EN:
+            return RANK_IDS_EN[rank]
+        return int(rank) if rank.lstrip("-").isdigit() else None
+    return None

@@ -11,7 +11,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import cast
 
-from bot.config import DB_PATH
+from bot.config import DB_PATH, normalize_rank
 from bot.models import Battle
 
 logger = logging.getLogger(__name__)
@@ -583,7 +583,10 @@ def get_unknown_chara_battles(limit: int = 10) -> list[dict]:
 
 
 def get_last_rank_before_date(date_str: str, player_name: str | None = None) -> int | None:
-    """指定日より前の最新バトルの my_rank を返す。なければ None。"""
+    """指定日より前の最新バトルの my_rank を段位番号で返す。なければ None。
+
+    ewgf.gg 由来のバトルは my_rank が英語段位名（'Raijin' 等）で入るため、
+    そのまま int() すると落ちる。normalize_rank で番号へ揃える。"""
     tz = timezone(timedelta(hours=9))
     day_start = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=tz)
     pf, pp = _player_filter(player_name)
@@ -593,7 +596,7 @@ def get_last_rank_before_date(date_str: str, player_name: str | None = None) -> 
             WHERE battle_at < ? AND my_rank IS NOT NULL {pf}
             ORDER BY battle_at DESC LIMIT 1
         """, (int(day_start.timestamp()),) + pp).fetchone()
-    return int(row["my_rank"]) if row else None
+    return normalize_rank(row["my_rank"]) if row else None
 
 
 def get_battles_in_month(year: int, month: int, player_name: str | None = None) -> list[Battle]:
