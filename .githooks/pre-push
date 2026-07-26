@@ -11,16 +11,27 @@
 #
 set -uo pipefail
 
+# インタプリタ選択。クローンごとに素の `python` の中身が違う（システム Python に
+# mypy/pytest が無い機もある）ため、リポジトリ内に .venv があればそれを優先する。
+# 検査内容そのものは CI と同一のまま——変えているのは「どの python で走らせるか」だけ。
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+if [ -x "$REPO_ROOT/.venv/bin/python" ]; then
+    PY="$REPO_ROOT/.venv/bin/python"
+    echo "[pre-push] インタプリタ: .venv"
+else
+    PY="python"
+fi
+
 echo "[pre-push] CI 同等検査を開始する（mypy → pytest+coverage）"
 
 echo "[pre-push] (1/2) mypy 型検査"
-if ! python -m mypy bot main.py exporter.py scheduler.py; then
+if ! "$PY" -m mypy bot main.py exporter.py scheduler.py; then
     echo "[pre-push] ❌ mypy 失敗。push を中止する。修正してから再度 push せよ。" >&2
     exit 1
 fi
 
 echo "[pre-push] (2/2) pytest + カバレッジ(>=90%)"
-if ! python -m pytest tests/ -q --cov=bot --cov=main --cov-fail-under=90; then
+if ! "$PY" -m pytest tests/ -q --cov=bot --cov=main --cov-fail-under=90; then
     echo "[pre-push] ❌ テスト/カバレッジ失敗。push を中止する。" >&2
     exit 1
 fi
