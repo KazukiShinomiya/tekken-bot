@@ -65,13 +65,37 @@ git add <files> && git commit -m "説明"
 git push
 
 # NAS に反映（git pull + docker compose up --build）
-wsl bash -c "ssh -i ~/.ssh/tekken_deploy ubuntu@10.0.0.254 'cd ~/tekken_bot && git pull && docker compose up -d --build'"
+ssh tekken-nas 'cd ~/tekken_bot && git pull && docker compose up -d --build'
 
 # ログ確認
-wsl bash -c "ssh -i ~/.ssh/tekken_deploy ubuntu@10.0.0.254 'docker logs -f tekken_bot-tekken-bot-1 --tail=50'"
+ssh tekken-nas 'docker logs -f tekken_bot-tekken-bot-1 --tail=50'
 ```
 
 `/deploy` コマンドでこの手順を自動実行できる。
+
+### SSH 接続（クローンごとに一度だけ）
+
+`tekken-nas` は `~/.ssh/config` のホストエイリアス。接続先を一箇所に閉じ込めることで、
+デプロイ手順を機種非依存に保つ。
+
+```
+Host tekken-nas
+    HostName 10.0.0.254
+    User ubuntu
+    IdentityFile ~/.ssh/tekken_deploy
+    IdentitiesOnly yes
+```
+
+- `IdentitiesOnly yes` は必須。既定鍵 `id_ed25519` を先に提示して弾かれるのを防ぐ
+- 鍵は**機ごとに別個に切る**（`ssh-keygen -t ed25519 -f ~/.ssh/tekken_deploy -N ""`）。
+  片方だけ失効できるようにするため。パスフレーズは付けない（`/deploy` が非対話で走る）
+- 公開鍵は NAS の `/home/ubuntu/.ssh/authorized_keys` に**追記**する。
+  `sudo` を挟むと `/root` 側に入って効かないので、必ず `ubuntu` ユーザーで行う
+- 疎通確認は `ssh tekken-nas 'whoami'` が `ubuntu` を返すこと
+
+**Windows 側 CC から実行する場合のみ** `wsl bash -c "ssh tekken-nas '...'"` と包む。
+WSL 内の tmux CC およびネイティブ Linux 機では素の `ssh` でよい
+（判別: `/proc/version` に `microsoft` を含むか）。
 
 ### pre-push フック（再発防止の仕組み）
 
