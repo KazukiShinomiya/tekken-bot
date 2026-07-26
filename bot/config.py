@@ -118,6 +118,7 @@ WANK_FETCH_LIMIT = 50
 # スタッツ計算
 MIN_BATTLES_FOR_STAT         = 2    # 対キャラ統計・時間帯統計の最低試合数
 MIN_BATTLES_FOR_TREND        = 3    # レーティングトレンド回帰計算の最低試合数
+MIN_TREND_SPAN_SECONDS       = 3 * 86400  # 同・最低観測窓。これ未満は「1日あたり」へ外挿しない
 RATING_STAGNATION_THRESHOLD  = 100  # 停滞判定の1日あたり変動幅（±ポイント）
 
 # 勝率判定しきい値
@@ -132,6 +133,10 @@ EMBED_COLOR_BAD_WR       = 0.4   # Embed 赤カラー（勝率40%以下）
 
 # Discord
 DISCORD_EMBED_MAX_FIELDS = 25
+MATCHUP_MATRIX_MAX_ROWS  = 12   # 対戦成績表の最大行数。超過分は件数のみ集約表示
+DESCRIPTION_CODE_LIMIT   = 3400 # 日次 description のコードブロック上限。
+                                # 実上限 4096 との差は、投稿後に差し込まれる
+                                # LLM コメントぶんの余白（閉じ ``` を落とさないため）
 
 # デフォルト値
 UNKNOWN_CHARACTER = "???"

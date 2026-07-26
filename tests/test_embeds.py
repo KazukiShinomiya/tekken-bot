@@ -4,6 +4,11 @@ bot/embeds.py のビュー層（Embed 構築・整形ヘルパー）テスト。
 
 import pytest
 from bot.embeds import (
+    _disp_width,
+    _pad,
+    _code_block,
+    _power_part,
+    _build_prev_comparison,
     _win_rate,
     _streak,
     _nemesis,
@@ -223,18 +228,44 @@ def test_matchup_matrix_not_enough_battles():
     assert "Jin" in result
 
 
-def test_matchup_matrix_sorted_by_win_rate():
+def test_matchup_matrix_sorted_by_battle_count():
+    """対戦数の多いキャラが先。少数試行の100%に上位を占領させない。"""
     battles = [
-        _battle(True, "Dragunov"), _battle(True, "Dragunov"),   # 100%
-        _battle(False, "Jin"), _battle(False, "Jin"),            # 0%
+        _battle(True, "Dragunov"),                                        # 1戦 100%
+        _battle(False, "Jin"), _battle(False, "Jin"), _battle(True, "Jin"),  # 3戦 33%
     ]
     result = _matchup_matrix(battles)
     assert result is not None
     lines = result.split("\n")
-    # Dragunov（100%）が Jin（0%）より先に来るはず
-    dragunov_idx = next(i for i, l in enumerate(lines) if "Dragunov" in l)
     jin_idx = next(i for i, l in enumerate(lines) if "Jin" in l)
-    assert dragunov_idx < jin_idx
+    dragunov_idx = next(i for i, l in enumerate(lines) if "Dragunov" in l)
+    assert jin_idx < dragunov_idx
+
+
+def test_matchup_matrix_same_count_sorted_by_win_rate():
+    """対戦数が同じなら勝率昇順（苦手が上）。"""
+    battles = [
+        _battle(True, "Dragunov"), _battle(True, "Dragunov"),   # 2戦 100%
+        _battle(False, "Jin"), _battle(False, "Jin"),            # 2戦 0%
+    ]
+    result = _matchup_matrix(battles)
+    assert result is not None
+    lines = result.split("\n")
+    jin_idx = next(i for i, l in enumerate(lines) if "Jin" in l)
+    dragunov_idx = next(i for i, l in enumerate(lines) if "Dragunov" in l)
+    assert jin_idx < dragunov_idx
+
+
+def test_matchup_matrix_caps_rows_and_summarizes_rest():
+    """上限を超えたキャラは行を出さず、件数だけ集約して残す。"""
+    battles = []
+    for i in range(15):
+        battles += [_battle(True, f"Chara{i:02d}")] * (15 - i)   # 対戦数を段階的に
+    result = _matchup_matrix(battles, max_rows=12)
+    assert result is not None
+    lines = result.split("\n")[1:]          # ヘッダー除く
+    assert len(lines) == 13                 # 12行 + 集約1行
+    assert "ほか 3 キャラ" in lines[-1]
 
 
 def test_matchup_matrix_empty():
@@ -761,7 +792,7 @@ def test_my_chara_fields_omits_rank_breakdown_without_ranks():
 
 
 def test_build_quick_weekly_embed_rank_field_with_string_ranks():
-    """実データ形式（英語文字列 rank）でも段位別勝率フィールドとキャラ別段位内訳が欠損しない。"""
+    """実データ形式（英語文字列 rank）でもキャラ別の段位内訳が欠損しない。"""
     battles = []
     for i in range(3):
         b = _quick_battle(won=True, opp_rank="Tekken King")
@@ -769,10 +800,34 @@ def test_build_quick_weekly_embed_rank_field_with_string_ranks():
         battles.append(b)
     result = build_quick_weekly_embed(battles, "2024/01/15")
     assert result is not None
-    assert any("段位別勝率" in f["name"] for f in result["fields"])
     chara_field = next(f for f in result["fields"] if "Lee" in f["name"])
     assert "相手段位別" in chara_field["value"]
     assert "鉄拳王" in chara_field["value"]
+
+
+def test_build_quick_weekly_embed_omits_duplicate_rank_field_for_single_chara():
+    """使用キャラが1体なら、全体の段位別勝率はキャラ別と同一になるので出さない。"""
+    battles = []
+    for _ in range(3):
+        b = _quick_battle(won=True, opp_rank=25)
+        b["my_chara"] = "Lee"
+        battles.append(b)
+    result = build_quick_weekly_embed(battles, "2024/01/15")
+    assert result is not None
+    assert not any("段位別勝率" in f["name"] for f in result["fields"])
+
+
+def test_build_quick_weekly_embed_keeps_rank_field_for_multiple_charas():
+    """使用キャラが2体以上なら、全体の段位別勝率は独自の情報を持つので出す。"""
+    battles = []
+    for chara in ("Lee", "Reina"):
+        for _ in range(3):
+            b = _quick_battle(won=True, opp_rank=25)
+            b["my_chara"] = chara
+            battles.append(b)
+    result = build_quick_weekly_embed(battles, "2024/01/15")
+    assert result is not None
+    assert any("段位別勝率" in f["name"] for f in result["fields"])
 
 
 def test_build_rank_weekly_embed_includes_rank_breakdown():
@@ -1158,3 +1213,108 @@ def test_build_embed_no_quick_rank_chara_field_when_no_rank():
     result = build_embed(battles, "2026-05-12")
     assert result is not None
     assert not any("段位別" in f["name"] for f in result["fields"])
+
+
+# ---------------------------------------------------------------------------
+# 整形ヘルパー（表の桁合わせ・コードブロック）
+# ---------------------------------------------------------------------------
+
+def test_disp_width_counts_fullwidth_as_two():
+    """全角は2桁、半角は1桁として数える。"""
+    assert _disp_width("Lee") == 3
+    assert _disp_width("雷神") == 4
+    assert _disp_width("雷神(自分)") == 10   # 全角2文字 + 半角6文字
+
+
+def test_pad_aligns_by_display_width():
+    """全角混じりでも表示幅で揃う。len() ベースだと揃わないケース。"""
+    a = _pad("Lee", 12)
+    b = _pad("雷神", 12)
+    assert _disp_width(a) == _disp_width(b) == 12
+
+
+def test_pad_does_not_truncate_when_over_width():
+    """指定幅を超える文字列は切らずにそのまま返す。"""
+    assert _pad("VeryLongCharacterName", 5) == "VeryLongCharacterName"
+
+
+def test_code_block_wraps_text():
+    out = _code_block("a\nb")
+    assert out.startswith("```\n")
+    assert out.endswith("\n```")
+    assert "a\nb" in out
+
+
+def test_code_block_respects_limit_including_fences():
+    """上限は囲んだ後の全長。閉じフェンスが落ちないこと。"""
+    out = _code_block("x" * 5000, limit=1024)
+    assert len(out) <= 1024
+    assert out.endswith("\n```")
+
+
+# ---------------------------------------------------------------------------
+# 鉄拳力の差分表示
+# ---------------------------------------------------------------------------
+
+def test_power_part_shows_difference_only():
+    """自分の絶対値は繰り返さず、相手との差だけを出す。"""
+    b = _battle(True)
+    b["my_power"], b["opp_power"] = 183_392, 171_292
+    assert _power_part(b) == "(鉄拳力差 +12,100)"
+
+
+def test_power_part_negative_difference():
+    b = _battle(True)
+    b["my_power"], b["opp_power"] = 183_392, 201_190
+    assert _power_part(b) == "(鉄拳力差 -17,798)"
+
+
+def test_power_part_empty_when_missing():
+    b = _battle(True)
+    b["my_power"], b["opp_power"] = None, 100
+    assert _power_part(b) == ""
+
+
+def test_build_embed_description_is_code_block():
+    """試合一覧はコードブロックに入る（等幅で桁を揃えるため）。"""
+    b = _battle(True, battle_type="quick")
+    b.update({"my_chara": "Lee", "my_rounds": 3, "opp_rounds": 1,
+              "battle_at": 1000, "my_power": None})
+    result = build_embed([b], "2026-05-12")
+    assert result is not None
+    assert result["description"].startswith("```\n")
+    assert result["description"].endswith("\n```")
+
+
+# ---------------------------------------------------------------------------
+# 前期間比較（母数を消さない）
+# ---------------------------------------------------------------------------
+
+def _n_battles(wins: int, losses: int) -> list[dict]:
+    return [_battle(True) for _ in range(wins)] + [_battle(False) for _ in range(losses)]
+
+
+def test_prev_comparison_includes_counts_and_win_rate():
+    """試合数と勝率を併記し、差は勝率ポイントで示す。
+
+    実データのケース: 今月 50勝26敗(76戦) / 前月 99勝39敗(138戦)。
+    勝利数だけ見ると -49 だが、勝率差は -6pt しかない。
+    """
+    field = _build_prev_comparison(_n_battles(50, 26), _n_battles(99, 39), "前月")
+    value = field["value"]
+    assert "今月 50勝26敗" in value
+    assert "76戦" in value
+    assert "前月 99勝39敗" in value
+    assert "138戦" in value
+    assert "勝率 -5.9pt" in value
+
+
+def test_prev_comparison_positive_win_rate_diff_has_sign():
+    field = _build_prev_comparison(_n_battles(8, 2), _n_battles(5, 5), "前週")
+    assert "勝率 +30.0pt" in field["value"]
+
+
+def test_prev_comparison_omits_win_rate_when_period_empty():
+    """片方が空なら勝率差は出さない（ゼロ除算しない）。"""
+    field = _build_prev_comparison(_n_battles(3, 1), [], "前週")
+    assert "勝率" not in field["value"]

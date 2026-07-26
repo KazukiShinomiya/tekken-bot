@@ -5,11 +5,13 @@ I/O（Webhook 送信）は bot.discord_post が担当する。このモジュー
 純粋関数のみ——データを受け取り整形済みの dict / 文字列を返す。副作用なし。
 """
 
+import unicodedata
 from collections import Counter
 from datetime import datetime
 
 from bot.config import (
-    TEKKEN_ID, DISCORD_EMBED_MAX_FIELDS, JST,
+    TEKKEN_ID, DISCORD_EMBED_MAX_FIELDS, MATCHUP_MATRIX_MAX_ROWS,
+    DESCRIPTION_CODE_LIMIT, JST,
     RANK_NAMES, RANK_NAMES_EN, normalize_rank, UNKNOWN_CHARACTER,
     WIN_RATE_THRESHOLD, EMBED_COLOR_GOOD_WR, EMBED_COLOR_BAD_WR,
     SCOUT_TREND_THRESHOLD,
@@ -20,6 +22,34 @@ from bot.stats import (
     filter_rated_battles, detect_momentum, predict_rating_trend,
     get_most_common, round_quality,
 )
+
+
+# ---------------------------------------------------------------------------
+# 整形ヘルパー（表の桁合わせ）
+# ---------------------------------------------------------------------------
+
+def _disp_width(s: str) -> int:
+    """端末表示上の桁数を返す。全角（East Asian Wide/Fullwidth）は2桁として数える。
+
+    段位名やキャラ名に日本語が混ざるため、len() では桁が合わない。
+    """
+    return sum(2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1 for ch in s)
+
+
+def _pad(s: str, width: int) -> str:
+    """表示幅ベースで右側を空白詰めする。f"{s:<12}" の全角対応版。"""
+    return s + " " * max(0, width - _disp_width(s))
+
+
+def _code_block(text: str, limit: int = 1024) -> str:
+    """テキストを Discord のコードブロックで囲む。
+
+    Embed 本文はプロポーショナルフォントで描画されるため、空白で桁を揃えても
+    そのままでは列が崩れる。等幅で表示させるにはコードブロックに入れるしかない。
+    limit は囲んだ後の全長（Discord のフィールド値上限は 1024）。
+    """
+    fence_cost = 8  # "```\n" と "\n```"
+    return "```\n" + text[: max(0, limit - fence_cost)] + "\n```"
 
 
 # ---------------------------------------------------------------------------
@@ -86,11 +116,16 @@ def _rating_summary(battles: list[Battle]) -> str:
     return f"{final_rating} ({sign}{net_change})"
 
 
-def _matchup_matrix(battles: list[Battle]) -> str | None:
+def _matchup_matrix(battles: list[Battle], max_rows: int = MATCHUP_MATRIX_MAX_ROWS) -> str | None:
     """
-    対戦キャラを勝率降順でリスト表示する。
+    対戦キャラを対戦数の多い順にリスト表示する。
     勝率 > 50% → ✅、= 50% → ➖、< 50% → ❌
     試合データがない場合は None を返す。
+
+    並びは対戦数降順（同数なら勝率昇順＝苦手なほうが上）。勝率降順にすると
+    1〜2戦で100%のキャラが上位を占め、月次では最多対戦相手が下に沈んで
+    「よく当たる相手にどう戦えたか」が読めなくなるため。
+    max_rows を超えた分は末尾に件数だけ残して省く（黙って切り落とさない）。
     """
     stats = aggregate_by_character(battles)
 
@@ -98,10 +133,10 @@ def _matchup_matrix(battles: list[Battle]) -> str | None:
     if not rows:
         return None
 
-    rows.sort(key=lambda x: sum(x[1]) / len(x[1]), reverse=True)
+    rows.sort(key=lambda x: (-len(x[1]), sum(x[1]) / len(x[1])))
 
     lines = ["📊 対戦成績"]
-    for chara, results in rows:
+    for chara, results in rows[:max_rows]:
         n  = len(results)
         wr = sum(results) / n
         pct = f"{wr * 100:.0f}%"
@@ -111,7 +146,12 @@ def _matchup_matrix(battles: list[Battle]) -> str | None:
             icon = "❌"
         else:
             icon = "➖"
-        lines.append(f"  {chara:<12} {n}戦 {pct:>4} {icon}")
+        lines.append(f"  {_pad(chara, 12)} {n}戦 {pct:>4} {icon}")
+
+    hidden = len(rows) - max_rows
+    if hidden > 0:
+        hidden_battles = sum(len(r[1]) for r in rows[max_rows:])
+        lines.append(f"  ほか {hidden} キャラ（計 {hidden_battles} 戦）")
 
     return "\n".join(lines)
 
@@ -168,7 +208,7 @@ def _rank_winrate_breakdown(battles: list[Battle]) -> str | None:
         name   = _rank_name(rank_id) or f"Rank{rank_id}"
         marker = _marker(rank_id)
         label  = f"{name}{marker}" if marker else name
-        line   = f"  {label:<12} {n}戦 {pct:>4} {icon}"
+        line   = f"  {_pad(label, 14)} {n}戦 {pct:>4} {icon}"
         ps = powers.get(rank_id)
         if ps:
             avg_k = round(sum(ps) / len(ps) / 1000)
@@ -206,14 +246,19 @@ def _scout_section(battles: list[Battle], scout_data: dict[str, dict]) -> str | 
 
 
 def _power_part(b: Battle) -> str:
-    """自分と相手の鉄拳力を '(鉄拳力: 1,234,567 vs 1,100,000 [+134,567])' 形式で返す。どちらかが None なら空文字。"""
+    """相手との鉄拳力差を '(鉄拳力差 +134,567)' 形式で返す。どちらかが None なら空文字。
+
+    自分の鉄拳力は同一日でほぼ動かないため、全試合行に絶対値を並べると同じ数字の
+    繰り返しになる（実測: 22戦の日に同じ値が22回）。自分の絶対値は 💥 フィールドに
+    一度だけ出るので、行では差分だけを見せる。正=自分が上。
+    """
     my_p  = b.get("my_power")
     opp_p = b.get("opp_power")
     if my_p is None or opp_p is None:
         return ""
     diff = my_p - opp_p
     sign = "+" if diff >= 0 else ""
-    return f"(鉄拳力: {my_p:,} vs {opp_p:,} [{sign}{diff:,}])"
+    return f"(鉄拳力差 {sign}{diff:,})"
 
 
 def _opp_rank_label(battle: Battle) -> str:
@@ -262,7 +307,7 @@ def _quick_rank_chara_matrix(battles: list[Battle]) -> str | None:
             wr   = sum(results) / n
             pct  = f"{wr * 100:.0f}%"
             icon = "✅" if wr > WIN_RATE_THRESHOLD else ("❌" if wr < WIN_RATE_THRESHOLD else "➖")
-            lines.append(f"  {chara:<12} {n}戦 {pct:>4} {icon}")
+            lines.append(f"  {_pad(chara, 12)} {n}戦 {pct:>4} {icon}")
 
     return "\n".join(lines)
 
@@ -390,20 +435,32 @@ def build_embed(
     other  = [b for b in battles if b.get("battle_type") not in ("ranked", "quick")]
 
     # 試合一覧（description）
-    battle_lines = []
+    # 列幅は固定せず、その日の最長に合わせる。固定幅だと "Yoshimitsu (武神)" のような
+    # 長い組み合わせがはみ出し、以降の列が行ごとにずれる。
+    rows = []
     for b in sorted_b:
+        chara     = b.get("my_chara") or "???"
+        opp       = b.get("opp_chara") or "???"
+        rank_part = _opp_rank_label(b)
+        opp_field = f"{opp} {rank_part}".rstrip() if rank_part else opp
+        rows.append((chara, opp_field, b))
+
+    w_chara = max((_disp_width(r[0]) for r in rows), default=0)
+    w_opp   = max((_disp_width(r[1]) for r in rows), default=0)
+
+    battle_lines = []
+    for chara, opp_field, b in rows:
         icon       = "✅" if b["won"] else "❌"
         score      = f"{b['my_rounds']}-{b['opp_rounds']}"
-        chara      = b.get("my_chara") or "???"
-        opp        = b.get("opp_chara") or "???"
-        rank_part  = _opp_rank_label(b)
-        opp_field  = f"{opp} {rank_part}".rstrip() if rank_part else opp
         power_part = _power_part(b)
-        line = f"⚔️ {chara} vs {opp_field:<12} {icon} {score}"
+        line = f"{_pad(chara, w_chara)} vs {_pad(opp_field, w_opp)} {icon} {score}"
         if power_part:
             line += f"  {power_part}"
         battle_lines.append(line)
-    description = "\n".join(battle_lines)[:4096]
+    # コードブロックで囲って等幅にする（プロポーショナルだと桁が揃わない）。
+    # 上限に余裕を持たせるのは、投稿後に edit_llm_comment が description 冒頭へ
+    # コメントを差し込み、全体を 4096 で切るため。閉じ側の ``` が落ちると崩れる。
+    description = _code_block("\n".join(battle_lines), limit=DESCRIPTION_CODE_LIMIT)
 
     fields: list[dict] = []
 
@@ -465,7 +522,7 @@ def build_embed(
     matrix = _matchup_matrix(battles)
     if matrix:
         matrix_body = "\n".join(matrix.split("\n")[1:])
-        fields.append({"name": "📊 対戦成績", "value": matrix_body[:1024], "inline": False})
+        fields.append({"name": "📊 対戦成績", "value": _code_block(matrix_body), "inline": False})
 
     # スカウト
     if scout_data:
@@ -477,7 +534,8 @@ def build_embed(
     # クイック 段位×キャラ対戦成績
     quick_rank_matrix = _quick_rank_chara_matrix(battles)
     if quick_rank_matrix:
-        fields.append({"name": "⚡ クイック 段位別対戦成績", "value": quick_rank_matrix[:1024], "inline": False})
+        fields.append({"name": "⚡ クイック 段位別対戦成績",
+                       "value": _code_block(quick_rank_matrix), "inline": False})
 
     embed: dict = {
         "title":       f"🎮 {display_name} 本日の戦果 ({date_str})",
@@ -527,24 +585,37 @@ def _build_prev_comparison(
     label: str,
 ) -> dict:
     """前期間比較フィールド（前週比/前月比）を構築する。
-    勝利数差と、両期間でランク戦があればレーティング差分を表示する。
     label は "前週" / "前月"。
+
+    勝利数の差だけを出すと母数の違いが消える。実測例では 138戦→76戦 と試合数が
+    半減した月に「勝利数 -49」とだけ出て、勝率は 71.7%→65.8%（-6pt）でしかない
+    のに実力が急落したように読めた。試合数と勝率を併記し、差は勝率ポイントで示す。
     """
-    total_w = count_wins(battles)
-    prev_w  = count_wins(prev_battles)
-    prev_l  = count_losses(prev_battles)
+    total_w, total_l = count_wins(battles), count_losses(battles)
+    prev_w,  prev_l  = count_wins(prev_battles), count_losses(prev_battles)
+    cur_label  = f"今{label[1]}"
+
+    lines = [
+        f"{cur_label} {total_w}勝{total_l}敗 ({_win_rate(battles)})　{len(battles)}戦",
+        f"{label} {prev_w}勝{prev_l}敗 ({_win_rate(prev_battles)})　{len(prev_battles)}戦",
+    ]
+
+    bits = []
+    if battles and prev_battles:
+        wr_diff = total_w / len(battles) * 100 - prev_w / len(prev_battles) * 100
+        bits.append(f"勝率 {'+' if wr_diff >= 0 else ''}{wr_diff:.1f}pt")
+
     prev_rated = filter_rated_battles([b for b in prev_battles if b.get("battle_type") == "ranked"])
     prev_net   = sum(b.get("rating_change") or 0 for b in prev_rated) if prev_rated else None
     rated      = filter_rated_battles([b for b in battles if b.get("battle_type") == "ranked"])
     net_rating = sum(b.get("rating_change") or 0 for b in rated) if rated else None
-    win_diff   = total_w - prev_w
-    sign_w     = "+" if win_diff >= 0 else ""
-    comparison = f"勝利数 {sign_w}{win_diff} | {label}: {prev_w}勝{prev_l}敗"
     if prev_net is not None and net_rating is not None:
         rating_diff = net_rating - prev_net
-        sign_r = "+" if rating_diff >= 0 else ""
-        comparison += f"\nレーティング差分 {sign_r}{rating_diff}"
-    return {"name": f"📊 {label}比", "value": comparison, "inline": False}
+        bits.append(f"レーティング差分 {'+' if rating_diff >= 0 else ''}{rating_diff}")
+
+    if bits:
+        lines.append(" ・ ".join(bits))
+    return {"name": f"📊 {label}比", "value": "\n".join(lines), "inline": False}
 
 
 def _build_period_stats_bottom(battles: list[Battle], power_label: str) -> list[dict]:
@@ -572,7 +643,7 @@ def _build_period_stats_bottom(battles: list[Battle], power_label: str) -> list[
     matrix = _matchup_matrix(battles)
     if matrix:
         matrix_body = "\n".join(matrix.split("\n")[1:])
-        fields.append({"name": "📊 対戦成績", "value": matrix_body[:1024], "inline": False})
+        fields.append({"name": "📊 対戦成績", "value": _code_block(matrix_body), "inline": False})
     return fields
 
 
@@ -676,7 +747,9 @@ def _my_chara_fields(
         # （US: 2026-07-10 ユーザー提起「段位ごとにサブキャラとの結果が学び」）
         rank_lines = _rank_winrate_breakdown(bs)
         if rank_lines:
-            body.append("🏅 相手段位別\n" + rank_lines)
+            # コードブロックぶんの余白を残して本体を組む（閉じ ``` を落とさないため）
+            head = "\n".join(body) + "\n🏅 相手段位別\n"
+            body = [head.rstrip("\n"), _code_block(rank_lines, limit=1024 - len(head))]
 
         fields.append({"name": name[:256], "value": "\n".join(body)[:1024], "inline": False})
     return fields
@@ -713,7 +786,8 @@ def build_rank_weekly_embed(
 
     rank_breakdown = _rank_winrate_breakdown(ranked)
     if rank_breakdown:
-        fields.append({"name": "🏅 段位別勝率（🔺格上 / 🔻格下）", "value": rank_breakdown[:1024], "inline": False})
+        fields.append({"name": "🏅 段位別勝率（🔺格上 / 🔻格下）",
+                       "value": _code_block(rank_breakdown), "inline": False})
 
     affinity = _affinity_highlight(ranked)
     if affinity:
@@ -751,9 +825,14 @@ def build_quick_weekly_embed(
 
     fields: list[dict] = _my_chara_fields(quick)
 
-    rank_breakdown = _rank_winrate_breakdown(quick)
-    if rank_breakdown:
-        fields.append({"name": "🏅 段位別勝率（🔺格上 / 🔻格下）", "value": rank_breakdown[:1024], "inline": False})
+    # 使用キャラが1体しかいない週は、キャラ別の「相手段位別」が全体の内訳と
+    # 完全に一致する。同じ表を二度出しても情報は増えないので全体側を省く。
+    used_charas = {b.get("my_chara") or UNKNOWN_CHARACTER for b in quick}
+    if len(used_charas) >= 2:
+        rank_breakdown = _rank_winrate_breakdown(quick)
+        if rank_breakdown:
+            fields.append({"name": "🏅 段位別勝率（🔺格上 / 🔻格下）",
+                           "value": _code_block(rank_breakdown), "inline": False})
 
     return {
         "title":       f"⚡ {display_name} 今週のクイック（{week_start_str} 週）",

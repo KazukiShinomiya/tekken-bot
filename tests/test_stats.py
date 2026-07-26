@@ -103,7 +103,7 @@ def _ranked_rated(battle_at: int, rating_change: int) -> dict:
 
 def test_predict_rating_trend_upward():
     """連続プラス変動 → slope_per_day が正。"""
-    battles = [_ranked_rated(i * 3600, 50) for i in range(5)]
+    battles = [_ranked_rated(i * 86400, 50) for i in range(5)]
     result = predict_rating_trend(battles)
     assert "slope_per_day" in result
     assert result["slope_per_day"] > 0
@@ -111,10 +111,26 @@ def test_predict_rating_trend_upward():
 
 def test_predict_rating_trend_downward():
     """連続マイナス変動 → slope_per_day が負。"""
-    battles = [_ranked_rated(i * 3600, -30) for i in range(5)]
+    battles = [_ranked_rated(i * 86400, -30) for i in range(5)]
     result = predict_rating_trend(battles)
     assert "slope_per_day" in result
     assert result["slope_per_day"] < 0
+
+
+def test_predict_rating_trend_skips_short_observation_window():
+    """観測窓が3日未満なら空 dict。短時間のセッションを1日あたりへ外挿しない。
+
+    実データで踏んだケース: 8分間の4戦・合計+8pt が +1039/日 と表示された。
+    """
+    battles = [_ranked_rated(i * 160, 2) for i in range(4)]   # 480秒 = 8分
+    assert predict_rating_trend(battles) == {}
+
+
+def test_predict_rating_trend_boundary_span():
+    """観測窓がちょうど3日なら計算する（境界は含む）。"""
+    battles = [_ranked_rated(i * 86400, 20) for i in range(4)]  # 0,1,2,3日目 = 3日
+    result = predict_rating_trend(battles)
+    assert "slope_per_day" in result
 
 
 def test_predict_rating_trend_too_few_battles():

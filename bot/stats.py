@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import cast
 from bot.config import (
     JST, UNKNOWN_CHARACTER, RATING_STAGNATION_THRESHOLD,
-    MIN_BATTLES_FOR_TREND, MOMENTUM_THRESHOLD,
+    MIN_BATTLES_FOR_TREND, MIN_TREND_SPAN_SECONDS, MOMENTUM_THRESHOLD,
 )
 from bot.models import Battle
 
@@ -154,6 +154,18 @@ def predict_rating_trend(battles: list[Battle]) -> dict[str, float]:
         return {}
 
     sorted_rated = sorted(ranked_rated, key=lambda b: b["battle_at"])
+
+    # 観測窓が短すぎる場合は「1日あたり」へ外挿しない。
+    # 回帰の傾き（pt/秒）に 86400 を掛ける以上、数分のセッションしか無い月でも
+    # 24時間ぶんに引き伸ばされる。実測例: 8分間の4戦・合計+8pt が +1039/日 になった。
+    # 母数の少なさを大きな数字に化けさせるくらいなら、何も出さないほうがいい。
+    span = sorted_rated[-1]["battle_at"] - sorted_rated[0]["battle_at"]
+    if span < MIN_TREND_SPAN_SECONDS:
+        logger.debug(
+            f"[stats] レーティングトレンドをスキップ: 観測窓 {span}秒 "
+            f"< {MIN_TREND_SPAN_SECONDS}秒（{len(sorted_rated)}戦）"
+        )
+        return {}
 
     try:
         import numpy as np

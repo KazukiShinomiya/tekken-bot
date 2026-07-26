@@ -7,7 +7,8 @@ CI（`.github/workflows/test.yml`）と同じ検査をローカルで先行実�
 コミット前に mypy／カバレッジ失敗を捕まえる。
 
 リポジトリルート（CC の作業ディレクトリ）で実行する。機によってパスが異なるため
-絶対パスを書かない。
+絶対パスを書かない。リポジトリ内に `.venv` があればそちらの python を使う
+（システム Python に mypy/pytest が無い機がある。`.githooks/pre-push` も同じ判断をする）。
 
 ```bash
 python -m mypy bot main.py exporter.py scheduler.py
