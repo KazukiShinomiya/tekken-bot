@@ -731,12 +731,12 @@ def test_rank_winrate_breakdown_omits_power_when_absent():
 
 
 def test_rank_winrate_breakdown_self_rank_label():
-    """同段の相手には (自分) を付ける。"""
+    """同段の相手には 🟰 マーカーを付ける（格上🔺 / 格下🔻 と体系を揃える）。"""
     b = _ranked_battle(won=True, opp_rank=22)
     b["my_rank"] = 22
     result = _rank_winrate_breakdown([b])
     assert result is not None
-    assert "自分" in result
+    assert "🟰" in result
 
 
 def test_rank_winrate_breakdown_none_without_rank():

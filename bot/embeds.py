@@ -157,7 +157,7 @@ def _matchup_matrix(battles: list[Battle], max_rows: int = MATCHUP_MATRIX_MAX_RO
 
 
 def _rank_winrate_breakdown(battles: list[Battle]) -> str | None:
-    """相手段位別の勝率を、格上🔺 / 格下🔻 マーカー付きで返す。
+    """相手段位別の勝率を、格上🔺 / 同格🟰 / 格下🔻 マーカー付きで返す。
 
     opp_rank が取れた全試合（クイック・ランク両方）が対象。クイックは自分より
     大きく上下する相手と当たるため、「負けたが相手は格上だった」という文脈を
@@ -191,7 +191,7 @@ def _rank_winrate_breakdown(battles: list[Battle]) -> str | None:
             return "🔺"
         if rank_id < my_rank:
             return "🔻"
-        return "(自分)"
+        return "🟰"
 
     lines = []
     for rank_id in sorted(agg, reverse=True):  # 上位段位（格上）から
@@ -786,7 +786,7 @@ def build_rank_weekly_embed(
 
     rank_breakdown = _rank_winrate_breakdown(ranked)
     if rank_breakdown:
-        fields.append({"name": "🏅 段位別勝率（🔺格上 / 🔻格下）",
+        fields.append({"name": "🏅 段位別勝率（🔺格上 / 🟰同格 / 🔻格下）",
                        "value": _code_block(rank_breakdown), "inline": False})
 
     affinity = _affinity_highlight(ranked)
@@ -831,7 +831,7 @@ def build_quick_weekly_embed(
     if len(used_charas) >= 2:
         rank_breakdown = _rank_winrate_breakdown(quick)
         if rank_breakdown:
-            fields.append({"name": "🏅 段位別勝率（🔺格上 / 🔻格下）",
+            fields.append({"name": "🏅 段位別勝率（🔺格上 / 🟰同格 / 🔻格下）",
                            "value": _code_block(rank_breakdown), "inline": False})
 
     return {
