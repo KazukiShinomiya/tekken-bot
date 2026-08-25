@@ -171,6 +171,17 @@ def _fire_alerts(
                     logger.info(f"[{player_name}] 目標レーティング達成通知: {current_rating}")
 
 
+def _unknown_chara_label(row: dict) -> str:
+    """未学習キャラ警告用のラベルを返す。
+
+    自分側・相手側のどちらが `Chara#N` なのかを見て、その側の ID と名前を組にする。
+    別々に `or` で選ぶと「自分のキャラIDに相手のキャラ名」というチグハグな表示になる。
+    """
+    if str(row.get("my_chara") or "").startswith("Chara#"):
+        return f"ID={row.get('my_chara_id')} ({row.get('my_chara')})"
+    return f"ID={row.get('opp_chara_id')} ({row.get('opp_chara')})"
+
+
 def _fire_rank_alerts(today_battles: list[Battle], today_str: str, player_name: str) -> None:
     """段位変化を検知して Discord に通知する。"""
     if not today_battles:
@@ -407,13 +418,15 @@ async def main(target_date: str | None = None) -> None:
         db.init_db()
         fetcher.load_learned_chara_names()
 
+        # 名前が判明済みの Chara#N レコードを先に埋め直す（集計でのキャラ分裂を防ぐ）
+        repaired = db.repair_unknown_chara_names()
+        if repaired:
+            logger.info(f"[main] Chara#N のレコードを {repaired} 件修復")
+
         # 未学習キャラ(Chara#N)の残存チェック
         unknown_chara = db.get_unknown_chara_battles()
         if unknown_chara:
-            ids = ", ".join(
-                f"ID={r['my_chara_id'] or r['opp_chara_id']} ({r['my_chara'] or r['opp_chara']})"
-                for r in unknown_chara[:5]
-            )
+            ids = ", ".join(_unknown_chara_label(r) for r in unknown_chara[:5])
             logger.warning(f"[main] 未学習キャラが {len(unknown_chara)} 件存在: {ids}")
 
         players = get_players()

@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from main import (
     _analyze_with_timeout, _compute_opponent_data, _fire_alerts, _fire_rank_alerts,
+    _unknown_chara_label,
     get_players, setup_logging, _fetch_scout_data, _generate_validated_comment,
     _run_for_player, run_main_sync, run_weekly_sync, run_monthly_sync,
 )
@@ -769,6 +770,7 @@ def test_main_no_players_exits():
         patch("main.validate_config", return_value=[]),
         patch("bot.db.init_db"),
         patch("main.fetcher.load_learned_chara_names"),
+        patch("bot.db.repair_unknown_chara_names", return_value=0),
         patch("bot.db.get_unknown_chara_battles", return_value=[]),
         patch("main.get_players", return_value=[]),
         patch("bot.db.record_run_success"),
@@ -789,6 +791,7 @@ def test_main_happy_path():
         patch("main.validate_config", return_value=[]),
         patch("bot.db.init_db"),
         patch("main.fetcher.load_learned_chara_names"),
+        patch("bot.db.repair_unknown_chara_names", return_value=0),
         patch("bot.db.get_unknown_chara_battles", return_value=[]),
         patch("main.get_players", return_value=[("Alice", "pid_a")]),
         patch("main._run_for_player") as mock_run,
@@ -814,7 +817,43 @@ def test_main_unknown_chara_logs_warning():
         patch("main.validate_config", return_value=[]),
         patch("bot.db.init_db"),
         patch("main.fetcher.load_learned_chara_names"),
+        patch("bot.db.repair_unknown_chara_names", return_value=0),
         patch("bot.db.get_unknown_chara_battles", return_value=unknown),
+        patch("main.get_players", return_value=[("Alice", "pid_a")]),
+        patch("main._run_for_player"),
+        patch("bot.db.backup_db", return_value=backup_mock),
+        patch("bot.db.record_run_success"),
+    ):
+        asyncio.run(_main_module.main(target_date="2026-04-12"))  # should not raise
+
+
+def test_unknown_chara_label_picks_opponent_side():
+    """相手側が Chara#N なら、相手の ID と名前を組にして返す。"""
+    row = {"my_chara_id": 45, "my_chara": "Miary Zo",
+           "opp_chara_id": 43, "opp_chara": "Chara#43"}
+    assert _unknown_chara_label(row) == "ID=43 (Chara#43)"
+
+
+def test_unknown_chara_label_picks_self_side():
+    """自分側が Chara#N なら、自分の ID と名前を組にして返す。"""
+    row = {"my_chara_id": 47, "my_chara": "Chara#47",
+           "opp_chara_id": 6, "opp_chara": "Jin"}
+    assert _unknown_chara_label(row) == "ID=47 (Chara#47)"
+
+
+def test_main_repaired_chara_names_logs_count():
+    """Chara#N レコードを修復した場合、件数をログに残して処理を続行する。"""
+    mock_lock = MagicMock()
+    mock_lock.acquire.return_value = True
+    backup_mock = MagicMock()
+    backup_mock.name = "battles_20260412.db"
+    with (
+        patch.object(_main_module, "_main_lock", mock_lock),
+        patch("main.validate_config", return_value=[]),
+        patch("bot.db.init_db"),
+        patch("main.fetcher.load_learned_chara_names"),
+        patch("bot.db.repair_unknown_chara_names", return_value=8),
+        patch("bot.db.get_unknown_chara_battles", return_value=[]),
         patch("main.get_players", return_value=[("Alice", "pid_a")]),
         patch("main._run_for_player"),
         patch("bot.db.backup_db", return_value=backup_mock),
@@ -832,6 +871,7 @@ def test_main_backup_failure_does_not_raise():
         patch("main.validate_config", return_value=[]),
         patch("bot.db.init_db"),
         patch("main.fetcher.load_learned_chara_names"),
+        patch("bot.db.repair_unknown_chara_names", return_value=0),
         patch("bot.db.get_unknown_chara_battles", return_value=[]),
         patch("main.get_players", return_value=[("Alice", "pid_a")]),
         patch("main._run_for_player"),

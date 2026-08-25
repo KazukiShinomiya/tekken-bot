@@ -9,7 +9,7 @@ from collections.abc import Iterator
 from contextlib import closing, contextmanager
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from bot.config import DB_PATH, normalize_rank
 from bot.models import Battle
@@ -580,6 +580,45 @@ def get_unknown_chara_battles(limit: int = 10) -> list[dict]:
             LIMIT ?
         """, (limit,)).fetchall()
     return [dict(r) for r in rows]
+
+
+def repair_unknown_chara_names() -> int:
+    """`Chara#N` のまま保存されたレコードを、判明済みのキャラ名で埋め直す。
+
+    新キャラ追加直後は名前が未知のまま保存されるため、後から名前が判明しても
+    レコード側は 'Chara#47' のまま残り、集計で同一キャラが二つに分裂する。
+    起動時に呼んで解消する。戻り値は更新した行数。
+    """
+    from bot.fetcher import get_chara_name
+
+    updated = 0
+    with get_conn() as conn:
+        rows = conn.execute("""
+            SELECT battle_id, my_chara, my_chara_id, opp_chara, opp_chara_id
+            FROM battles
+            WHERE my_chara LIKE 'Chara#%' OR opp_chara LIKE 'Chara#%'
+        """).fetchall()
+        for r in rows:
+            sets: list[str] = []
+            params: list[Any] = []
+            for col, id_col in (("my_chara", "my_chara_id"), ("opp_chara", "opp_chara_id")):
+                if not str(r[col] or "").startswith("Chara#"):
+                    continue
+                cid = r[id_col]
+                name = get_chara_name(cid) if cid is not None else None
+                # 依然として未知なら 'Chara#N' が返る。その場合は次の機会に回す
+                if name and not name.startswith("Chara#"):
+                    sets.append(f"{col} = ?")
+                    params.append(name)
+            if sets:
+                params.append(r["battle_id"])
+                conn.execute(
+                    f"UPDATE battles SET {', '.join(sets)} WHERE battle_id = ?", params
+                )
+                updated += 1
+    if updated:
+        logger.info(f"[db] Chara#N のレコードを {updated} 件修復しました")
+    return updated
 
 
 def get_last_rank_before_date(date_str: str, player_name: str | None = None) -> int | None:

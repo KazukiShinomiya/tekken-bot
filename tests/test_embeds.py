@@ -1037,6 +1037,40 @@ def test_build_rank_change_embed_unknown_rank():
     assert "Rank1000" in result["description"]
 
 
+def test_build_rank_change_embed_single_step_has_no_middle():
+    """1段階の変化なら経路は挟まず両端のみ（矢印は1本）。"""
+    result = build_rank_change_embed("Alice", old_rank=24, new_rank=25)
+    assert result["description"].count("→") == 1
+    assert result["description"] == "**武神** → **鉄拳王**"
+
+
+def test_build_rank_change_embed_promotion_lists_intermediate():
+    """2段階の昇格 → 途中の段位が経路として残る。"""
+    result = build_rank_change_embed("Alice", old_rank=24, new_rank=26)
+    assert result["description"] == "**武神** → 鉄拳王 → **鉄拳覇皇**"
+    assert "昇格" in result["title"]
+
+
+def test_build_rank_change_embed_promotion_lists_multiple_intermediates():
+    """3段階以上でも途中の段位をすべて列挙する。"""
+    result = build_rank_change_embed("Alice", old_rank=22, new_rank=25)
+    assert result["description"] == "**雷神** → 鬼神 → 武神 → **鉄拳王**"
+
+
+def test_build_rank_change_embed_demotion_lists_intermediate():
+    """降格側も同様に経路を残す（降順に並ぶ）。"""
+    result = build_rank_change_embed("Bob", old_rank=26, new_rank=24)
+    assert result["description"] == "**鉄拳覇皇** → 鉄拳王 → **武神**"
+    assert "降格" in result["title"]
+
+
+def test_build_rank_change_embed_huge_diff_omits_path():
+    """段位差が上限を超える異常データでは経路を省き両端のみ表示する。"""
+    result = build_rank_change_embed("Test", old_rank=0, new_rank=37)
+    assert result["description"] == "**入門生** → **破壊神∞**"
+    assert result["description"].count("→") == 1
+
+
 def test_build_monthly_embed_returns_dict():
     """バトルあり → Embed dict を返す。"""
     battles = [_battle(True)]

@@ -581,6 +581,70 @@ def test_get_unknown_chara_battles_respects_limit(db):
 
 
 # ---------------------------------------------------------------------------
+# repair_unknown_chara_names
+# ---------------------------------------------------------------------------
+
+def _read_charas(db, battle_id: str) -> tuple:
+    with db.get_conn() as conn:
+        row = conn.execute(
+            "SELECT my_chara, opp_chara FROM battles WHERE battle_id = ?", (battle_id,)
+        ).fetchone()
+    return row["my_chara"], row["opp_chara"]
+
+
+def test_repair_unknown_chara_names_fills_opponent(db):
+    """名前が判明済みの相手 Chara#N を正しい名前へ埋め直す。"""
+    b = _make_battle(battle_id="rp1", opp_chara="Chara#22")
+    b["opp_chara_id"] = 22  # CHARA_NAMES では Lee
+    db.insert_battles([b], "Alice")
+    assert db.repair_unknown_chara_names() == 1
+    assert _read_charas(db, "rp1")[1] == "Lee"
+    assert db.get_unknown_chara_battles() == []
+
+
+def test_repair_unknown_chara_names_fills_self(db):
+    """自分側の Chara#N も埋め直す。"""
+    b = _make_battle(battle_id="rp2", my_chara="Chara#45")
+    b["my_chara_id"] = 45  # CHARA_NAMES では Miary Zo
+    db.insert_battles([b], "Alice")
+    assert db.repair_unknown_chara_names() == 1
+    assert _read_charas(db, "rp2")[0] == "Miary Zo"
+
+
+def test_repair_unknown_chara_names_fills_both_sides(db):
+    """自分・相手の両方が Chara#N なら両方まとめて埋める（更新は1行）。"""
+    b = _make_battle(battle_id="rp3", my_chara="Chara#45", opp_chara="Chara#47")
+    b["my_chara_id"] = 45
+    b["opp_chara_id"] = 47  # 2026-08-25 に実データで確認した Bob
+    db.insert_battles([b], "Alice")
+    assert db.repair_unknown_chara_names() == 1
+    assert _read_charas(db, "rp3") == ("Miary Zo", "Bob")
+
+
+def test_repair_unknown_chara_names_keeps_still_unknown_id(db):
+    """依然として名前が不明な ID は据え置き、更新もしない。"""
+    b = _make_battle(battle_id="rp4", opp_chara="Chara#999")
+    b["opp_chara_id"] = 999
+    db.insert_battles([b], "Alice")
+    assert db.repair_unknown_chara_names() == 0
+    assert _read_charas(db, "rp4")[1] == "Chara#999"
+
+
+def test_repair_unknown_chara_names_keeps_null_id(db):
+    """chara_id が NULL なら手掛かりが無いため据え置く。"""
+    b = _make_battle(battle_id="rp5", opp_chara="Chara#7")  # opp_chara_id は None のまま
+    db.insert_battles([b], "Alice")
+    assert db.repair_unknown_chara_names() == 0
+    assert _read_charas(db, "rp5")[1] == "Chara#7"
+
+
+def test_repair_unknown_chara_names_no_target_returns_zero(db):
+    """Chara#N が無ければ 0 を返す。"""
+    db.insert_battles([_make_battle(battle_id="rp6", opp_chara="Jin")], "Alice")
+    assert db.repair_unknown_chara_names() == 0
+
+
+# ---------------------------------------------------------------------------
 # get_weekly_my_chara_counts
 # ---------------------------------------------------------------------------
 

@@ -71,6 +71,9 @@ CHARA_NAMES = {
     # 37: DLC（未確認）
     38: "Eddy", 39: "Lidia", 40: "Heihachi", 41: "Clive",
     42: "Anna", 43: "Fahkumram", 44: "Armor King", 45: "Miary Zo",
+    # 46-47: 実対戦ログで確認済み（2026-08-25、game_version 30201）。
+    # それぞれ別プレイヤー6人・別対戦6件の wank HTML 表記が全一致。
+    46: "Kunimitsu", 47: "Bob",
 }
 
 # battle_type の数値 → 文字列マッピング

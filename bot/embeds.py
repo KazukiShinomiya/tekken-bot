@@ -842,20 +842,43 @@ def build_quick_weekly_embed(
     }
 
 
+def _rank_label(rank: int) -> str:
+    """段位番号を表示名にする。表に無い番号は Rank<N> へフォールバック。"""
+    return RANK_NAMES.get(rank, f"Rank{rank}")
+
+
+# 経路を列挙する段位差の上限。これを超える差は異常データとみなし両端のみ表示する
+RANK_PATH_MAX_STEPS = 8
+
+
 def build_rank_change_embed(player_name: str, old_rank: int, new_rank: int) -> dict:
-    """段位変化通知用の Embed dict を返す。"""
-    old_name = RANK_NAMES.get(old_rank, f"Rank{old_rank}")
-    new_name = RANK_NAMES.get(new_rank, f"Rank{new_rank}")
+    """段位変化通知用の Embed dict を返す。
+
+    段位は対戦レコードにしか乗らず、その値は常に対戦時点＝昇格前のものになる。
+    そのため通知は「次にランクマをした日」まで遅れて届き、その間に2段階以上
+    動くと途中の段位が投稿から消える。差が2以上のときは経路を列挙して残す。
+    """
+    old_name = _rank_label(old_rank)
+    new_name = _rank_label(new_rank)
+    step = 1 if new_rank > old_rank else -1
+    diff = abs(new_rank - old_rank)
+
+    if 2 <= diff <= RANK_PATH_MAX_STEPS:
+        middle = " → ".join(_rank_label(r) for r in range(old_rank + step, new_rank, step))
+        description = f"**{old_name}** → {middle} → **{new_name}**"
+    else:
+        description = f"**{old_name}** → **{new_name}**"
+
     if new_rank > old_rank:
         return {
             "title":       f"🎊 {player_name} 段位昇格！",
             "color":       0xFFD700,
-            "description": f"**{old_name}** → **{new_name}**",
+            "description": description,
         }
     return {
         "title":       f"📉 {player_name} 段位降格",
         "color":       0xED4245,
-        "description": f"**{old_name}** → **{new_name}**",
+        "description": description,
     }
 
 
