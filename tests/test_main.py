@@ -4,11 +4,13 @@ main.py の純粋関数・ヘルパー関数のテスト。
 """
 
 import asyncio
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from bot.config import JST, BACKFILL_DAYS
 from main import (
     _analyze_with_timeout, _compute_opponent_data, _fire_alerts, _fire_rank_alerts,
-    _unknown_chara_label,
+    _unknown_chara_label, _backfill_unposted,
     get_players, setup_logging, _fetch_scout_data, _generate_validated_comment,
     _run_for_player, run_main_sync, run_weekly_sync, run_monthly_sync,
 )
@@ -380,6 +382,117 @@ def test_run_for_player_happy_path():
         _run_for_player("Alice", "pid_alice", "2026-04-10", "2026/04/10")
 
     mock_post.assert_called_once()
+
+
+def test_run_for_player_fetch_false_skips_external_calls():
+    """fetch=False では wank / ewgf を叩かず、DB にあるデータだけで投稿する。"""
+    today_battles = [_make_battle()]
+    mock_post_result = ([("msg1", "https://discord.com/api/webhooks/1/tok")], {"title": "t"})
+    with (
+        patch("main.fetcher.fetch_battles_since") as mock_fetch,
+        patch("main.fetcher.fetch_quick_battles_from_ewgf") as mock_quick,
+        patch("bot.db.get_battles_on_date", return_value=today_battles),
+        patch("bot.db.has_posted_today", return_value=False),
+        patch("bot.db.mark_posted_today"),
+        patch("main._compute_opponent_data", return_value=({}, [])),
+        patch("main._fetch_scout_data", return_value={}),
+        patch("main._fire_alerts"),
+        patch("main._fire_rank_alerts"),
+        patch("main.discord_post.post", return_value=mock_post_result) as mock_post,
+        patch("bot.db.get_high_score_comments", return_value=[]),
+        patch("bot.db.get_latest_comment_before", return_value=None),
+        patch("main._analyze_with_timeout", return_value=None),
+        patch("main.discord_post.edit_llm_comment"),
+        patch("main.discord_post.notify_error"),
+    ):
+        _run_for_player("Alice", "pid_alice", "2026-04-10", "2026/04/10", False)
+
+    mock_fetch.assert_not_called()
+    mock_quick.assert_not_called()
+    mock_post.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# _backfill_unposted（遅延到着バトルの取りこぼし回収）
+# ---------------------------------------------------------------------------
+
+def test_backfill_unposted_posts_each_unposted_day():
+    """未投稿日ごとに fetch=False で _run_for_player が呼ばれる（古い順）。"""
+    now = datetime(2026, 4, 12, 8, 0, tzinfo=JST)
+    with (
+        patch("bot.db.get_unposted_dates", return_value=["2026-04-09", "2026-04-10"]),
+        patch("main._run_for_player") as mock_run,
+    ):
+        asyncio.run(_backfill_unposted([("Alice", "pid_alice")], now))
+
+    assert mock_run.call_count == 2
+    assert mock_run.call_args_list[0].args[2] == "2026-04-09"
+    assert mock_run.call_args_list[1].args[2] == "2026-04-10"
+    # 表示用の日付が整形され、fetch=False で呼ばれている
+    assert mock_run.call_args_list[0].args[3] == "2026/04/09"
+    for call in mock_run.call_args_list:
+        assert call.args[4] is False
+
+
+def test_backfill_unposted_queries_with_current_day_and_window():
+    """列挙には実行日（当日は含めない）と BACKFILL_DAYS 分の遡り開始時刻を渡す。"""
+    now = datetime(2026, 4, 12, 8, 0, tzinfo=JST)
+    with (
+        patch("bot.db.get_unposted_dates", return_value=[]) as mock_enum,
+        patch("main._run_for_player"),
+    ):
+        asyncio.run(_backfill_unposted([("Alice", "pid_alice")], now))
+
+    assert mock_enum.call_args.args[1] == "2026-04-12"
+    assert mock_enum.call_args.args[0] == (now - timedelta(days=BACKFILL_DAYS)).timestamp()
+
+
+def test_backfill_unposted_continues_after_one_day_fails():
+    """1日分が失敗しても残りの日を処理する。"""
+    now = datetime(2026, 4, 12, 8, 0, tzinfo=JST)
+
+    def side_effect(name, pid, date_str, display, fetch):
+        if date_str == "2026-04-09":
+            raise RuntimeError("boom")
+
+    with (
+        patch("bot.db.get_unposted_dates", return_value=["2026-04-09", "2026-04-10"]),
+        patch("main._run_for_player", side_effect=side_effect) as mock_run,
+    ):
+        asyncio.run(_backfill_unposted([("Alice", "pid_alice")], now))
+
+    assert mock_run.call_count == 2
+
+
+def test_backfill_unposted_survives_enumeration_failure():
+    """列挙が失敗したプレイヤーを飛ばし、他プレイヤーは処理する。"""
+    now = datetime(2026, 4, 12, 8, 0, tzinfo=JST)
+
+    def enum_side_effect(since_ts, before_date, player_name):
+        if player_name == "Alice":
+            raise RuntimeError("db down")
+        return ["2026-04-10"]
+
+    with (
+        patch("bot.db.get_unposted_dates", side_effect=enum_side_effect),
+        patch("main._run_for_player") as mock_run,
+    ):
+        asyncio.run(_backfill_unposted([("Alice", "pa"), ("Bob", "pb")], now))
+
+    assert mock_run.call_count == 1
+    assert mock_run.call_args_list[0].args[0] == "Bob"
+
+
+def test_backfill_unposted_noop_when_nothing_missing():
+    """未投稿日が無ければ何も投稿しない。"""
+    now = datetime(2026, 4, 12, 8, 0, tzinfo=JST)
+    with (
+        patch("bot.db.get_unposted_dates", return_value=[]),
+        patch("main._run_for_player") as mock_run,
+    ):
+        asyncio.run(_backfill_unposted([("Alice", "pid_alice")], now))
+
+    mock_run.assert_not_called()
 
 
 def test_run_for_player_no_today_battles():

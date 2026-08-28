@@ -483,6 +483,39 @@ def mark_posted_today(date_str: str, player_name: str = "default") -> None:
         )
 
 
+def get_unposted_dates(
+    since_ts: float,
+    before_date: str,
+    player_name: str = "default",
+) -> list[str]:
+    """バトルが存在するのに未投稿の日付（JST, 'YYYY-MM-DD'）を古い順に返す。
+
+    since_ts 以降かつ before_date より前が対象。呼び出し側は before_date に
+    「実行日」を渡す。当日は取りこぼしか進行中かを区別できないため含めない。
+
+    ewgf のクイックマッチは実測で約34時間遅れて到着するため、対戦当日の
+    日次投稿（前日分のみを見る）には間に合わない。その取りこぼしを後から
+    拾うための列挙。
+    """
+    day_expr = "date(battle_at, 'unixepoch', '+9 hours')"
+    with get_conn() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT DISTINCT {day_expr} AS d
+            FROM battles
+            WHERE battle_at >= ?
+              AND player_name = ?
+              AND {day_expr} < ?
+              AND {day_expr} NOT IN (
+                  SELECT date_str FROM daily_posts WHERE player_name = ?
+              )
+            ORDER BY d
+            """,
+            (since_ts, player_name, before_date, player_name),
+        ).fetchall()
+    return [r["d"] for r in rows]
+
+
 def get_my_chara_counts(since_ts: int, player_name: str | None = None) -> list[dict]:
     """since_ts 以降の自キャラ別使用試合数を返す（Prometheus メトリクス用）。"""
     pf, pp = _player_filter(player_name)

@@ -22,7 +22,7 @@ load_dotenv()
 from bot.config import (
     PLAYERS as PLAYERS_ENV, POLARIS_ID as POLARIS_ID_ENV, TEKKEN_ID as TEKKEN_ID_ENV,
     LOG_PATH, JST, TIMEOUT_LLM, TIMEOUT_API, RATING_GOAL, RANK_NAMES,
-    normalize_rank, validate_config,
+    BACKFILL_DAYS, normalize_rank, validate_config,
 )
 import bot.db as db
 import bot.fetcher as fetcher
@@ -309,30 +309,44 @@ def _generate_validated_comment(
     return comment, result
 
 
-def _run_for_player(player_name: str, polaris_id: str, today_str: str, date_str: str) -> None:
-    """1プレイヤー分のバトル取得・保存・投稿を実行する。"""
-    logger.info(f"[{player_name}] 処理開始")
+def _run_for_player(
+    player_name: str,
+    polaris_id: str,
+    today_str: str,
+    date_str: str,
+    fetch: bool = True,
+) -> None:
+    """1プレイヤー分のバトル取得・保存・投稿を実行する。
 
-    since_ts = db.get_latest_battle_at(player_name=player_name)
-    logger.info(f"[{player_name}] 前回の最終バトル: "
-                f"{datetime.fromtimestamp(since_ts, JST).isoformat() if since_ts else '（初回）'}")
+    fetch=False では外部取得を行わず、すでに DB にあるデータだけで投稿する。
+    未投稿日の遅延回収（backfill）用。1回の daily job で ewgf を対象日数ぶん
+    叩かない（レート制限は 100リクエスト/日）ための分離。
+    """
+    logger.info(f"[{player_name}] 処理開始（対象日 {today_str}{'' if fetch else ' / 遅延回収'}）")
 
-    try:
-        new_battles = fetcher.fetch_battles_since(since_ts, polaris_id=polaris_id)
-    except Exception as e:
-        msg = f"[{player_name}] データ取得失敗: {e}"
-        logger.error(msg)
-        discord_post.notify_error(msg)
-        return
+    inserted = 0
+    if fetch:
+        since_ts = db.get_latest_battle_at(player_name=player_name)
+        logger.info(f"[{player_name}] 前回の最終バトル: "
+                    f"{datetime.fromtimestamp(since_ts, JST).isoformat() if since_ts else '（初回）'}")
 
-    inserted = db.insert_battles(new_battles, player_name=player_name)
-    logger.info(f"[{player_name}] {inserted} 件を DB に保存")
+        try:
+            new_battles = fetcher.fetch_battles_since(since_ts, polaris_id=polaris_id)
+        except Exception as e:
+            msg = f"[{player_name}] データ取得失敗: {e}"
+            logger.error(msg)
+            discord_post.notify_error(msg)
+            return
 
-    # ewgf.gg からクイックマッチを補完（24時間遅延のため日次投稿には使わず週次サマリー用）
-    quick_battles = fetcher.fetch_quick_battles_from_ewgf(since_ts, polaris_id=polaris_id)
-    if quick_battles:
-        inserted_quick = db.insert_battles(quick_battles, player_name=player_name)
-        logger.info(f"[{player_name}] クイックマッチ {inserted_quick} 件を DB に保存 (ewgf.gg)")
+        inserted = db.insert_battles(new_battles, player_name=player_name)
+        logger.info(f"[{player_name}] {inserted} 件を DB に保存")
+
+        # ewgf.gg からクイックマッチを補完。実測で約34時間遅れて到着するため
+        # 対戦当日の日次投稿には間に合わない。取りこぼしは _backfill_unposted が拾う。
+        quick_battles = fetcher.fetch_quick_battles_from_ewgf(since_ts, polaris_id=polaris_id)
+        if quick_battles:
+            inserted_quick = db.insert_battles(quick_battles, player_name=player_name)
+            logger.info(f"[{player_name}] クイックマッチ {inserted_quick} 件を DB に保存 (ewgf.gg)")
 
     today_battles = db.get_battles_on_date(today_str, player_name=player_name)
     logger.info(f"[{player_name}] 本日分: {len(today_battles)} 件")
@@ -397,6 +411,39 @@ def _run_for_player(player_name: str, polaris_id: str, today_str: str, date_str:
         _save_eval_score(today_str, player_name, eval_result["score"], llm_comment)
 
 
+async def _backfill_unposted(
+    players: list[tuple[str, str]],
+    now: datetime,
+) -> None:
+    """バトルはあるのに未投稿の日を後追いで投稿する。
+
+    ewgf のクイックマッチは約34時間遅れて到着するため、対戦当日の日次投稿
+    （前日分のみが対象）には間に合わず、DB に入るだけで投稿されない日が残る。
+    ここで拾って投稿する。
+
+    外部取得はすでに通常処理が済ませているので fetch=False で呼ぶ。
+    通常処理の後に列挙するため、投稿済みの前日分は daily_posts により自然に除外される。
+    """
+    since_ts = (now - timedelta(days=BACKFILL_DAYS)).timestamp()
+    current_day = now.strftime("%Y-%m-%d")
+
+    for name, pid in players:
+        try:
+            dates = db.get_unposted_dates(since_ts, current_day, player_name=name)
+        except Exception as e:
+            logger.warning(f"[{name}] 未投稿日の列挙に失敗: {e}")
+            continue
+
+        for d in dates:
+            logger.info(f"[{name}] 未投稿日 {d} を遅延投稿する")
+            try:
+                display = datetime.strptime(d, "%Y-%m-%d").strftime("%Y/%m/%d")
+                await asyncio.to_thread(_run_for_player, name, pid, d, display, False)
+            except Exception as e:
+                # 1日分の失敗で残りを止めない（Fail Gracefully）
+                logger.error(f"[{name}] {d} の遅延投稿に失敗: {e}")
+
+
 async def main(target_date: str | None = None) -> None:
     """
     target_date: 対象日を 'YYYY-MM-DD' 形式で指定。None の場合は前日（スケジューラ 08:00 実行用）。
@@ -448,6 +495,11 @@ async def main(target_date: str | None = None) -> None:
             asyncio.to_thread(_run_for_player, name, pid, today_str, date_str)
             for name, pid in players
         ))
+
+        # 遅れて到着したバトルの取りこぼしを回収する。
+        # 日付を明示された実行（スラッシュコマンド等）はその日だけが対象なので回さない。
+        if target_date is None:
+            await _backfill_unposted(players, now)
 
         # 日次バックアップ（全プレイヤー処理後）
         try:

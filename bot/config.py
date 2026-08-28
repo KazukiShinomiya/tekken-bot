@@ -115,6 +115,11 @@ RETRY_STATUS_CODES   = [429, 500, 502, 503, 504]
 # バトル取得
 WANK_FETCH_LIMIT = 50
 
+# 未投稿日の遅延回収（backfill）。
+# ewgf のクイックマッチは実測で約34時間遅れて到着するため、対戦当日の日次投稿には
+# 間に合わない。取りこぼした日を後追いで投稿するために遡る日数。
+BACKFILL_DAYS = 7
+
 # スタッツ計算
 MIN_BATTLES_FOR_STAT         = 2    # 対キャラ統計・時間帯統計の最低試合数
 MIN_BATTLES_FOR_TREND        = 3    # レーティングトレンド回帰計算の最低試合数

@@ -406,6 +406,77 @@ def test_mark_posted_today_idempotent(db):
 
 
 # ---------------------------------------------------------------------------
+# get_unposted_dates（遅延到着バトルの取りこぼし回収）
+# ---------------------------------------------------------------------------
+
+def _ts(y: int, m: int, d: int, hour: int = 12) -> int:
+    """JST の指定日時の unix 秒。"""
+    return int(datetime(y, m, d, hour, tzinfo=JST).timestamp())
+
+
+def test_get_unposted_dates_lists_days_with_battles(db):
+    db.insert_battles([_make_battle("b1", _ts(2024, 1, 15))], player_name="Alice")
+    got = db.get_unposted_dates(_ts(2024, 1, 1), "2024-01-20", player_name="Alice")
+    assert got == ["2024-01-15"]
+
+
+def test_get_unposted_dates_excludes_posted(db):
+    db.insert_battles([_make_battle("b1", _ts(2024, 1, 15))], player_name="Alice")
+    db.mark_posted_today("2024-01-15", "Alice")
+    assert db.get_unposted_dates(_ts(2024, 1, 1), "2024-01-20", player_name="Alice") == []
+
+
+def test_get_unposted_dates_excludes_current_day(db):
+    """当日は取りこぼしか進行中か区別できないため含めない。"""
+    db.insert_battles([
+        _make_battle("b1", _ts(2024, 1, 15)),
+        _make_battle("b2", _ts(2024, 1, 20)),
+    ], player_name="Alice")
+    got = db.get_unposted_dates(_ts(2024, 1, 1), "2024-01-20", player_name="Alice")
+    assert got == ["2024-01-15"]
+
+
+def test_get_unposted_dates_respects_since_ts(db):
+    """遡り範囲より古い日は拾わない。"""
+    db.insert_battles([
+        _make_battle("b1", _ts(2024, 1, 5)),
+        _make_battle("b2", _ts(2024, 1, 15)),
+    ], player_name="Alice")
+    got = db.get_unposted_dates(_ts(2024, 1, 10), "2024-01-20", player_name="Alice")
+    assert got == ["2024-01-15"]
+
+
+def test_get_unposted_dates_is_per_player(db):
+    db.insert_battles([_make_battle("b1", _ts(2024, 1, 15))], player_name="Alice")
+    db.insert_battles([_make_battle("b2", _ts(2024, 1, 15))], player_name="Bob")
+    db.mark_posted_today("2024-01-15", "Alice")
+    assert db.get_unposted_dates(_ts(2024, 1, 1), "2024-01-20", player_name="Alice") == []
+    assert db.get_unposted_dates(_ts(2024, 1, 1), "2024-01-20", player_name="Bob") == ["2024-01-15"]
+
+
+def test_get_unposted_dates_sorted_and_deduped(db):
+    """同じ日の複数バトルは1日として、古い順に返る。"""
+    db.insert_battles([
+        _make_battle("b1", _ts(2024, 1, 16)),
+        _make_battle("b2", _ts(2024, 1, 15)),
+        _make_battle("b3", _ts(2024, 1, 15, hour=20)),
+    ], player_name="Alice")
+    got = db.get_unposted_dates(_ts(2024, 1, 1), "2024-01-20", player_name="Alice")
+    assert got == ["2024-01-15", "2024-01-16"]
+
+
+def test_get_unposted_dates_empty_when_no_battles(db):
+    assert db.get_unposted_dates(0, "2024-01-20", player_name="Alice") == []
+
+
+def test_get_unposted_dates_uses_jst_day_boundary(db):
+    """JST 00:30 のバトルは JST 日付で当日扱い（UTC 日付に転ばない）。"""
+    db.insert_battles([_make_battle("b1", _ts(2024, 1, 16, hour=0))], player_name="Alice")
+    got = db.get_unposted_dates(_ts(2024, 1, 1), "2024-01-20", player_name="Alice")
+    assert got == ["2024-01-16"]
+
+
+# ---------------------------------------------------------------------------
 # get_battles_vs_opponent
 # ---------------------------------------------------------------------------
 
